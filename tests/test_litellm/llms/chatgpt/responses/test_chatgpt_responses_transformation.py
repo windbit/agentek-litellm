@@ -102,8 +102,8 @@ class TestChatGPTResponsesAPITransformation:
         )
         headers = config.validate_environment(
             headers={
-                "Authorization": "Bearer attacker",
-                "ChatGPT-Account-Id": "acct-attacker",
+                "authorization": "Bearer attacker",
+                "CHATGPT-ACCOUNT-ID": "acct-attacker",
                 "originator": "custom-origin",
             },
             model="gpt-5.4",
@@ -111,6 +111,8 @@ class TestChatGPTResponsesAPITransformation:
         )
         assert headers["Authorization"] == "Bearer tok-a"
         assert headers["ChatGPT-Account-Id"] == "acct-a"
+        assert "authorization" not in headers
+        assert "CHATGPT-ACCOUNT-ID" not in headers
         assert headers["originator"] == "custom-origin"
 
     def test_validate_environment_missing_credential_raises(self):

@@ -393,13 +393,24 @@ def forward_chatgpt_deployment_params(litellm_params: dict, source: dict) -> Non
             litellm_params[key] = value
 
 
+def _is_chatgpt_credential_header(key: str) -> bool:
+    return key.lower() in {header.lower() for header in CHATGPT_CREDENTIAL_HEADER_KEYS}
+
+
+def remove_chatgpt_credential_header_variants(headers: dict) -> None:
+    """Remove any case variant of credential-derived ChatGPT auth headers."""
+    for key in list(headers):
+        if _is_chatgpt_credential_header(str(key)):
+            headers.pop(key, None)
+
+
 def merge_chatgpt_request_headers(
     credential_headers: dict, user_headers: Optional[dict]
 ) -> dict:
     """Merge user headers over credential headers, but never let user-supplied
     values override the credential-derived Authorization / ChatGPT-Account-Id."""
-    merged = {**credential_headers, **(user_headers or {})}
-    for key in CHATGPT_CREDENTIAL_HEADER_KEYS:
-        if key in credential_headers:
-            merged[key] = credential_headers[key]
+    merged = dict(credential_headers)
+    for key, value in (user_headers or {}).items():
+        if not _is_chatgpt_credential_header(str(key)):
+            merged[key] = value
     return merged

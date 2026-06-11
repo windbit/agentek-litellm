@@ -125,7 +125,11 @@ def test_completion_credential_authorization_reaches_wire():
         model="chatgpt/gpt-5.4",
         messages=[{"role": "user", "content": "hi"}],
         litellm_credential_name="chatgpt_acct_a",
-        extra_headers={"Authorization": "Bearer attacker", "x-trace": "t1"},
+        extra_headers={
+            "authorization": "Bearer attacker",
+            "CHATGPT-ACCOUNT-ID": "acct-attacker",
+            "x-trace": "t1",
+        },
     )
 
     assert route.called

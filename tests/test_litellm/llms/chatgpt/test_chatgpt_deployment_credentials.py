@@ -14,6 +14,7 @@ import json
 import time
 from unittest.mock import patch
 
+import httpx
 import pytest
 
 from litellm.llms.chatgpt.authenticator import Authenticator
@@ -150,6 +151,84 @@ class TestAuthenticatorFromLitellmParams:
             with pytest.raises(GetAccessTokenError):
                 auth.get_access_token()
 
+    def test_refresh_failure_error_does_not_leak_token_response_values(self):
+        """Malformed OAuth refresh responses must not surface raw token values."""
+
+        class DummyClient:
+            def post(self, *args, **kwargs):
+                request = httpx.Request("POST", "https://auth.openai.com/oauth/token")
+                return httpx.Response(
+                    200,
+                    json={
+                        "access_token": "LEAK_ME_ACCESS_TOKEN",
+                        "refresh_token": "LEAK_ME_REFRESH_TOKEN",
+                    },
+                    request=request,
+                )
+
+        past = time.time() - 10
+        auth = Authenticator.from_litellm_params(
+            {
+                "litellm_credential_name": "chatgpt_acct_a",
+                "chatgpt_auth": {
+                    "access_token": "old-token",
+                    "refresh_token": "old-refresh-token",
+                    "expires_at": past,
+                },
+            }
+        )
+
+        with patch(
+            "litellm.llms.chatgpt.authenticator._get_httpx_client",
+            return_value=DummyClient(),
+        ):
+            with pytest.raises(GetAccessTokenError) as exc_info:
+                auth.get_access_token()
+
+        message = str(exc_info.value)
+        assert "LEAK_ME_ACCESS_TOKEN" not in message
+        assert "LEAK_ME_REFRESH_TOKEN" not in message
+        assert "old-refresh-token" not in message
+
+    def test_refresh_failure_error_does_not_leak_id_or_request_refresh_token(self):
+        """Malformed refresh errors must not leak id_token or request tokens."""
+
+        class DummyClient:
+            def post(self, *args, **kwargs):
+                request = httpx.Request("POST", "https://auth.openai.com/oauth/token")
+                return httpx.Response(
+                    200,
+                    json={
+                        "refresh_token": "LEAK_ME_REFRESH_TOKEN",
+                        "id_token": "LEAK_ME_ID_TOKEN",
+                    },
+                    request=request,
+                )
+
+        past = time.time() - 10
+        auth = Authenticator.from_litellm_params(
+            {
+                "litellm_credential_name": "chatgpt_acct_a",
+                "chatgpt_auth": {
+                    "access_token": "old-token",
+                    "refresh_token": "REQUEST_REFRESH_TOKEN_SECRET",
+                    "expires_at": past,
+                },
+            }
+        )
+
+        with patch(
+            "litellm.llms.chatgpt.authenticator._get_httpx_client",
+            return_value=DummyClient(),
+        ):
+            with pytest.raises(GetAccessTokenError) as exc_info:
+                auth.get_access_token()
+
+        message = str(exc_info.value)
+        assert "LEAK_ME_REFRESH_TOKEN" not in message
+        assert "LEAK_ME_ID_TOKEN" not in message
+        assert "REQUEST_REFRESH_TOKEN_SECRET" not in message
+
     def test_inline_refresh_not_persisted_to_global_file(self):
         """Inline credential refresh updates memory only; no global file write."""
         past = time.time() - 10
@@ -197,4 +276,23 @@ class TestMergeChatGPTRequestHeaders:
         assert merged["ChatGPT-Account-Id"] == "acct-real"
         # non-auth user headers are still honored
         assert merged["originator"] == "custom-origin"
+        assert merged["x-trace"] == "abc"
+
+    def test_user_headers_cannot_override_credential_auth_case_insensitively(self):
+        credential_headers = {
+            "Authorization": "Bearer real-token",
+            "ChatGPT-Account-Id": "acct-real",
+        }
+        user_headers = {
+            "authorization": "Bearer attacker-lower",
+            "CHATGPT-ACCOUNT-ID": "acct-attacker-upper",
+            "x-trace": "abc",
+        }
+
+        merged = merge_chatgpt_request_headers(credential_headers, user_headers)
+
+        assert merged["Authorization"] == "Bearer real-token"
+        assert merged["ChatGPT-Account-Id"] == "acct-real"
+        assert "authorization" not in merged
+        assert "CHATGPT-ACCOUNT-ID" not in merged
         assert merged["x-trace"] == "abc"

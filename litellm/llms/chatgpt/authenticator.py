@@ -27,6 +27,26 @@ TOKEN_EXPIRY_SKEW_SECONDS = 60
 DEVICE_CODE_TIMEOUT_SECONDS = 15 * 60
 DEVICE_CODE_COOLDOWN_SECONDS = 5 * 60
 DEVICE_CODE_POLL_SLEEP_SECONDS = 5
+SENSITIVE_OAUTH_RESPONSE_FIELDS = {"access_token", "refresh_token", "id_token"}
+
+
+def _oauth_response_missing_fields_message(
+    data: Dict[str, Any], required: tuple
+) -> str:
+    missing = [key for key in required if not data.get(key)]
+    safe_fields = sorted(
+        str(key)
+        for key in data.keys()
+        if str(key) not in SENSITIVE_OAUTH_RESPONSE_FIELDS
+    )
+    return (
+        f"OAuth token response missing fields: {missing}; "
+        f"non-sensitive fields present: {safe_fields}"
+    )
+
+
+def _token_request_failure_message(prefix: str, exc: Exception) -> str:
+    return f"{prefix}: {exc.__class__.__name__}"
 
 
 class Authenticator:
@@ -366,12 +386,12 @@ class Authenticator:
             data = resp.json()
         except httpx.HTTPStatusError as exc:
             raise GetAccessTokenError(
-                message=f"Token exchange failed: {exc}",
+                message=_token_request_failure_message("Token exchange failed", exc),
                 status_code=exc.response.status_code,
             )
         except Exception as exc:
             raise GetAccessTokenError(
-                message=f"Token exchange failed: {exc}",
+                message=_token_request_failure_message("Token exchange failed", exc),
                 status_code=400,
             )
 
@@ -379,7 +399,9 @@ class Authenticator:
             key in data for key in ("access_token", "refresh_token", "id_token")
         ):
             raise GetAccessTokenError(
-                message=f"Token exchange response missing fields: {data}",
+                message=_oauth_response_missing_fields_message(
+                    data, ("access_token", "refresh_token", "id_token")
+                ),
                 status_code=400,
             )
         return {
@@ -404,12 +426,12 @@ class Authenticator:
             data = resp.json()
         except httpx.HTTPStatusError as exc:
             raise RefreshAccessTokenError(
-                message=f"Refresh token failed: {exc}",
+                message=_token_request_failure_message("Refresh token failed", exc),
                 status_code=exc.response.status_code,
             )
         except Exception as exc:
             raise RefreshAccessTokenError(
-                message=f"Refresh token failed: {exc}",
+                message=_token_request_failure_message("Refresh token failed", exc),
                 status_code=400,
             )
 
@@ -417,7 +439,9 @@ class Authenticator:
         id_token = data.get("id_token")
         if not access_token or not id_token:
             raise RefreshAccessTokenError(
-                message=f"Refresh response missing fields: {data}",
+                message=_oauth_response_missing_fields_message(
+                    data, ("access_token", "id_token")
+                ),
                 status_code=400,
             )
 

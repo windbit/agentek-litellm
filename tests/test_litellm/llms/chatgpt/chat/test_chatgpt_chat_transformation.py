@@ -26,7 +26,11 @@ class TestChatGPTChatValidateEnvironment:
             },
         }
         headers = config.validate_environment(
-            headers={"originator": "custom-origin", "Authorization": "Bearer attacker"},
+            headers={
+                "originator": "custom-origin",
+                "authorization": "Bearer attacker",
+                "CHATGPT-ACCOUNT-ID": "acct-attacker",
+            },
             model="gpt-5.4",
             messages=[{"role": "user", "content": "hi"}],
             optional_params={},
@@ -35,6 +39,8 @@ class TestChatGPTChatValidateEnvironment:
         # Credential-derived auth wins over user-supplied headers (req 6).
         assert headers["Authorization"] == "Bearer tok-a"
         assert headers["ChatGPT-Account-Id"] == "acct-a"
+        assert "authorization" not in headers
+        assert "CHATGPT-ACCOUNT-ID" not in headers
         # Non-auth user headers preserved.
         assert headers["originator"] == "custom-origin"
 

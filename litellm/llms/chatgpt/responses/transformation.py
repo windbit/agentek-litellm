@@ -28,6 +28,7 @@ from ..common_utils import (
     get_chatgpt_default_headers,
     get_chatgpt_default_instructions,
     merge_chatgpt_request_headers,
+    remove_chatgpt_credential_header_variants,
     resolve_chatgpt_deployment_credential,
 )
 
@@ -140,6 +141,7 @@ class ChatGPTResponsesAPIConfig(OpenAIResponsesAPIConfig):
             access_token = authenticator.get_access_token()
         except GetAccessTokenError:
             return
+        remove_chatgpt_credential_header_variants(headers)
         headers["Authorization"] = f"Bearer {access_token}"
         account_id = authenticator.get_account_id()
         if account_id:
