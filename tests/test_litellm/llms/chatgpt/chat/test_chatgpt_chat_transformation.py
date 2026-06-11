@@ -4,6 +4,7 @@ Tests for ChatGPT subscription Chat Completions transformation.
 Source: litellm/llms/chatgpt/chat/transformation.py
 """
 
+import json
 import time
 from unittest.mock import MagicMock, patch
 
@@ -14,16 +15,18 @@ from litellm.llms.chatgpt.chat.transformation import ChatGPTConfig
 
 
 class TestChatGPTChatValidateEnvironment:
-    def test_per_deployment_credential_headers(self):
+    def test_per_deployment_credential_headers(self, tmp_path):
         future = time.time() + 3600
+        auth_file = tmp_path / "acct_a.json"
+        auth_file.write_text(
+            json.dumps(
+                {"access_token": "tok-a", "account_id": "acct-a", "expires_at": future}
+            )
+        )
         config = ChatGPTConfig()
         litellm_params = {
             "litellm_credential_name": "chatgpt_acct_a",
-            "chatgpt_auth": {
-                "access_token": "tok-a",
-                "account_id": "acct-a",
-                "expires_at": future,
-            },
+            "chatgpt_auth_file": str(auth_file),
         }
         headers = config.validate_environment(
             headers={

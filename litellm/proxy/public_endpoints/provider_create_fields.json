@@ -606,46 +606,6 @@
         "default_value": null
       },
       {
-        "key": "account_id",
-        "label": "ChatGPT Account ID",
-        "placeholder": "[OPTIONAL] account/workspace id",
-        "tooltip": "Sent as the ChatGPT-Account-Id header to select which subscription/workspace this deployment bills against. Authorization and ChatGPT-Account-Id are derived from the selected credential by the proxy and cannot be overridden via extra request headers.",
-        "required": false,
-        "field_type": "text",
-        "options": null,
-        "default_value": null
-      },
-      {
-        "key": "access_token",
-        "label": "Access Token (inline)",
-        "placeholder": null,
-        "tooltip": "Inline OAuth access token for this ChatGPT account. Use only if you are not pointing at an auth file/directory. Stored as a secret credential value.",
-        "required": false,
-        "field_type": "password",
-        "options": null,
-        "default_value": null
-      },
-      {
-        "key": "refresh_token",
-        "label": "Refresh Token (inline)",
-        "placeholder": null,
-        "tooltip": "Inline OAuth refresh token used to renew the access token for this subscription. Stored as a secret credential value.",
-        "required": false,
-        "field_type": "password",
-        "options": null,
-        "default_value": null
-      },
-      {
-        "key": "expires_at",
-        "label": "Token Expiry (inline)",
-        "placeholder": "[OPTIONAL] epoch seconds or ISO timestamp",
-        "tooltip": "Expiry of the inline access token. Used to decide when to refresh. Leave blank when using an auth file.",
-        "required": false,
-        "field_type": "text",
-        "options": null,
-        "default_value": null
-      },
-      {
         "key": "chatgpt_api_base",
         "label": "API Base Override",
         "placeholder": "https://chatgpt.com/backend-api/codex",

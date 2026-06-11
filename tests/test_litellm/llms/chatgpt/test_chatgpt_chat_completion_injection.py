@@ -87,16 +87,23 @@ def _register_chatgpt_credential(name: str, **values):
     ]
 
 
-def test_completion_forwards_per_deployment_credential_to_responses():
+def _write_auth_file(tmp_path, name: str, auth: dict) -> str:
+    path = tmp_path / name
+    path.write_text(json.dumps(auth))
+    return str(path)
+
+
+def test_completion_forwards_per_deployment_credential_to_responses(tmp_path):
     """The deployment credential must reach the bridged Responses API call."""
     future = time.time() + 3600
+    auth_file = _write_auth_file(
+        tmp_path,
+        "acct_a.json",
+        {"access_token": "tok-a", "account_id": "acct-a", "expires_at": future},
+    )
     _register_chatgpt_credential(
         "chatgpt_acct_a",
-        chatgpt_auth={
-            "access_token": "tok-a",
-            "account_id": "acct-a",
-            "expires_at": future,
-        },
+        chatgpt_auth_file=auth_file,
         chatgpt_api_base="https://acct-a.example.com",
     )
 
@@ -115,23 +122,24 @@ def test_completion_forwards_per_deployment_credential_to_responses():
 
     # The bridge forwards litellm_params keys as kwargs into responses().
     assert captured.get("litellm_credential_name") == "chatgpt_acct_a"
-    assert captured.get("chatgpt_auth", {}).get("access_token") == "tok-a"
+    assert captured.get("chatgpt_auth_file") == auth_file
     assert captured.get("chatgpt_api_base") == "https://acct-a.example.com"
 
 
 @respx.mock
-def test_completion_credential_authorization_reaches_wire():
+def test_completion_credential_authorization_reaches_wire(tmp_path):
     """Full path: completion -> Responses bridge -> HTTP POST carries the
     credential-derived Authorization / ChatGPT-Account-Id headers, and a
-    user-supplied Authorization does not override them (req 6)."""
+    user-supplied Authorization does not override them."""
     future = time.time() + 3600
+    auth_file = _write_auth_file(
+        tmp_path,
+        "acct_a.json",
+        {"access_token": "tok-a", "account_id": "acct-a", "expires_at": future},
+    )
     _register_chatgpt_credential(
         "chatgpt_acct_a",
-        chatgpt_auth={
-            "access_token": "tok-a",
-            "account_id": "acct-a",
-            "expires_at": future,
-        },
+        chatgpt_auth_file=auth_file,
         chatgpt_api_base="https://acct-a.example.com",
     )
 
@@ -186,24 +194,28 @@ def test_completion_credential_authorization_reaches_wire():
 
 
 @respx.mock
-def test_completion_expired_credential_refresh_reused_no_attacker_headers():
-    """An inline per-deployment credential that is expired-on-arrival is
-    refreshed ONCE during validate_environment. The
-    post-merge header reassertion must REUSE that refreshed token (not refresh a
-    second time, which would fail for rotating refresh tokens) and must drop the
-    user-supplied case-variant Authorization / ChatGPT-Account-Id so the attacker
-    values never reach the wire."""
+def test_completion_expired_credential_refresh_reused_no_attacker_headers(tmp_path):
+    """A per-deployment credential that is expired-on-arrival is refreshed ONCE
+    during validate_environment. The post-merge header reassertion must REUSE that
+    refreshed token (not refresh a second time, which would fail for rotating
+    refresh tokens) and must drop the user-supplied case-variant Authorization /
+    ChatGPT-Account-Id so the attacker values never reach the wire."""
     past = time.time() - 3600
     future = time.time() + 3600
-    _register_chatgpt_credential(
-        "chatgpt_acct_a",
-        chatgpt_auth={
+    auth_file = _write_auth_file(
+        tmp_path,
+        "acct_a.json",
+        {
             "access_token": "expired-a",
             "refresh_token": "rt-a",
             "id_token": "idt-a",
             "account_id": "acct-a",
             "expires_at": past,
         },
+    )
+    _register_chatgpt_credential(
+        "chatgpt_acct_a",
+        chatgpt_auth_file=auth_file,
         chatgpt_api_base="https://acct-a.example.com",
     )
 
@@ -248,20 +260,25 @@ def test_completion_expired_credential_refresh_reused_no_attacker_headers():
 
 
 @respx.mock
-def test_completion_reassert_refresh_failure_fails_closed():
+def test_completion_reassert_refresh_failure_fails_closed(tmp_path):
     """If the credential cannot be re-resolved at reassert time (e.g. the cached
     authenticator is unavailable and a fresh refresh fails), the request must
-    fail closed — never sent with the attacker's stripped/forged headers."""
+    fail closed; never sent with the attacker's stripped/forged headers."""
     past = time.time() - 3600
-    _register_chatgpt_credential(
-        "chatgpt_acct_a",
-        chatgpt_auth={
+    auth_file = _write_auth_file(
+        tmp_path,
+        "acct_a.json",
+        {
             "access_token": "expired-a",
             "refresh_token": "rt-a",
             "id_token": "idt-a",
             "account_id": "acct-a",
             "expires_at": past,
         },
+    )
+    _register_chatgpt_credential(
+        "chatgpt_acct_a",
+        chatgpt_auth_file=auth_file,
         chatgpt_api_base="https://acct-a.example.com",
     )
 

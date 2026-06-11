@@ -27,14 +27,7 @@ from litellm.types.router import GenericLiteLLMParams
 
 
 def _credential_params():
-    return GenericLiteLLMParams(
-        litellm_credential_name="chatgpt_acct_a",
-        chatgpt_auth={
-            "access_token": "tok-a",
-            "account_id": "acct-a",
-            "expires_at": time.time() + 3600,
-        },
-    )
+    return GenericLiteLLMParams(litellm_credential_name="chatgpt_acct_a")
 
 
 def test_get_authenticator_caches_per_request():

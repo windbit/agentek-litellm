@@ -32,23 +32,19 @@ describe("credentialProviderToEnumKey", () => {
 });
 
 describe("buildCredentialPayload", () => {
-  it("should store the ChatGPT credential with custom_llm_provider 'chatgpt' and secrets under credential_values", () => {
+  it("should store the ChatGPT credential with custom_llm_provider 'chatgpt' and values under credential_values", () => {
     const payload = buildCredentialPayload({
       credential_name: "chatgpt-account-a",
       custom_llm_provider: "ChatGPT",
       chatgpt_auth_file: "/secrets/chatgpt/account-a/auth.json",
-      access_token: "secret-access-token",
-      refresh_token: "secret-refresh-token",
     });
 
     expect(payload.credential_name).toBe("chatgpt-account-a");
     expect(payload.credential_info.custom_llm_provider).toBe("chatgpt");
 
-    // Secret values are carried in credential_values, never in credential_info.
+    // Credential selection is carried in credential_values, never in credential_info.
     expect(payload.credential_values).toEqual({
       chatgpt_auth_file: "/secrets/chatgpt/account-a/auth.json",
-      access_token: "secret-access-token",
-      refresh_token: "secret-refresh-token",
     });
     // The provider/name descriptors must not leak into credential_values.
     expect(payload.credential_values).not.toHaveProperty("custom_llm_provider");

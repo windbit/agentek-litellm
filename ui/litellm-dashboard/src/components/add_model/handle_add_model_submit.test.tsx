@@ -107,30 +107,4 @@ describe("prepareModelAddRequest", () => {
     expect(deployment.litellmParamsObj.refresh_token).toBeUndefined();
     expect(deployment.litellmParamsObj.id_token).toBeUndefined();
   });
-
-  it("forwards inline ChatGPT tokens only when manual credential fields are used", async () => {
-    // The complementary case: no existing credential selected, so the manual
-    // ProviderSpecificFields values flow through into litellm_params.
-    const formValues = {
-      model_mappings: [
-        {
-          public_name: "chatgpt/gpt-5.3-codex",
-          litellm_model: "chatgpt/gpt-5.3-codex",
-        },
-      ],
-      model_name: "chatgpt/gpt-5.3-codex",
-      custom_llm_provider: "ChatGPT",
-      access_token: "inline-access-token",
-      refresh_token: "inline-refresh-token",
-    };
-
-    const deployments = await prepareModelAddRequest({ ...formValues }, "token", null);
-
-    expect(deployments).toHaveLength(1);
-    const [deployment] = deployments!;
-    expect(deployment.litellmParamsObj.custom_llm_provider).toBe("chatgpt");
-    expect(deployment.litellmParamsObj.access_token).toBe("inline-access-token");
-    expect(deployment.litellmParamsObj.refresh_token).toBe("inline-refresh-token");
-    expect(deployment.litellmParamsObj.litellm_credential_name).toBeUndefined();
-  });
 });

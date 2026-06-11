@@ -158,10 +158,9 @@ def test_azure_provider_fields_include_entra_id():
 
 def test_chatgpt_provider_fields_support_per_deployment_subscription():
     """ChatGPT provider must expose per-deployment subscription credential fields.
-    One ChatGPT subscription/account maps to one LiteLLM credential, selected
-    either via an auth file/dir or inline OAuth tokens. The field keys
-    must match what resolve_chatgpt_deployment_credential reads from litellm_params,
-    and inline secrets must be masked in the UI.
+    One ChatGPT subscription/account maps to one LiteLLM credential, selected via
+    that account's auth.json (file or directory). The field keys must match what
+    resolve_chatgpt_deployment_credential reads from litellm_params.
     """
     app = FastAPI()
     app.include_router(router)
@@ -175,24 +174,19 @@ def test_chatgpt_provider_fields_support_per_deployment_subscription():
     assert chatgpt["litellm_provider"] == "chatgpt"
 
     fields_by_key = {f["key"]: f for f in chatgpt["credential_fields"]}
-    # On-disk subscription selection (recommended)
+    # On-disk subscription selection plus an optional API base override
     assert "chatgpt_auth_file" in fields_by_key
     assert "chatgpt_token_dir" in fields_by_key
-    # Account selection header
-    assert "account_id" in fields_by_key
-    # Inline OAuth material (alternative to auth file)
-    assert "access_token" in fields_by_key
-    assert "refresh_token" in fields_by_key
-    assert "expires_at" in fields_by_key
-    # Optional API base override
     assert "chatgpt_api_base" in fields_by_key
 
-    # Inline tokens must be masked in the UI so secrets aren't exposed
-    assert fields_by_key["access_token"]["field_type"] == "password"
-    assert fields_by_key["refresh_token"]["field_type"] == "password"
+    # Raw OAuth tokens must NOT be pasteable: they don't survive refresh-token
+    # rotation, so the credential is the auth file the proxy can rewrite.
+    assert "access_token" not in fields_by_key
+    assert "refresh_token" not in fields_by_key
+    assert "expires_at" not in fields_by_key
 
-    # Every approach is optional individually — the backend treats any present
-    # value as an explicit per-deployment credential request.
+    # Every field is optional individually; the backend treats any present value
+    # as an explicit per-deployment credential request.
     for key, field in fields_by_key.items():
         assert field["required"] is False, f"{key} should not be required"
 

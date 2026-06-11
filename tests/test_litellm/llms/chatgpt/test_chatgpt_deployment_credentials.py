@@ -2,7 +2,8 @@
 Tests for per-deployment ChatGPT subscription credential resolution.
 
 One ChatGPT subscription/account maps to one LiteLLM credential, selected per
-deployment via ``litellm_credential_name`` / inline ``chatgpt_auth``.
+deployment via ``litellm_credential_name`` or ``chatgpt_auth_file`` /
+``chatgpt_token_dir`` pointing at that account's auth.json.
 
 Source:
 - litellm/llms/chatgpt/common_utils.py (resolution helpers)
@@ -34,37 +35,35 @@ def _make_jwt(payload: dict) -> str:
     return f"{_b64({'alg': 'none'})}.{_b64(payload)}."
 
 
+def _write_auth_file(tmp_path, auth: dict) -> str:
+    path = tmp_path / "auth.json"
+    path.write_text(json.dumps(auth))
+    return str(path)
+
+
 class TestResolveDeploymentCredential:
-    def test_nested_chatgpt_auth_is_requested(self):
+    def test_auth_file_is_requested(self, tmp_path):
+        path = _write_auth_file(tmp_path, {"access_token": "tok"})
         params = {
-            "chatgpt_auth": {"access_token": "tok", "refresh_token": "ref"},
+            "chatgpt_auth_file": path,
             "chatgpt_api_base": "https://acct-a.example.com",
         }
         cred = resolve_chatgpt_deployment_credential(params)
         assert cred["requested"] is True
-        assert cred["inline_auth"] == {"access_token": "tok", "refresh_token": "ref"}
+        assert cred["auth_file"] == path
         assert cred["api_base"] == "https://acct-a.example.com"
         assert chatgpt_credential_requested(params) is True
-
-    def test_flat_fields_are_requested(self):
-        params = {"access_token": "tok", "account_id": "acct-1"}
-        cred = resolve_chatgpt_deployment_credential(params)
-        assert cred["requested"] is True
-        assert cred["inline_auth"]["access_token"] == "tok"
-        assert cred["inline_auth"]["account_id"] == "acct-1"
 
     def test_token_dir_is_requested(self):
         params = {"chatgpt_token_dir": "/tmp/acct-a"}
         cred = resolve_chatgpt_deployment_credential(params)
         assert cred["requested"] is True
         assert cred["token_dir"] == "/tmp/acct-a"
-        assert cred["inline_auth"] is None
 
     def test_credential_name_only_is_requested(self):
         params = {"litellm_credential_name": "chatgpt_acct_a"}
         cred = resolve_chatgpt_deployment_credential(params)
         assert cred["requested"] is True
-        assert cred["inline_auth"] is None
 
     def test_empty_params_not_requested(self):
         assert chatgpt_credential_requested({}) is False
@@ -73,76 +72,97 @@ class TestResolveDeploymentCredential:
 
 
 class TestAuthenticatorFromLitellmParams:
-    def test_inline_valid_token(self):
+    def test_valid_token_from_auth_file(self, tmp_path):
         future = time.time() + 3600
+        path = _write_auth_file(
+            tmp_path, {"access_token": "tok-a", "expires_at": future}
+        )
         params = {
-            "chatgpt_auth": {"access_token": "tok-a", "expires_at": future},
+            "chatgpt_auth_file": path,
             "chatgpt_api_base": "https://acct-a.example.com",
         }
         auth = Authenticator.from_litellm_params(params)
         assert auth.get_access_token() == "tok-a"
         assert auth.get_api_base() == "https://acct-a.example.com"
 
-    def test_inline_account_id_from_id_token(self):
+    def test_account_id_derived_from_id_token(self, tmp_path):
         future = time.time() + 3600
         id_token = _make_jwt(
             {"https://api.openai.com/auth": {"chatgpt_account_id": "acct-xyz"}}
         )
-        params = {
-            "chatgpt_auth": {
-                "access_token": "tok-a",
-                "expires_at": future,
-                "id_token": id_token,
-            }
-        }
-        auth = Authenticator.from_litellm_params(params)
+        path = _write_auth_file(
+            tmp_path,
+            {"access_token": "tok-a", "expires_at": future, "id_token": id_token},
+        )
+        auth = Authenticator.from_litellm_params({"chatgpt_auth_file": path})
         assert auth.get_account_id() == "acct-xyz"
 
     def test_requested_but_missing_credential_fails_no_fallback(self):
-        """litellm_credential_name set but credential resolved empty -> explicit fail.
-
-        Must NOT trigger interactive device login or read the global auth file.
+        """litellm_credential_name set but credential resolved to no auth file ->
+        explicit fail. Must NOT read the global auth file or trigger device login.
         """
-        params = {"litellm_credential_name": "chatgpt_acct_a"}
-        auth = Authenticator.from_litellm_params(params)
-        with (
-            patch.object(auth, "_login_device_code") as mock_login,
-            patch.object(auth, "_read_auth_file", wraps=auth._read_auth_file),
-        ):
+        auth = Authenticator.from_litellm_params(
+            {"litellm_credential_name": "chatgpt_acct_a"}
+        )
+        assert auth.auth_file is None
+        assert auth.token_dir is None
+        with patch.object(auth, "_login_device_code") as mock_login:
             with pytest.raises(GetAccessTokenError):
                 auth.get_access_token()
             mock_login.assert_not_called()
 
-    def test_inline_expired_token_with_refresh(self):
+    def test_expired_token_refreshes_and_persists_rotated_tokens(self, tmp_path):
+        """An expired access token is refreshed and the rotated refresh token is
+        written back to the auth file, so the next request does not reuse a stale
+        (already-invalidated) refresh token.
+        """
         past = time.time() - 10
-        params = {
-            "chatgpt_auth": {
+        path = _write_auth_file(
+            tmp_path,
+            {
                 "access_token": "tok-old",
-                "refresh_token": "ref-a",
+                "refresh_token": "ref-old",
                 "expires_at": past,
-            }
-        }
-        auth = Authenticator.from_litellm_params(params)
-        refreshed = {
-            "access_token": "tok-new",
-            "refresh_token": "ref-a",
-            "id_token": "id-a",
-        }
-        with patch.object(auth, "_refresh_tokens", return_value=refreshed):
+            },
+        )
+        auth = Authenticator.from_litellm_params({"chatgpt_auth_file": path})
+
+        id_token = _make_jwt(
+            {"https://api.openai.com/auth": {"chatgpt_account_id": "acct-1"}}
+        )
+
+        class DummyClient:
+            def post(self, *args, **kwargs):
+                request = httpx.Request("POST", "https://auth.openai.com/oauth/token")
+                return httpx.Response(
+                    200,
+                    json={
+                        "access_token": "tok-new",
+                        "refresh_token": "ref-new",
+                        "id_token": id_token,
+                    },
+                    request=request,
+                )
+
+        with patch(
+            "litellm.llms.chatgpt.authenticator._get_httpx_client",
+            return_value=DummyClient(),
+        ):
             assert auth.get_access_token() == "tok-new"
 
-    def test_inline_expired_token_refresh_failure_fails(self):
+        persisted = json.loads(open(path).read())
+        assert persisted["access_token"] == "tok-new"
+        assert persisted["refresh_token"] == "ref-new"
+
+    def test_expired_token_refresh_failure_fails(self, tmp_path):
         from litellm.llms.chatgpt.common_utils import RefreshAccessTokenError
 
         past = time.time() - 10
-        params = {
-            "chatgpt_auth": {
-                "access_token": "tok-old",
-                "refresh_token": "ref-a",
-                "expires_at": past,
-            }
-        }
-        auth = Authenticator.from_litellm_params(params)
+        path = _write_auth_file(
+            tmp_path,
+            {"access_token": "tok-old", "refresh_token": "ref-a", "expires_at": past},
+        )
+        auth = Authenticator.from_litellm_params({"chatgpt_auth_file": path})
         with patch.object(
             auth,
             "_refresh_tokens",
@@ -151,7 +171,7 @@ class TestAuthenticatorFromLitellmParams:
             with pytest.raises(GetAccessTokenError):
                 auth.get_access_token()
 
-    def test_refresh_failure_error_does_not_leak_token_response_values(self):
+    def test_refresh_failure_error_does_not_leak_token_response_values(self, tmp_path):
         """Malformed OAuth refresh responses must not surface raw token values."""
 
         class DummyClient:
@@ -167,15 +187,16 @@ class TestAuthenticatorFromLitellmParams:
                 )
 
         past = time.time() - 10
-        auth = Authenticator.from_litellm_params(
+        path = _write_auth_file(
+            tmp_path,
             {
-                "litellm_credential_name": "chatgpt_acct_a",
-                "chatgpt_auth": {
-                    "access_token": "old-token",
-                    "refresh_token": "old-refresh-token",
-                    "expires_at": past,
-                },
-            }
+                "access_token": "old-token",
+                "refresh_token": "old-refresh-token",
+                "expires_at": past,
+            },
+        )
+        auth = Authenticator.from_litellm_params(
+            {"litellm_credential_name": "chatgpt_acct_a", "chatgpt_auth_file": path}
         )
 
         with patch(
@@ -190,7 +211,9 @@ class TestAuthenticatorFromLitellmParams:
         assert "LEAK_ME_REFRESH_TOKEN" not in message
         assert "old-refresh-token" not in message
 
-    def test_refresh_failure_error_does_not_leak_id_or_request_refresh_token(self):
+    def test_refresh_failure_error_does_not_leak_id_or_request_refresh_token(
+        self, tmp_path
+    ):
         """Malformed refresh errors must not leak id_token or request tokens."""
 
         class DummyClient:
@@ -206,15 +229,16 @@ class TestAuthenticatorFromLitellmParams:
                 )
 
         past = time.time() - 10
-        auth = Authenticator.from_litellm_params(
+        path = _write_auth_file(
+            tmp_path,
             {
-                "litellm_credential_name": "chatgpt_acct_a",
-                "chatgpt_auth": {
-                    "access_token": "old-token",
-                    "refresh_token": "REQUEST_REFRESH_TOKEN_SECRET",
-                    "expires_at": past,
-                },
-            }
+                "access_token": "old-token",
+                "refresh_token": "REQUEST_REFRESH_TOKEN_SECRET",
+                "expires_at": past,
+            },
+        )
+        auth = Authenticator.from_litellm_params(
+            {"litellm_credential_name": "chatgpt_acct_a", "chatgpt_auth_file": path}
         )
 
         with patch(
@@ -229,32 +253,8 @@ class TestAuthenticatorFromLitellmParams:
         assert "LEAK_ME_ID_TOKEN" not in message
         assert "REQUEST_REFRESH_TOKEN_SECRET" not in message
 
-    def test_inline_refresh_not_persisted_to_global_file(self):
-        """Inline credential refresh updates memory only; no global file write."""
-        past = time.time() - 10
-        params = {
-            "chatgpt_auth": {
-                "access_token": "tok-old",
-                "refresh_token": "ref-a",
-                "expires_at": past,
-            }
-        }
-        auth = Authenticator.from_litellm_params(params)
-        assert auth.auth_file is None  # inline mode keeps no file handle
-        with (
-            patch("builtins.open") as mock_open_call,
-            patch.object(
-                auth,
-                "_refresh_tokens",
-                return_value={"access_token": "tok-new", "refresh_token": "ref-a"},
-            ),
-        ):
-            assert auth.get_access_token() == "tok-new"
-            mock_open_call.assert_not_called()
-
     def test_not_requested_returns_global_authenticator(self):
         auth = Authenticator.from_litellm_params({})
-        assert auth._inline_auth is None
         assert auth.auth_file is not None
 
 

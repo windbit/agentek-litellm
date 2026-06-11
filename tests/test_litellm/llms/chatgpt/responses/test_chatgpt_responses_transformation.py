@@ -87,18 +87,20 @@ class TestChatGPTResponsesAPITransformation:
         assert headers["accept"] == "text/event-stream"
         assert headers["session_id"] == "session-123"
 
-    def test_validate_environment_uses_per_deployment_credential(self):
-        """An inline per-deployment credential drives auth; user-supplied
-        Authorization / ChatGPT-Account-Id must not override it (req 6)."""
+    def test_validate_environment_uses_per_deployment_credential(self, tmp_path):
+        """A per-deployment credential drives auth; user-supplied Authorization /
+        ChatGPT-Account-Id must not override it."""
         future = time.time() + 3600
+        auth_file = tmp_path / "acct_a.json"
+        auth_file.write_text(
+            json.dumps(
+                {"access_token": "tok-a", "account_id": "acct-a", "expires_at": future}
+            )
+        )
         config = ChatGPTResponsesAPIConfig()
         litellm_params = GenericLiteLLMParams(
             litellm_credential_name="chatgpt_acct_a",
-            chatgpt_auth={
-                "access_token": "tok-a",
-                "account_id": "acct-a",
-                "expires_at": future,
-            },
+            chatgpt_auth_file=str(auth_file),
         )
         headers = config.validate_environment(
             headers={
@@ -131,7 +133,6 @@ class TestChatGPTResponsesAPITransformation:
         config = ChatGPTResponsesAPIConfig()
         litellm_params = GenericLiteLLMParams(
             litellm_credential_name="chatgpt_acct_a",
-            chatgpt_auth={"access_token": "tok-a"},
             chatgpt_api_base="https://acct-a.example.com",
         )
         url = config.get_complete_url(api_base=None, litellm_params=litellm_params)

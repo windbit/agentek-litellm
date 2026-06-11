@@ -55,19 +55,15 @@ class Authenticator:
         *,
         token_dir: Optional[str] = None,
         auth_file: Optional[str] = None,
-        inline_auth: Optional[Dict[str, Any]] = None,
         api_base: Optional[str] = None,
         credential_required: bool = False,
     ) -> None:
-        # inline_auth means the credential lives entirely in memory (per-deployment
-        # OAuth); otherwise resolve an on-disk auth file (default CHATGPT_TOKEN_DIR).
-        self._inline_auth: Optional[Dict[str, Any]] = (
-            dict(inline_auth) if inline_auth is not None else None
-        )
         self._api_base_override = api_base
         self._credential_required = credential_required
 
-        if self._inline_auth is not None:
+        if credential_required and not token_dir and not auth_file:
+            # A deployment requested a credential that resolved to no auth file:
+            # fail closed rather than read the global CHATGPT_TOKEN_DIR/auth.json.
             self.token_dir: Optional[str] = None
             self.auth_file: Optional[str] = None
             return
@@ -100,21 +96,12 @@ class Authenticator:
         cred = resolve_chatgpt_deployment_credential(litellm_params)
         if not cred["requested"]:
             return cls()
-        if cred["inline_auth"] is not None:
-            return cls(
-                inline_auth=cred["inline_auth"],
-                api_base=cred["api_base"],
-                credential_required=True,
-            )
-        if cred["token_dir"] or cred["auth_file"]:
-            return cls(
-                token_dir=cred["token_dir"],
-                auth_file=cred["auth_file"],
-                api_base=cred["api_base"],
-                credential_required=True,
-            )
-        # Requested (e.g. via litellm_credential_name) but resolved empty.
-        return cls(inline_auth={}, api_base=cred["api_base"], credential_required=True)
+        return cls(
+            token_dir=cred["token_dir"],
+            auth_file=cred["auth_file"],
+            api_base=cred["api_base"],
+            credential_required=True,
+        )
 
     def get_api_base(self) -> str:
         return (
@@ -185,10 +172,6 @@ class Authenticator:
             os.makedirs(self.token_dir, exist_ok=True)
 
     def _read_auth_file(self) -> Optional[Dict[str, Any]]:
-        if self._inline_auth is not None:
-            # Empty dict means "credential requested but unresolved" -> treat as
-            # missing so get_access_token fails closed.
-            return self._inline_auth or None
         if self.auth_file is None:
             return None
         try:
@@ -201,11 +184,6 @@ class Authenticator:
             return None
 
     def _write_auth_file(self, data: Dict[str, Any]) -> None:
-        if self._inline_auth is not None:
-            # Inline credentials are not file-backed: refresh results stay in memory
-            # for this authenticator's lifetime, never persisted to the global auth file.
-            self._inline_auth = data
-            return
         if self.auth_file is None:
             return
         try:

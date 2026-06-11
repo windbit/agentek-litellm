@@ -70,19 +70,9 @@ vi.mock("../networking", async () => {
               "Path to this ChatGPT subscription's auth.json. One ChatGPT account maps to one LiteLLM credential / deployment.",
           },
           {
-            key: "account_id",
-            label: "ChatGPT Account ID",
-            placeholder: "[OPTIONAL] account/workspace id",
-          },
-          {
-            key: "access_token",
-            label: "Access Token (inline)",
-            field_type: "password",
-          },
-          {
-            key: "refresh_token",
-            label: "Refresh Token (inline)",
-            field_type: "password",
+            key: "chatgpt_token_dir",
+            label: "Subscription Token Directory",
+            placeholder: "/secrets/chatgpt/account-a",
           },
         ],
       },
@@ -214,7 +204,6 @@ describe("ProviderSpecificFields", () => {
   });
 
   it("should render the ChatGPT subscription credential fields", async () => {
-    // Inline token fields must render as password inputs so secrets are not shoulder-surfed.
     const queryClient = createQueryClient();
     render(
       <QueryClientProvider client={queryClient}>
@@ -229,16 +218,8 @@ describe("ProviderSpecificFields", () => {
       expect(authFileInput).toBeInTheDocument();
       expect(authFileInput).toHaveAttribute("type", "text");
 
-      const accountIdInput = screen.getByPlaceholderText("[OPTIONAL] account/workspace id");
-      expect(accountIdInput).toBeInTheDocument();
-
-      const accessTokenInput = screen.getByLabelText("Access Token (inline)");
-      expect(accessTokenInput).toBeInTheDocument();
-      expect(accessTokenInput).toHaveAttribute("type", "password");
-
-      const refreshTokenInput = screen.getByLabelText("Refresh Token (inline)");
-      expect(refreshTokenInput).toBeInTheDocument();
-      expect(refreshTokenInput).toHaveAttribute("type", "password");
+      const tokenDirInput = screen.getByPlaceholderText("/secrets/chatgpt/account-a");
+      expect(tokenDirInput).toBeInTheDocument();
     });
   });
 
