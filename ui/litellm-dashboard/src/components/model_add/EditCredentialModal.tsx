@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import ProviderSpecificFields from "../add_model/provider_specific_fields";
 import { CredentialItem } from "../networking";
 import { Providers, providerLogoMap } from "../provider_info_helpers";
+import { credentialProviderToEnumKey } from "./credential_utils";
 const { Link } = Typography;
 
 interface EditCredentialsModalProps {
@@ -47,12 +48,17 @@ export default function EditCredentialsModal({
         {} as Record<string, any>,
       );
 
+      // Stored slugs (e.g. ChatGPT's "chatgpt") are mapped back to the dropdown's
+      // enum key so the provider renders correctly and re-saves consistently.
+      const providerEnumKey = credentialProviderToEnumKey(
+        existingCredential.credential_info.custom_llm_provider as string,
+      );
       form.setFieldsValue({
         credential_name: existingCredential.credential_name,
-        custom_llm_provider: existingCredential.credential_info.custom_llm_provider,
+        custom_llm_provider: providerEnumKey,
         ...credentialValues,
       });
-      setSelectedProvider(existingCredential.credential_info.custom_llm_provider as Providers);
+      setSelectedProvider(providerEnumKey as Providers);
     }
   }, [existingCredential]);
 

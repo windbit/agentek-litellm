@@ -78,6 +78,22 @@ describe("provider_info_helpers", () => {
       expect(result.displayName).toBe(Providers.ZAI);
     });
 
+    it("should map chatgpt provider value to the ChatGPT display name and logo", () => {
+      // The backend exposes a `chatgpt` provider; the UI must resolve it so the
+      // Add Model dropdown shows a labelled entry instead of the raw slug.
+      const result = getProviderLogoAndName("chatgpt");
+      expect(result.displayName).toBe(Providers.ChatGPT);
+      expect(result.logo).toBe(providerLogoMap[Providers.ChatGPT]);
+    });
+
+    it("should resolve ChatGPT in both lookup directions (key, enum value, and slug)", () => {
+      // The display name must equal the enum key, else provider_map[Providers.ChatGPT] breaks.
+      expect(Providers.ChatGPT).toBe("ChatGPT");
+      expect(provider_map["ChatGPT"]).toBe("chatgpt");
+      expect(provider_map[Providers.ChatGPT]).toBe("chatgpt");
+      expect(getProviderLogoAndName("chatgpt").displayName).toBe(Providers.ChatGPT);
+    });
+
     it("should return provider value as display name when no mapping exists", () => {
       const unknownProvider = "unknown_provider";
       const result = getProviderLogoAndName(unknownProvider);
@@ -189,6 +205,10 @@ describe("provider_info_helpers", () => {
 
     it("should return zai/glm-4.5 placeholder for Z.AI provider", () => {
       expect(getPlaceholder(Providers.ZAI)).toBe("zai/glm-4.5");
+    });
+
+    it("should return chatgpt/gpt-5.3-codex placeholder for ChatGPT provider", () => {
+      expect(getPlaceholder(Providers.ChatGPT)).toBe("chatgpt/gpt-5.3-codex");
     });
 
     it("should return default gpt-3.5-turbo placeholder for unknown provider", () => {

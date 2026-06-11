@@ -57,6 +57,36 @@ vi.mock("../networking", async () => {
         ],
       },
       {
+        provider: "ChatGPT",
+        provider_display_name: Providers.ChatGPT,
+        litellm_provider: "chatgpt",
+        default_model_placeholder: "chatgpt/gpt-5.3-codex",
+        credential_fields: [
+          {
+            key: "chatgpt_auth_file",
+            label: "Subscription Auth File",
+            placeholder: "/secrets/chatgpt/account-a/auth.json",
+            tooltip:
+              "Path to this ChatGPT subscription's auth.json. One ChatGPT account maps to one LiteLLM credential / deployment.",
+          },
+          {
+            key: "account_id",
+            label: "ChatGPT Account ID",
+            placeholder: "[OPTIONAL] account/workspace id",
+          },
+          {
+            key: "access_token",
+            label: "Access Token (inline)",
+            field_type: "password",
+          },
+          {
+            key: "refresh_token",
+            label: "Refresh Token (inline)",
+            field_type: "password",
+          },
+        ],
+      },
+      {
         provider: "Azure",
         provider_display_name: Providers.Azure,
         litellm_provider: "azure",
@@ -180,6 +210,35 @@ describe("ProviderSpecificFields", () => {
       const apiBaseInput = screen.getByPlaceholderText("https://...");
       expect(apiBaseInput).toBeInTheDocument();
       expect(apiBaseInput).toHaveAttribute("type", "text");
+    });
+  });
+
+  it("should render the ChatGPT subscription credential fields", async () => {
+    // Inline token fields must render as password inputs so secrets are not shoulder-surfed.
+    const queryClient = createQueryClient();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <Form>
+          <ProviderSpecificFields selectedProvider={Providers.ChatGPT} />
+        </Form>
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => {
+      const authFileInput = screen.getByPlaceholderText("/secrets/chatgpt/account-a/auth.json");
+      expect(authFileInput).toBeInTheDocument();
+      expect(authFileInput).toHaveAttribute("type", "text");
+
+      const accountIdInput = screen.getByPlaceholderText("[OPTIONAL] account/workspace id");
+      expect(accountIdInput).toBeInTheDocument();
+
+      const accessTokenInput = screen.getByLabelText("Access Token (inline)");
+      expect(accessTokenInput).toBeInTheDocument();
+      expect(accessTokenInput).toHaveAttribute("type", "password");
+
+      const refreshTokenInput = screen.getByLabelText("Refresh Token (inline)");
+      expect(refreshTokenInput).toBeInTheDocument();
+      expect(refreshTokenInput).toHaveAttribute("type", "password");
     });
   });
 

@@ -6,6 +6,46 @@ import { prepareModelAddRequest } from "./handle_add_model_submit";
 import NotificationsManager from "../molecules/notifications_manager";
 const { Text } = Typography;
 
+// Header values masked in the curl preview as defense-in-depth; the backend
+// already masks them in raw_request_headers.
+const SENSITIVE_HEADER_PATTERNS = ["authorization", "token", "key", "secret", "credential", "chatgpt-account-id"];
+
+export const maskHeaderValue = (headerName: string, value: string): string => {
+  const isSensitive = SENSITIVE_HEADER_PATTERNS.some((pattern) => headerName.toLowerCase().includes(pattern));
+  if (!isSensitive || !value) {
+    return value;
+  }
+  if (value.length <= 4) {
+    return "*****";
+  }
+  return `${value.slice(0, 2)}****${value.slice(-2)}`;
+};
+
+export const sanitizeCurlHeaders = (headers: Record<string, string>): Record<string, string> =>
+  Object.fromEntries(Object.entries(headers).map(([key, value]) => [key, maskHeaderValue(key, value)]));
+
+export const formatCurlCommand = (
+  apiBase: string,
+  requestBody: Record<string, any>,
+  requestHeaders: Record<string, string>,
+) => {
+  const formattedBody = JSON.stringify(requestBody, null, 2)
+    .split("\n")
+    .map((line) => `  ${line}`)
+    .join("\n");
+
+  const headerString = Object.entries(sanitizeCurlHeaders(requestHeaders))
+    .map(([key, value]) => `-H '${key}: ${value}'`)
+    .join(" \\\n  ");
+
+  return `curl -X POST \\
+  ${apiBase} \\
+  ${headerString ? `${headerString} \\\n  ` : ""}-H 'Content-Type: application/json' \\
+  -d '{
+${formattedBody}
+  }'`;
+};
+
 interface ModelConnectionTestProps {
   formValues: Record<string, any>;
   accessToken: string;
@@ -106,28 +146,8 @@ const ModelConnectionTest: React.FC<ModelConnectionTestProps> = ({
         ? getCleanErrorMessage(error.message)
         : "Unknown error";
 
-  const formatCurlCommand = (
-    apiBase: string,
-    requestBody: Record<string, any>,
-    requestHeaders: Record<string, string>,
-  ) => {
-    const formattedBody = JSON.stringify(requestBody, null, 2)
-      .split("\n")
-      .map((line) => `  ${line}`)
-      .join("\n");
-
-    const headerString = Object.entries(requestHeaders)
-      .map(([key, value]) => `-H '${key}: ${value}'`)
-      .join(" \\\n  ");
-
-    return `curl -X POST \\
-  ${apiBase} \\
-  ${headerString ? `${headerString} \\\n  ` : ""}-H 'Content-Type: application/json' \\
-  -d '{
-${formattedBody}
-  }'`;
-  };
-
+  // Backend already masks headers in raw_request_typed_dict; formatCurlCommand
+  // re-masks as defense-in-depth (ChatGPT OAuth secrets travel in headers).
   const curlCommand = rawResponse
     ? formatCurlCommand(
         rawResponse.raw_request_api_base,
