@@ -1632,6 +1632,18 @@ def completion(  # type: ignore # noqa: PLR0915
             tpm=kwargs.get("tpm"),
             rpm=kwargs.get("rpm"),
         )
+        # ChatGPT subscription deployments (issue #230) select an account via a
+        # per-deployment credential. get_litellm_params() drops these non-standard
+        # keys, so forward them from kwargs into litellm_params here. This is the
+        # single injection point that covers both the Chat Completions path (which
+        # is bridged to the Responses API) and the native Responses API, since both
+        # flow litellm_params into ChatGPTResponsesAPIConfig.validate_environment.
+        if custom_llm_provider == "chatgpt":
+            from litellm.llms.chatgpt.common_utils import (
+                forward_chatgpt_deployment_params,
+            )
+
+            forward_chatgpt_deployment_params(litellm_params, kwargs)
         cast(LiteLLMLoggingObj, logging).update_environment_variables(
             model=model,
             user=user,

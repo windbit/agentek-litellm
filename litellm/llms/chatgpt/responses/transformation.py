@@ -23,9 +23,12 @@ from ..authenticator import Authenticator
 from ..common_utils import (
     CHATGPT_API_BASE,
     GetAccessTokenError,
+    chatgpt_credential_requested,
     ensure_chatgpt_session_id,
     get_chatgpt_default_headers,
     get_chatgpt_default_instructions,
+    merge_chatgpt_request_headers,
+    resolve_chatgpt_deployment_credential,
 )
 
 
@@ -38,14 +41,22 @@ class ChatGPTResponsesAPIConfig(OpenAIResponsesAPIConfig):
     def custom_llm_provider(self) -> LlmProviders:
         return LlmProviders.CHATGPT
 
+    def _get_authenticator(self, litellm_params: Optional[Any]) -> Authenticator:
+        """Resolve the per-deployment credential, falling back to the global
+        authenticator only when no credential was requested."""
+        if chatgpt_credential_requested(litellm_params):
+            return Authenticator.from_litellm_params(litellm_params)
+        return self.authenticator
+
     def validate_environment(
         self,
         headers: dict,
         model: str,
         litellm_params: Optional[GenericLiteLLMParams],
     ) -> dict:
+        authenticator = self._get_authenticator(litellm_params)
         try:
-            access_token = self.authenticator.get_access_token()
+            access_token = authenticator.get_access_token()
         except GetAccessTokenError as e:
             raise AuthenticationError(
                 model=model,
@@ -53,12 +64,13 @@ class ChatGPTResponsesAPIConfig(OpenAIResponsesAPIConfig):
                 message=str(e),
             )
 
-        account_id = self.authenticator.get_account_id()
+        account_id = authenticator.get_account_id()
         session_id = ensure_chatgpt_session_id(litellm_params)
         default_headers = get_chatgpt_default_headers(
             access_token, account_id, session_id
         )
-        return {**default_headers, **headers}
+        # User-supplied headers may not override credential-derived auth headers.
+        return merge_chatgpt_request_headers(default_headers, headers)
 
     def transform_responses_api_request(
         self,
@@ -105,7 +117,33 @@ class ChatGPTResponsesAPIConfig(OpenAIResponsesAPIConfig):
             "truncation",
         }
 
+        # The shared HTTP handler re-applies user-supplied extra_headers AFTER
+        # validate_environment, which would let a request override the
+        # credential's Authorization / ChatGPT-Account-Id. This transform hook is
+        # the last point with access to the outbound `headers` dict before the
+        # request is sent, so re-assert the per-deployment credential here (req 6).
+        if chatgpt_credential_requested(litellm_params):
+            self._reassert_credential_headers(headers, litellm_params)
+
         return {k: v for k, v in request.items() if k in allowed_keys}
+
+    def _reassert_credential_headers(
+        self, headers: dict, litellm_params: Optional[Any]
+    ) -> None:
+        """Force credential-derived auth headers to win over user-supplied ones.
+
+        Only invoked for per-deployment credentials; the global-auth path keeps
+        its pre-existing header precedence.
+        """
+        authenticator = self._get_authenticator(litellm_params)
+        try:
+            access_token = authenticator.get_access_token()
+        except GetAccessTokenError:
+            return
+        headers["Authorization"] = f"Bearer {access_token}"
+        account_id = authenticator.get_account_id()
+        if account_id:
+            headers["ChatGPT-Account-Id"] = account_id
 
     def transform_response_api_response(
         self,
@@ -252,7 +290,18 @@ class ChatGPTResponsesAPIConfig(OpenAIResponsesAPIConfig):
         api_base: Optional[str],
         litellm_params: dict,
     ) -> str:
-        api_base = api_base or self.authenticator.get_api_base() or CHATGPT_API_BASE
+        # A per-deployment credential's api_base must win over the global
+        # api_base resolved during provider discovery (issue #230), otherwise the
+        # account-scoped base is silently replaced by the global default.
+        credential_api_base = resolve_chatgpt_deployment_credential(litellm_params)[
+            "api_base"
+        ]
+        api_base = (
+            credential_api_base
+            or api_base
+            or self._get_authenticator(litellm_params).get_api_base()
+            or CHATGPT_API_BASE
+        )
         api_base = api_base.rstrip("/")
         return f"{api_base}/responses"
 

@@ -20,6 +20,7 @@ from .common_utils import (
     GetAccessTokenError,
     GetDeviceCodeError,
     RefreshAccessTokenError,
+    resolve_chatgpt_deployment_credential,
 )
 
 TOKEN_EXPIRY_SKEW_SECONDS = 60
@@ -29,19 +30,77 @@ DEVICE_CODE_POLL_SLEEP_SECONDS = 5
 
 
 class Authenticator:
-    def __init__(self) -> None:
-        self.token_dir = os.getenv(
-            "CHATGPT_TOKEN_DIR",
-            os.path.expanduser("~/.config/litellm/chatgpt"),
+    def __init__(
+        self,
+        *,
+        token_dir: Optional[str] = None,
+        auth_file: Optional[str] = None,
+        inline_auth: Optional[Dict[str, Any]] = None,
+        api_base: Optional[str] = None,
+        credential_required: bool = False,
+    ) -> None:
+        # When ``inline_auth`` is provided the credential lives entirely in
+        # memory (per-deployment OAuth tokens). Otherwise we resolve an on-disk
+        # auth file, defaulting to the global CHATGPT_TOKEN_DIR location.
+        self._inline_auth: Optional[Dict[str, Any]] = (
+            dict(inline_auth) if inline_auth is not None else None
         )
-        self.auth_file = os.path.join(
-            self.token_dir, os.getenv("CHATGPT_AUTH_FILE", "auth.json")
+        self._api_base_override = api_base
+        self._credential_required = credential_required
+
+        if self._inline_auth is not None:
+            self.token_dir: Optional[str] = None
+            self.auth_file: Optional[str] = None
+            return
+
+        resolved_token_dir = (
+            token_dir
+            or os.getenv("CHATGPT_TOKEN_DIR")
+            or os.path.expanduser("~/.config/litellm/chatgpt")
         )
+        if auth_file and os.path.isabs(auth_file):
+            resolved_auth_file = auth_file
+        else:
+            resolved_auth_file = os.path.join(
+                resolved_token_dir,
+                auth_file or os.getenv("CHATGPT_AUTH_FILE") or "auth.json",
+            )
+        self.token_dir = resolved_token_dir
+        self.auth_file = resolved_auth_file
         self._ensure_token_dir()
+
+    @classmethod
+    def from_litellm_params(cls, litellm_params: Optional[Any]) -> "Authenticator":
+        """Build an Authenticator scoped to a deployment's credential.
+
+        Falls back to the global authenticator only when no credential was
+        requested. When a credential is requested but cannot be resolved, the
+        returned authenticator fails closed (no global fallback, no interactive
+        device login).
+        """
+        cred = resolve_chatgpt_deployment_credential(litellm_params)
+        if not cred["requested"]:
+            return cls()
+        if cred["inline_auth"] is not None:
+            return cls(
+                inline_auth=cred["inline_auth"],
+                api_base=cred["api_base"],
+                credential_required=True,
+            )
+        if cred["token_dir"] or cred["auth_file"]:
+            return cls(
+                token_dir=cred["token_dir"],
+                auth_file=cred["auth_file"],
+                api_base=cred["api_base"],
+                credential_required=True,
+            )
+        # Requested (e.g. via litellm_credential_name) but resolved empty.
+        return cls(inline_auth={}, api_base=cred["api_base"], credential_required=True)
 
     def get_api_base(self) -> str:
         return (
-            os.getenv("CHATGPT_API_BASE")
+            self._api_base_override
+            or os.getenv("CHATGPT_API_BASE")
             or os.getenv("OPENAI_CHATGPT_API_BASE")
             or CHATGPT_API_BASE
         )
@@ -58,9 +117,25 @@ class Authenticator:
                     refreshed = self._refresh_tokens(refresh_token)
                     return refreshed["access_token"]
                 except RefreshAccessTokenError as exc:
+                    if self._credential_required:
+                        raise GetAccessTokenError(
+                            message=f"ChatGPT deployment credential token refresh failed: {exc}",
+                            status_code=401,
+                        )
                     verbose_logger.warning(
                         "ChatGPT refresh token failed, re-login required: %s", exc
                     )
+
+        # A deployment that explicitly requested a credential must fail closed:
+        # never read the global auth file or trigger interactive device login.
+        if self._credential_required:
+            raise GetAccessTokenError(
+                message=(
+                    "ChatGPT deployment credential is missing or has no valid "
+                    "access token; refusing to fall back to global ChatGPT auth."
+                ),
+                status_code=401,
+            )
 
         cooldown_remaining = self._get_device_code_cooldown_remaining(auth_data)
         if cooldown_remaining > 0:
@@ -87,10 +162,16 @@ class Authenticator:
         return derived
 
     def _ensure_token_dir(self) -> None:
-        if not os.path.exists(self.token_dir):
+        if self.token_dir and not os.path.exists(self.token_dir):
             os.makedirs(self.token_dir, exist_ok=True)
 
     def _read_auth_file(self) -> Optional[Dict[str, Any]]:
+        if self._inline_auth is not None:
+            # Empty dict means "credential requested but unresolved" -> treat as
+            # missing so get_access_token fails closed.
+            return self._inline_auth or None
+        if self.auth_file is None:
+            return None
         try:
             with open(self.auth_file, "r") as f:
                 return json.load(f)
@@ -101,6 +182,14 @@ class Authenticator:
             return None
 
     def _write_auth_file(self, data: Dict[str, Any]) -> None:
+        if self._inline_auth is not None:
+            # Inline credentials are not backed by a file. Refresh results live
+            # in memory for the lifetime of this authenticator only (see residual
+            # risk note in the PR): we never write them to the global auth file.
+            self._inline_auth = data
+            return
+        if self.auth_file is None:
+            return
         try:
             with open(self.auth_file, "w") as f:
                 json.dump(data, f)

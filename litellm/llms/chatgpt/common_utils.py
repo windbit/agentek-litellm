@@ -294,3 +294,112 @@ def get_chatgpt_session_id(litellm_params: Optional[Any]) -> Optional[str]:
 
 def ensure_chatgpt_session_id(litellm_params: Optional[Any]) -> str:
     return get_chatgpt_session_id(litellm_params) or str(uuid4())
+
+
+# Per-deployment ChatGPT credential resolution (issue #230).
+#
+# One ChatGPT subscription/account maps to one LiteLLM credential. A deployment
+# selects its account either via ``litellm_credential_name`` (whose values are
+# merged into litellm_params/kwargs by ``load_credentials_from_list``) or by
+# carrying the OAuth material inline. We support three inline shapes, in
+# priority order: a nested ``chatgpt_auth``/``chatgpt_oauth`` dict, flat OAuth
+# fields, or a plain ``api_key`` used as the access token.
+_CHATGPT_NESTED_AUTH_KEYS = ("chatgpt_auth", "chatgpt_oauth")
+_CHATGPT_FLAT_AUTH_KEYS = (
+    "access_token",
+    "refresh_token",
+    "id_token",
+    "expires_at",
+    "account_id",
+)
+
+# Credential-derived headers that user-supplied headers must never override.
+CHATGPT_CREDENTIAL_HEADER_KEYS = ("Authorization", "ChatGPT-Account-Id")
+
+
+def resolve_chatgpt_deployment_credential(litellm_params: Optional[Any]) -> dict:
+    """Resolve a deployment's ChatGPT credential from litellm_params/kwargs.
+
+    Returns a dict with:
+      - ``requested``: whether this deployment explicitly asked for a credential.
+        When True, the caller must fail rather than fall back to the global
+        ``CHATGPT_TOKEN_DIR``/auth.json.
+      - ``inline_auth``: an in-memory auth.json-style dict (or None).
+      - ``token_dir`` / ``auth_file``: per-deployment on-disk credential location.
+      - ``api_base``: per-deployment ChatGPT API base override.
+    """
+    params = _normalize_litellm_params(litellm_params)
+
+    inline_auth: Optional[dict] = None
+    for key in _CHATGPT_NESTED_AUTH_KEYS:
+        nested = params.get(key)
+        if isinstance(nested, dict) and nested:
+            inline_auth = dict(nested)
+            break
+    if inline_auth is None:
+        flat = {
+            k: params[k] for k in _CHATGPT_FLAT_AUTH_KEYS if params.get(k) is not None
+        }
+        if flat:
+            inline_auth = flat
+        elif params.get("api_key"):
+            inline_auth = {"access_token": params["api_key"]}
+
+    token_dir = params.get("chatgpt_token_dir")
+    auth_file = params.get("chatgpt_auth_file")
+    api_base = params.get("chatgpt_api_base")
+
+    requested = bool(
+        params.get("litellm_credential_name")
+        or inline_auth is not None
+        or token_dir
+        or auth_file
+    )
+
+    return {
+        "requested": requested,
+        "inline_auth": inline_auth,
+        "token_dir": token_dir,
+        "auth_file": auth_file,
+        "api_base": api_base,
+    }
+
+
+def chatgpt_credential_requested(litellm_params: Optional[Any]) -> bool:
+    """Whether a per-deployment ChatGPT credential was explicitly requested."""
+    return resolve_chatgpt_deployment_credential(litellm_params)["requested"]
+
+
+# Keys that carry a deployment's ChatGPT credential selection. These are
+# non-standard and dropped by get_litellm_params(), so completion() must forward
+# them explicitly into litellm_params for the Responses-API bridge to see them.
+CHATGPT_DEPLOYMENT_PARAM_KEYS = (
+    "litellm_credential_name",
+    "chatgpt_auth",
+    "chatgpt_oauth",
+    "chatgpt_api_base",
+    "chatgpt_token_dir",
+    "chatgpt_auth_file",
+    *_CHATGPT_FLAT_AUTH_KEYS,
+)
+
+
+def forward_chatgpt_deployment_params(litellm_params: dict, source: dict) -> None:
+    """Copy ChatGPT per-deployment credential keys from ``source`` (request
+    kwargs) into ``litellm_params`` in place, without overwriting existing keys."""
+    for key in CHATGPT_DEPLOYMENT_PARAM_KEYS:
+        value = source.get(key)
+        if value is not None and litellm_params.get(key) is None:
+            litellm_params[key] = value
+
+
+def merge_chatgpt_request_headers(
+    credential_headers: dict, user_headers: Optional[dict]
+) -> dict:
+    """Merge user headers over credential headers, but never let user-supplied
+    values override the credential-derived Authorization / ChatGPT-Account-Id."""
+    merged = {**credential_headers, **(user_headers or {})}
+    for key in CHATGPT_CREDENTIAL_HEADER_KEYS:
+        if key in credential_headers:
+            merged[key] = credential_headers[key]
+    return merged
