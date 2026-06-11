@@ -37,6 +37,16 @@ class ChatGPTResponsesAPIConfig(OpenAIResponsesAPIConfig):
     def __init__(self) -> None:
         super().__init__()
         self.authenticator = Authenticator()
+        # Per-request cache of the per-deployment authenticator, keyed by the
+        # identity of the litellm_params object. validate_environment() and
+        # transform_responses_api_request() run sequentially within one request
+        # on the same config instance (a fresh ChatGPTResponsesAPIConfig is
+        # created per request) and receive the same litellm_params object, so
+        # caching lets the header reassertion REUSE the access token/account id
+        # already resolved (and possibly refreshed) during validate_environment
+        # instead of refreshing a second time. A second refresh would fail for
+        # rotating refresh tokens and is the source of the credential-leak bug.
+        self._deployment_authenticators: Dict[int, Authenticator] = {}
 
     @property
     def custom_llm_provider(self) -> LlmProviders:
@@ -44,9 +54,18 @@ class ChatGPTResponsesAPIConfig(OpenAIResponsesAPIConfig):
 
     def _get_authenticator(self, litellm_params: Optional[Any]) -> Authenticator:
         """Resolve the per-deployment credential, falling back to the global
-        authenticator only when no credential was requested."""
+        authenticator only when no credential was requested.
+
+        For per-deployment credentials the authenticator is cached per request
+        so the access token resolved during validate_environment is reused by
+        the later header reassertion rather than re-refreshed."""
         if chatgpt_credential_requested(litellm_params):
-            return Authenticator.from_litellm_params(litellm_params)
+            key = id(litellm_params)
+            cached = self._deployment_authenticators.get(key)
+            if cached is None:
+                cached = Authenticator.from_litellm_params(litellm_params)
+                self._deployment_authenticators[key] = cached
+            return cached
         return self.authenticator
 
     def validate_environment(
@@ -124,24 +143,42 @@ class ChatGPTResponsesAPIConfig(OpenAIResponsesAPIConfig):
         # the last point with access to the outbound `headers` dict before the
         # request is sent, so re-assert the per-deployment credential here (req 6).
         if chatgpt_credential_requested(litellm_params):
-            self._reassert_credential_headers(headers, litellm_params)
+            self._reassert_credential_headers(headers, model, litellm_params)
 
         return {k: v for k, v in request.items() if k in allowed_keys}
 
     def _reassert_credential_headers(
-        self, headers: dict, litellm_params: Optional[Any]
+        self, headers: dict, model: str, litellm_params: Optional[Any]
     ) -> None:
         """Force credential-derived auth headers to win over user-supplied ones.
 
         Only invoked for per-deployment credentials; the global-auth path keeps
         its pre-existing header precedence.
+
+        Security-critical: the shared HTTP handler merges user ``extra_headers``
+        over the headers returned by ``validate_environment``, so a request can
+        smuggle a case-variant (or exact-case) ``Authorization`` /
+        ``ChatGPT-Account-Id`` back in. We:
+
+        1. Strip every credential-header variant FIRST, so even if token
+           resolution fails below no attacker-supplied auth header survives.
+        2. Reuse the authenticator from validate_environment (cached per
+           request), which already holds the resolved/refreshed token — avoiding
+           a second refresh that would fail for rotating refresh tokens.
+        3. Fail closed (raise) if the credential cannot be resolved, rather than
+           silently returning and sending the request with stripped/absent auth.
         """
+        # Strip first: failure past this point cannot leak attacker auth headers.
+        remove_chatgpt_credential_header_variants(headers)
         authenticator = self._get_authenticator(litellm_params)
         try:
             access_token = authenticator.get_access_token()
-        except GetAccessTokenError:
-            return
-        remove_chatgpt_credential_header_variants(headers)
+        except GetAccessTokenError as e:
+            raise AuthenticationError(
+                model=model,
+                llm_provider="chatgpt",
+                message=str(e),
+            )
         headers["Authorization"] = f"Bearer {access_token}"
         account_id = authenticator.get_account_id()
         if account_id:
