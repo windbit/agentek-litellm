@@ -1641,6 +1641,16 @@ def completion(  # type: ignore # noqa: PLR0915
             use_xai_oauth=kwargs.get("use_xai_oauth", False),
             aws_bedrock_project_id=kwargs.get("aws_bedrock_project_id"),
         )
+        # ChatGPT subscription deployments select an account via a per-deployment
+        # credential, but get_litellm_params() drops these non-standard keys, so
+        # forward them from kwargs. Single injection point for both the Chat
+        # Completions (bridged to Responses) and native Responses paths.
+        if custom_llm_provider == "chatgpt":
+            from litellm.llms.chatgpt.common_utils import (
+                forward_chatgpt_deployment_params,
+            )
+
+            forward_chatgpt_deployment_params(litellm_params, kwargs)
         cast(LiteLLMLoggingObj, logging).update_environment_variables(
             model=model,
             user=user,

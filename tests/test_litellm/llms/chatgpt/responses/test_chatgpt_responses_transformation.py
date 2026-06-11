@@ -7,6 +7,7 @@ Source: litellm/llms/chatgpt/responses/transformation.py
 import json
 import os
 import sys
+import time
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -85,6 +86,56 @@ class TestChatGPTResponsesAPITransformation:
         assert headers["content-type"] == "application/json"
         assert headers["accept"] == "text/event-stream"
         assert headers["session_id"] == "session-123"
+
+    def test_validate_environment_uses_per_deployment_credential(self):
+        """An inline per-deployment credential drives auth; user-supplied
+        Authorization / ChatGPT-Account-Id must not override it (req 6)."""
+        future = time.time() + 3600
+        config = ChatGPTResponsesAPIConfig()
+        litellm_params = GenericLiteLLMParams(
+            litellm_credential_name="chatgpt_acct_a",
+            chatgpt_auth={
+                "access_token": "tok-a",
+                "account_id": "acct-a",
+                "expires_at": future,
+            },
+        )
+        headers = config.validate_environment(
+            headers={
+                "authorization": "Bearer attacker",
+                "CHATGPT-ACCOUNT-ID": "acct-attacker",
+                "originator": "custom-origin",
+            },
+            model="gpt-5.4",
+            litellm_params=litellm_params,
+        )
+        assert headers["Authorization"] == "Bearer tok-a"
+        assert headers["ChatGPT-Account-Id"] == "acct-a"
+        assert "authorization" not in headers
+        assert "CHATGPT-ACCOUNT-ID" not in headers
+        assert headers["originator"] == "custom-origin"
+
+    def test_validate_environment_missing_credential_raises(self):
+        from litellm.exceptions import AuthenticationError
+
+        config = ChatGPTResponsesAPIConfig()
+        litellm_params = GenericLiteLLMParams(
+            litellm_credential_name="chatgpt_acct_missing"
+        )
+        with pytest.raises(AuthenticationError):
+            config.validate_environment(
+                headers={}, model="gpt-5.4", litellm_params=litellm_params
+            )
+
+    def test_get_complete_url_uses_per_deployment_api_base(self):
+        config = ChatGPTResponsesAPIConfig()
+        litellm_params = GenericLiteLLMParams(
+            litellm_credential_name="chatgpt_acct_a",
+            chatgpt_auth={"access_token": "tok-a"},
+            chatgpt_api_base="https://acct-a.example.com",
+        )
+        url = config.get_complete_url(api_base=None, litellm_params=litellm_params)
+        assert url == "https://acct-a.example.com/responses"
 
     @pytest.mark.parametrize(
         "model_name",
