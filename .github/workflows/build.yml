@@ -1,7 +1,7 @@
 # Builds ghcr.io/windbit/agentek-litellm from this fork's Dockerfile (admin UI is
 # built here, not committed). Mirrors agentek-hermes: PRs build to validate, push
 # to master publishes :sha and :latest for the helm-litellm image.tag bump.
-name: windbit-build
+name: build
 
 on:
   push:
@@ -9,7 +9,7 @@ on:
   pull_request:
 
 concurrency:
-  group: windbit-build-${{ github.ref }}
+  group: build-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
