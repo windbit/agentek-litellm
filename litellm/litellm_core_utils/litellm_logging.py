@@ -3708,6 +3708,7 @@ def _get_masked_values(
         "credentials",
         "password",
         "passwd",
+        "chatgpt-account-id",
     ]
 
     def _mask_value(v: Any) -> Any:

@@ -123,3 +123,6 @@ crash.*.log
 # and should be committed.
 .vscode
 .pin_list.txt
+
+# Prebuilt admin dashboard export; generated at image build by docker/build_admin_ui.sh
+litellm/proxy/_experimental/out/

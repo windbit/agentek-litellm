@@ -17,6 +17,7 @@ export enum Providers {
   BASETEN = "Baseten",
   BYTEZ = "Bytez",
   Cerebras = "Cerebras",
+  ChatGPT = "ChatGPT",
   CLARIFAI = "Clarifai",
   CLOUDFLARE = "Cloudflare",
   CODESTRAL = "Codestral",
@@ -125,6 +126,7 @@ export const provider_map: Record<string, string> = {
   BedrockMantle: "bedrock_mantle",
   BYTEZ: "bytez",
   Cerebras: "cerebras",
+  ChatGPT: "chatgpt",
   CLARIFAI: "clarifai",
   CLOUDFLARE: "cloudflare",
   CODESTRAL: "codestral",
@@ -235,6 +237,7 @@ export const providerLogoMap: Record<string, string> = {
   [Providers.BedrockMantle]: `${asset_logos_folder}bedrock.svg`,
   [Providers.SageMaker]: `${asset_logos_folder}bedrock.svg`,
   [Providers.Cerebras]: `${asset_logos_folder}cerebras.svg`,
+  [Providers.ChatGPT]: `${asset_logos_folder}openai_small.svg`,
   [Providers.CLOUDFLARE]: `${asset_logos_folder}cloudflare.svg`,
   [Providers.CODESTRAL]: `${asset_logos_folder}mistral.svg`,
   [Providers.Cohere]: `${asset_logos_folder}cohere.svg`,
@@ -373,6 +376,8 @@ export const getPlaceholder = (selectedProvider: string): string => {
     return "cursor/claude-4-sonnet";
   } else if (selectedProvider === Providers.ZAI) {
     return "zai/glm-4.5";
+  } else if (selectedProvider === Providers.ChatGPT) {
+    return "chatgpt/gpt-5.3-codex";
   } else {
     return "gpt-3.5-turbo";
   }

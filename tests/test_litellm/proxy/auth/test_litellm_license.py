@@ -1,12 +1,7 @@
-import asyncio
-import json
 import os
 import sys
-from unittest.mock import AsyncMock, MagicMock, patch
 
-sys.path.insert(
-    0, os.path.abspath("../../..")
-)  # Adds the parent directory to the system path
+sys.path.insert(0, os.path.abspath("../../.."))  # Adds the parent directory to the system path
 
 from litellm.proxy.auth.litellm_license import LicenseCheck
 
@@ -14,15 +9,31 @@ from litellm.proxy.auth.litellm_license import LicenseCheck
 def test_read_public_key_loads_successfully():
     """Ensure public_key.pem is valid PEM with no leading whitespace."""
     license_check = LicenseCheck()
-    assert (
-        license_check.public_key is not None
-    ), "public_key.pem could not be loaded — check for leading whitespace or malformed PEM header"
+    assert license_check.public_key is not None, (
+        "public_key.pem could not be loaded — check for leading whitespace or malformed PEM header"
+    )
 
 
 def test_is_over_limit():
     license_check = LicenseCheck()
     license_check.airgapped_license_data = {"max_users": 100}
     assert license_check.is_over_limit(101) is True
+
+
+def test_is_premium_false_without_license(monkeypatch):
+    monkeypatch.delenv("LITELLM_LICENSE", raising=False)
+    monkeypatch.delenv("LITELLM_DEV_ENABLE_PREMIUM", raising=False)
+    license_check = LicenseCheck()
+    license_check.license_str = None
+    assert license_check.is_premium() is False
+
+
+def test_dev_enable_premium_env_unlocks_premium_without_license(monkeypatch):
+    monkeypatch.delenv("LITELLM_LICENSE", raising=False)
+    monkeypatch.setenv("LITELLM_DEV_ENABLE_PREMIUM", "true")
+    license_check = LicenseCheck()
+    license_check.license_str = None
+    assert license_check.is_premium() is True
     assert license_check.is_over_limit(100) is False
     assert license_check.is_over_limit(99) is False
 

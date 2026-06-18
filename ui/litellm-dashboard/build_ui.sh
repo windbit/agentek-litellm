@@ -22,8 +22,9 @@ if ! command -v nvm &> /dev/null; then
   [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
 fi
 
-# Use nvm to set the required Node.js version
-nvm use v20
+# next 16 requires node >=20.9; install and select it (a clean Docker build has no v20 yet)
+nvm install 20
+nvm use 20
 
 # Check if nvm use was successful
 if [ $? -ne 0 ]; then
@@ -35,7 +36,8 @@ fi
 echo "Contents of ui_colors.json:"
 cat ui_colors.json
 
-# Run npm build
+# Install dependencies before building (node_modules is gitignored / absent in CI)
+npm ci
 npm run build
 
 # Check if the build was successful
@@ -49,8 +51,9 @@ if [ $? -eq 0 ]; then
   # Specify the destination directory
   destination_dir="../../litellm/proxy/_experimental/out"
 
-  # Remove existing files in the destination directory
-  rm -rf "$destination_dir"/*
+  # Recreate the destination (not committed, so it may be absent on a clean build)
+  rm -rf "$destination_dir"
+  mkdir -p "$destination_dir"
 
   # Copy the contents of the output directory to the specified destination
   cp -r ./out/* "$destination_dir"

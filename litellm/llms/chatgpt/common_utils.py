@@ -294,3 +294,86 @@ def get_chatgpt_session_id(litellm_params: Optional[Any]) -> Optional[str]:
 
 def ensure_chatgpt_session_id(litellm_params: Optional[Any]) -> str:
     return get_chatgpt_session_id(litellm_params) or str(uuid4())
+
+
+# Credential-derived headers that user-supplied headers must never override.
+CHATGPT_CREDENTIAL_HEADER_KEYS = ("Authorization", "ChatGPT-Account-Id")
+
+
+def resolve_chatgpt_deployment_credential(litellm_params: Optional[Any]) -> dict:
+    """Resolve a deployment's ChatGPT credential from litellm_params/kwargs.
+
+    A deployment selects its account via ``litellm_credential_name`` (merged into
+    litellm_params by ``load_credentials_from_list``) or directly via
+    ``chatgpt_token_dir`` / ``chatgpt_auth_file``, each pointing at that account's
+    auth.json.
+
+    Returns a dict with:
+      - ``requested``: whether this deployment explicitly asked for a credential.
+        When True, the caller must fail rather than fall back to the global
+        ``CHATGPT_TOKEN_DIR``/auth.json.
+      - ``token_dir`` / ``auth_file``: per-deployment on-disk credential location.
+      - ``api_base``: per-deployment ChatGPT API base override.
+    """
+    params = _normalize_litellm_params(litellm_params)
+
+    token_dir = params.get("chatgpt_token_dir")
+    auth_file = params.get("chatgpt_auth_file")
+    api_base = params.get("chatgpt_api_base")
+
+    requested = bool(params.get("litellm_credential_name") or token_dir or auth_file)
+
+    return {
+        "requested": requested,
+        "token_dir": token_dir,
+        "auth_file": auth_file,
+        "api_base": api_base,
+    }
+
+
+def chatgpt_credential_requested(litellm_params: Optional[Any]) -> bool:
+    """Whether a per-deployment ChatGPT credential was explicitly requested."""
+    return resolve_chatgpt_deployment_credential(litellm_params)["requested"]
+
+
+# Keys that carry a deployment's ChatGPT credential selection. These are
+# non-standard and dropped by get_litellm_params(), so completion() must forward
+# them explicitly into litellm_params for the Responses-API bridge to see them.
+CHATGPT_DEPLOYMENT_PARAM_KEYS = (
+    "litellm_credential_name",
+    "chatgpt_api_base",
+    "chatgpt_token_dir",
+    "chatgpt_auth_file",
+)
+
+
+def forward_chatgpt_deployment_params(litellm_params: dict, source: dict) -> None:
+    """Copy ChatGPT per-deployment credential keys from ``source`` (request
+    kwargs) into ``litellm_params`` in place, without overwriting existing keys."""
+    for key in CHATGPT_DEPLOYMENT_PARAM_KEYS:
+        value = source.get(key)
+        if value is not None and litellm_params.get(key) is None:
+            litellm_params[key] = value
+
+
+def _is_chatgpt_credential_header(key: str) -> bool:
+    return key.lower() in {header.lower() for header in CHATGPT_CREDENTIAL_HEADER_KEYS}
+
+
+def remove_chatgpt_credential_header_variants(headers: dict) -> None:
+    """Remove any case variant of credential-derived ChatGPT auth headers."""
+    for key in list(headers):
+        if _is_chatgpt_credential_header(str(key)):
+            headers.pop(key, None)
+
+
+def merge_chatgpt_request_headers(
+    credential_headers: dict, user_headers: Optional[dict]
+) -> dict:
+    """Merge user headers over credential headers, but never let user-supplied
+    values override the credential-derived Authorization / ChatGPT-Account-Id."""
+    merged = dict(credential_headers)
+    for key, value in (user_headers or {}).items():
+        if not _is_chatgpt_credential_header(str(key)):
+            merged[key] = value
+    return merged

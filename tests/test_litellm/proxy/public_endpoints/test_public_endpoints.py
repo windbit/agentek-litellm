@@ -156,6 +156,49 @@ def test_azure_provider_fields_include_entra_id():
     assert fields_by_key["client_secret"]["required"] is False
 
 
+def test_chatgpt_provider_fields_support_per_deployment_subscription():
+    """ChatGPT provider must expose per-deployment subscription credential fields.
+    One ChatGPT subscription/account maps to one LiteLLM credential, selected via
+    that account's auth.json (file or directory). The field keys must match what
+    resolve_chatgpt_deployment_credential reads from litellm_params.
+    """
+    app = FastAPI()
+    app.include_router(router)
+    client = TestClient(app)
+
+    response = client.get("/public/providers/fields")
+    providers = response.json()
+
+    chatgpt = next((p for p in providers if p["provider"] == "ChatGPT"), None)
+    assert chatgpt is not None
+    assert chatgpt["litellm_provider"] == "chatgpt"
+
+    fields_by_key = {f["key"]: f for f in chatgpt["credential_fields"]}
+    # On-disk subscription selection plus an optional API base override
+    assert "chatgpt_auth_file" in fields_by_key
+    assert "chatgpt_token_dir" in fields_by_key
+    assert "chatgpt_api_base" in fields_by_key
+
+    # Raw OAuth tokens must NOT be pasteable: they don't survive refresh-token
+    # rotation, so the credential is the auth file the proxy can rewrite.
+    assert "access_token" not in fields_by_key
+    assert "refresh_token" not in fields_by_key
+    assert "expires_at" not in fields_by_key
+
+    # Every field is optional individually; the backend treats any present value
+    # as an explicit per-deployment credential request.
+    for key, field in fields_by_key.items():
+        assert field["required"] is False, f"{key} should not be required"
+
+    # Field keys must be the keys the backend resolver actually reads.
+    from litellm.llms.chatgpt.common_utils import CHATGPT_DEPLOYMENT_PARAM_KEYS
+
+    for key in fields_by_key:
+        assert (
+            key in CHATGPT_DEPLOYMENT_PARAM_KEYS
+        ), f"{key} is not a recognized ChatGPT deployment credential key"
+
+
 def test_anthropic_provider_fields_support_byok():
     """
     The Anthropic provider form must allow BYOK:

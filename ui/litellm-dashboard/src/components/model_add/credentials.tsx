@@ -27,6 +27,7 @@ import EditCredentialsModal from "./EditCredentialModal";
 import { useCredentials } from "@/app/(dashboard)/hooks/credentials/useCredentials";
 import useAuthorized from "@/app/(dashboard)/hooks/useAuthorized";
 import { isProxyAdminRole } from "@/utils/roles";
+import { buildCredentialPayload } from "./credential_utils";
 interface CredentialsPanelProps {
   uploadProps: UploadProps;
 }
@@ -46,23 +47,13 @@ const CredentialsPanel: React.FC<CredentialsPanelProps> = ({ uploadProps }) => {
   const [isCredentialDeleting, setIsCredentialDeleting] = useState(false);
   const [form] = Form.useForm();
 
-  const restrictedFields = ["credential_name", "custom_llm_provider"];
   const handleUpdateCredential = async (values: any) => {
     if (!accessToken) {
       return;
     }
 
-    const filter_credential_values = Object.entries(values)
-      .filter(([key]) => !restrictedFields.includes(key))
-      .reduce((acc, [key, value]) => ({ ...acc, [key]: value }), {});
-    // Transform form values into credential structure
-    const newCredential = {
-      credential_name: values.credential_name,
-      credential_values: filter_credential_values,
-      credential_info: {
-        custom_llm_provider: values.custom_llm_provider,
-      },
-    };
+    // Transform form values into credential structure (maps ChatGPT -> "chatgpt").
+    const newCredential = buildCredentialPayload(values);
 
     await credentialUpdateCall(accessToken, values.credential_name, newCredential);
     NotificationsManager.success("Credential updated successfully");
@@ -75,17 +66,8 @@ const CredentialsPanel: React.FC<CredentialsPanelProps> = ({ uploadProps }) => {
       return;
     }
 
-    const filter_credential_values = Object.entries(values)
-      .filter(([key]) => !restrictedFields.includes(key))
-      .reduce((acc, [key, value]) => ({ ...acc, [key]: value }), {});
-    // Transform form values into credential structure
-    const newCredential = {
-      credential_name: values.credential_name,
-      credential_values: filter_credential_values,
-      credential_info: {
-        custom_llm_provider: values.custom_llm_provider,
-      },
-    };
+    // Transform form values into credential structure (maps ChatGPT -> "chatgpt").
+    const newCredential = buildCredentialPayload(values);
 
     // Add to list and close modal
     await credentialCreateCall(accessToken, newCredential);

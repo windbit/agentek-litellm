@@ -57,6 +57,26 @@ vi.mock("../networking", async () => {
         ],
       },
       {
+        provider: "ChatGPT",
+        provider_display_name: Providers.ChatGPT,
+        litellm_provider: "chatgpt",
+        default_model_placeholder: "chatgpt/gpt-5.3-codex",
+        credential_fields: [
+          {
+            key: "chatgpt_auth_file",
+            label: "Subscription Auth File",
+            placeholder: "/secrets/chatgpt/account-a/auth.json",
+            tooltip:
+              "Path to this ChatGPT subscription's auth.json. One ChatGPT account maps to one LiteLLM credential / deployment.",
+          },
+          {
+            key: "chatgpt_token_dir",
+            label: "Subscription Token Directory",
+            placeholder: "/secrets/chatgpt/account-a",
+          },
+        ],
+      },
+      {
         provider: "Azure",
         provider_display_name: Providers.Azure,
         litellm_provider: "azure",
@@ -180,6 +200,26 @@ describe("ProviderSpecificFields", () => {
       const apiBaseInput = screen.getByPlaceholderText("https://...");
       expect(apiBaseInput).toBeInTheDocument();
       expect(apiBaseInput).toHaveAttribute("type", "text");
+    });
+  });
+
+  it("should render the ChatGPT subscription credential fields", async () => {
+    const queryClient = createQueryClient();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <Form>
+          <ProviderSpecificFields selectedProvider={Providers.ChatGPT} />
+        </Form>
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => {
+      const authFileInput = screen.getByPlaceholderText("/secrets/chatgpt/account-a/auth.json");
+      expect(authFileInput).toBeInTheDocument();
+      expect(authFileInput).toHaveAttribute("type", "text");
+
+      const tokenDirInput = screen.getByPlaceholderText("/secrets/chatgpt/account-a");
+      expect(tokenDirInput).toBeInTheDocument();
     });
   });
 

@@ -20,28 +20,93 @@ from .common_utils import (
     GetAccessTokenError,
     GetDeviceCodeError,
     RefreshAccessTokenError,
+    resolve_chatgpt_deployment_credential,
 )
 
 TOKEN_EXPIRY_SKEW_SECONDS = 60
 DEVICE_CODE_TIMEOUT_SECONDS = 15 * 60
 DEVICE_CODE_COOLDOWN_SECONDS = 5 * 60
 DEVICE_CODE_POLL_SLEEP_SECONDS = 5
+SENSITIVE_OAUTH_RESPONSE_FIELDS = {"access_token", "refresh_token", "id_token"}
+
+
+def _oauth_response_missing_fields_message(
+    data: Dict[str, Any], required: tuple
+) -> str:
+    missing = [key for key in required if not data.get(key)]
+    safe_fields = sorted(
+        str(key)
+        for key in data.keys()
+        if str(key) not in SENSITIVE_OAUTH_RESPONSE_FIELDS
+    )
+    return (
+        f"OAuth token response missing fields: {missing}; "
+        f"non-sensitive fields present: {safe_fields}"
+    )
+
+
+def _token_request_failure_message(prefix: str, exc: Exception) -> str:
+    return f"{prefix}: {exc.__class__.__name__}"
 
 
 class Authenticator:
-    def __init__(self) -> None:
-        self.token_dir = os.getenv(
-            "CHATGPT_TOKEN_DIR",
-            os.path.expanduser("~/.config/litellm/chatgpt"),
+    def __init__(
+        self,
+        *,
+        token_dir: Optional[str] = None,
+        auth_file: Optional[str] = None,
+        api_base: Optional[str] = None,
+        credential_required: bool = False,
+    ) -> None:
+        self._api_base_override = api_base
+        self._credential_required = credential_required
+
+        if credential_required and not token_dir and not auth_file:
+            # A deployment requested a credential that resolved to no auth file:
+            # fail closed rather than read the global CHATGPT_TOKEN_DIR/auth.json.
+            self.token_dir: Optional[str] = None
+            self.auth_file: Optional[str] = None
+            return
+
+        resolved_token_dir = (
+            token_dir
+            or os.getenv("CHATGPT_TOKEN_DIR")
+            or os.path.expanduser("~/.config/litellm/chatgpt")
         )
-        self.auth_file = os.path.join(
-            self.token_dir, os.getenv("CHATGPT_AUTH_FILE", "auth.json")
-        )
+        if auth_file and os.path.isabs(auth_file):
+            resolved_auth_file = auth_file
+        else:
+            resolved_auth_file = os.path.join(
+                resolved_token_dir,
+                auth_file or os.getenv("CHATGPT_AUTH_FILE") or "auth.json",
+            )
+        self.token_dir = resolved_token_dir
+        self.auth_file = resolved_auth_file
         self._ensure_token_dir()
+
+    @classmethod
+    def from_litellm_params(cls, litellm_params: Optional[Any]) -> "Authenticator":
+        """Build an Authenticator scoped to a deployment's credential.
+
+        Falls back to the global authenticator only when no credential was
+        requested. When a credential is requested but cannot be resolved, the
+        returned authenticator fails closed (no global fallback, no interactive
+        device login).
+        """
+        cred = resolve_chatgpt_deployment_credential(litellm_params)
+        if not cred["requested"]:
+            return cls()
+        return cls(
+            token_dir=cred["token_dir"],
+            auth_file=cred["auth_file"],
+            api_base=cred["api_base"],
+            credential_required=True,
+        )
 
     def get_api_base(self) -> str:
         return (
-            os.getenv("CHATGPT_API_BASE")
+            self._api_base_override
+            or os.getenv("CHATGPT_API_BASE")
             or os.getenv("OPENAI_CHATGPT_API_BASE")
             or CHATGPT_API_BASE
         )
@@ -58,9 +123,25 @@ class Authenticator:
                     refreshed = self._refresh_tokens(refresh_token)
                     return refreshed["access_token"]
                 except RefreshAccessTokenError as exc:
+                    if self._credential_required:
+                        raise GetAccessTokenError(
+                            message=f"ChatGPT deployment credential token refresh failed: {exc}",
+                            status_code=401,
+                        )
                     verbose_logger.warning(
                         "ChatGPT refresh token failed, re-login required: %s", exc
                     )
+
+        # A deployment that explicitly requested a credential must fail closed:
+        # never read the global auth file or trigger interactive device login.
+        if self._credential_required:
+            raise GetAccessTokenError(
+                message=(
+                    "ChatGPT deployment credential is missing or has no valid "
+                    "access token; refusing to fall back to global ChatGPT auth."
+                ),
+                status_code=401,
+            )
 
         cooldown_remaining = self._get_device_code_cooldown_remaining(auth_data)
         if cooldown_remaining > 0:
@@ -87,10 +168,12 @@ class Authenticator:
         return derived
 
     def _ensure_token_dir(self) -> None:
-        if not os.path.exists(self.token_dir):
+        if self.token_dir and not os.path.exists(self.token_dir):
             os.makedirs(self.token_dir, exist_ok=True)
 
     def _read_auth_file(self) -> Optional[Dict[str, Any]]:
+        if self.auth_file is None:
+            return None
         try:
             with open(self.auth_file, "r") as f:
                 return json.load(f)
@@ -101,6 +184,8 @@ class Authenticator:
             return None
 
     def _write_auth_file(self, data: Dict[str, Any]) -> None:
+        if self.auth_file is None:
+            return
         try:
             with open(self.auth_file, "w") as f:
                 json.dump(data, f)
@@ -277,12 +362,12 @@ class Authenticator:
             data = resp.json()
         except httpx.HTTPStatusError as exc:
             raise GetAccessTokenError(
-                message=f"Token exchange failed: {exc}",
+                message=_token_request_failure_message("Token exchange failed", exc),
                 status_code=exc.response.status_code,
             )
         except Exception as exc:
             raise GetAccessTokenError(
-                message=f"Token exchange failed: {exc}",
+                message=_token_request_failure_message("Token exchange failed", exc),
                 status_code=400,
             )
 
@@ -290,7 +375,9 @@ class Authenticator:
             key in data for key in ("access_token", "refresh_token", "id_token")
         ):
             raise GetAccessTokenError(
-                message=f"Token exchange response missing fields: {data}",
+                message=_oauth_response_missing_fields_message(
+                    data, ("access_token", "refresh_token", "id_token")
+                ),
                 status_code=400,
             )
         return {
@@ -315,12 +402,12 @@ class Authenticator:
             data = resp.json()
         except httpx.HTTPStatusError as exc:
             raise RefreshAccessTokenError(
-                message=f"Refresh token failed: {exc}",
+                message=_token_request_failure_message("Refresh token failed", exc),
                 status_code=exc.response.status_code,
             )
         except Exception as exc:
             raise RefreshAccessTokenError(
-                message=f"Refresh token failed: {exc}",
+                message=_token_request_failure_message("Refresh token failed", exc),
                 status_code=400,
             )
 
@@ -328,7 +415,9 @@ class Authenticator:
         id_token = data.get("id_token")
         if not access_token or not id_token:
             raise RefreshAccessTokenError(
-                message=f"Refresh response missing fields: {data}",
+                message=_oauth_response_missing_fields_message(
+                    data, ("access_token", "id_token")
+                ),
                 status_code=400,
             )
 

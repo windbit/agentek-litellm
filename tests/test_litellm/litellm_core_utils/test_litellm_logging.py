@@ -1508,6 +1508,33 @@ def test_get_masked_values():
     assert masked_values["vertex_credentials"] == "{s****y}"
 
 
+def test_get_masked_values_chatgpt_account_id():
+    """
+    ChatGPT subscription auth sends the per-account id in the `ChatGPT-Account-Id`
+    request header alongside `Authorization`. Both must be masked by
+    `_get_masked_values` so they never leak through `raw_request_headers` (and the
+    Add Model connection-test curl command).
+    """
+    from litellm.litellm_core_utils.litellm_logging import _get_masked_values
+
+    headers = {
+        "Authorization": "Bearer secret-access-token-123456",
+        "ChatGPT-Account-Id": "acct-secret-id-123456",
+        "Content-Type": "application/json",
+    }
+    masked_values = _get_masked_values(
+        headers, unmasked_length=4, number_of_asterisks=4
+    )
+
+    # Both secret-bearing headers are masked; the raw values never survive.
+    assert masked_values["Authorization"] != headers["Authorization"]
+    assert "secret-access-token" not in masked_values["Authorization"]
+    assert masked_values["ChatGPT-Account-Id"] != headers["ChatGPT-Account-Id"]
+    assert "acct-secret-id" not in masked_values["ChatGPT-Account-Id"]
+    # Non-sensitive headers pass through untouched.
+    assert masked_values["Content-Type"] == "application/json"
+
+
 @pytest.mark.asyncio
 async def test_e2e_generate_cold_storage_object_key_successful():
     """

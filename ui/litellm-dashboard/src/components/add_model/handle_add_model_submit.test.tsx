@@ -79,4 +79,32 @@ describe("prepareModelAddRequest", () => {
     expect(deployment.litellmParamsObj.litellm_credential_name).toBe("selected-credential");
     expect(deployment.litellmParamsObj.timeout).toBe(5);
   });
+
+  it("sends litellm_credential_name and no inline secrets when an existing ChatGPT credential is selected", async () => {
+    // When "Existing Credentials" is chosen the AddModelForm hides the
+    // ProviderSpecificFields, so inline token fields are never part of formValues.
+    // The deployment must reference the credential by name and carry no secrets.
+    const formValues = {
+      model_mappings: [
+        {
+          public_name: "chatgpt/gpt-5.3-codex",
+          litellm_model: "chatgpt/gpt-5.3-codex",
+        },
+      ],
+      model_name: "chatgpt/gpt-5.3-codex",
+      custom_llm_provider: "ChatGPT",
+      litellm_credential_name: "chatgpt-account-a",
+    };
+
+    const deployments = await prepareModelAddRequest({ ...formValues }, "token", null);
+
+    expect(deployments).toHaveLength(1);
+    const [deployment] = deployments!;
+    expect(deployment.litellmParamsObj.litellm_credential_name).toBe("chatgpt-account-a");
+    expect(deployment.litellmParamsObj.custom_llm_provider).toBe("chatgpt");
+    // No inline credential secrets should be present.
+    expect(deployment.litellmParamsObj.access_token).toBeUndefined();
+    expect(deployment.litellmParamsObj.refresh_token).toBeUndefined();
+    expect(deployment.litellmParamsObj.id_token).toBeUndefined();
+  });
 });

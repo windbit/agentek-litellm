@@ -81,9 +81,7 @@ class LicenseCheck:
             assert isinstance(premium, bool)
 
             verbose_proxy_logger.debug(
-                "litellm.proxy.auth.litellm_license.py::_verify - License={} is premium={}".format(
-                    license_str, premium
-                )
+                "litellm.proxy.auth.litellm_license.py::_verify - License={} is premium={}".format(license_str, premium)
             )
             return premium
         except Exception as e:
@@ -100,6 +98,13 @@ class LicenseCheck:
         2. _verify: checks if license is valid calling litellm API. This is the old way we were generating/validating license
         """
         try:
+            # Dev/Test only: unlock enterprise features without a license key. The
+            # LiteLLM license permits non-production use; keep this off in production.
+            from litellm.secret_managers.main import str_to_bool
+
+            if str_to_bool(os.getenv("LITELLM_DEV_ENABLE_PREMIUM", "False")):
+                return True
+
             if not self._premium_check_logged:
                 verbose_proxy_logger.debug(
                     "litellm.proxy.auth.litellm_license.py::is_premium() - ENTERING 'IS_PREMIUM' - LiteLLM License={}".format(
@@ -121,9 +126,7 @@ class LicenseCheck:
             if self.license_str is None:
                 return False
             elif (
-                self.verify_license_without_api_request(
-                    public_key=self.public_key, license_key=self.license_str
-                )
+                self.verify_license_without_api_request(public_key=self.public_key, license_key=self.license_str)
                 is True
             ):
                 return True
@@ -152,12 +155,8 @@ class LicenseCheck:
         if self.airgapped_license_data is None:
             return False
 
-        _max_teams_in_license: Optional[int] = self.airgapped_license_data.get(
-            "max_teams"
-        )
-        if "max_teams" not in self.airgapped_license_data or not isinstance(
-            _max_teams_in_license, int
-        ):
+        _max_teams_in_license: Optional[int] = self.airgapped_license_data.get("max_teams")
+        if "max_teams" not in self.airgapped_license_data or not isinstance(_max_teams_in_license, int):
             return False
         return team_count > _max_teams_in_license
 
@@ -197,9 +196,7 @@ class LicenseCheck:
             verbose_proxy_logger.debug("License data: %s", license_data)
 
             # Check expiration date
-            expiration_date = datetime.strptime(
-                license_data["expiration_date"], "%Y-%m-%d"
-            )
+            expiration_date = datetime.strptime(license_data["expiration_date"], "%Y-%m-%d")
             if expiration_date < datetime.now():
                 return False, "License has expired"
 

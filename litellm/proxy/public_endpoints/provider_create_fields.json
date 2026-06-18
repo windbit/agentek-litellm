@@ -581,6 +581,44 @@
     "default_model_placeholder": "gpt-3.5-turbo"
   },
   {
+    "provider": "ChatGPT",
+    "provider_display_name": "ChatGPT",
+    "litellm_provider": "chatgpt",
+    "credential_fields": [
+      {
+        "key": "chatgpt_auth_file",
+        "label": "Subscription Auth File",
+        "placeholder": "/secrets/chatgpt/account-a/auth.json",
+        "tooltip": "Path to this ChatGPT subscription's auth.json (the Codex CLI login file). One ChatGPT account maps to one LiteLLM credential / deployment. Recommended over pasting raw tokens.",
+        "required": false,
+        "field_type": "text",
+        "options": null,
+        "default_value": null
+      },
+      {
+        "key": "chatgpt_token_dir",
+        "label": "Subscription Token Directory",
+        "placeholder": "/secrets/chatgpt/account-a",
+        "tooltip": "Directory that contains this subscription's auth.json. Alternative to Subscription Auth File when the file is named auth.json.",
+        "required": false,
+        "field_type": "text",
+        "options": null,
+        "default_value": null
+      },
+      {
+        "key": "chatgpt_api_base",
+        "label": "API Base Override",
+        "placeholder": "https://chatgpt.com/backend-api/codex",
+        "tooltip": "[OPTIONAL] Override the ChatGPT backend API base for this deployment.",
+        "required": false,
+        "field_type": "text",
+        "options": null,
+        "default_value": null
+      }
+    ],
+    "default_model_placeholder": "chatgpt/gpt-5.3-codex"
+  },
+  {
     "provider": "CLARIFAI",
     "provider_display_name": "Clarifai",
     "litellm_provider": "clarifai",
