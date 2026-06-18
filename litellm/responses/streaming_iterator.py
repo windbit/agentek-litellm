@@ -312,8 +312,14 @@ class BaseResponsesAPIStreamingIterator:
         response_obj = getattr(self.completed_response, "response", None)
         if response_obj is None or getattr(response_obj, "output", None):
             return
+        # Dump to raw dicts: the responses->chat converter only turns ResponseOutputMessage
+        # or dict items into choices, so a typed item set via setattr would be dropped.
+        items = [
+            item.model_dump() if hasattr(item, "model_dump") else item
+            for item in self._streamed_output_items
+        ]
         try:
-            setattr(response_obj, "output", list(self._streamed_output_items))
+            setattr(response_obj, "output", items)
         except Exception:
             pass
 
