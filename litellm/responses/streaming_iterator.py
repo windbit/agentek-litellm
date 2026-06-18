@@ -71,6 +71,9 @@ class BaseResponsesAPIStreamingIterator:
         self.finished = False
         self.responses_api_provider_config = responses_api_provider_config
         self.completed_response: Optional[Any] = None
+        # ChatGPT Codex ships response.completed with output=[] and streams the answer
+        # only via response.output_item.done; accumulate those to backfill the empty output.
+        self._streamed_output_items: List[Any] = []
         self.start_time = getattr(logging_obj, "start_time", datetime.now())
         self._failure_handled = False  # Track if failure handler has been called
         self._completed_response_cached = False
@@ -241,12 +244,20 @@ class BaseResponsesAPIStreamingIterator:
                 # Store the completed response (also for incomplete/failed so logging still fires)
                 _chunk_type = getattr(openai_responses_api_chunk, "type", None)
                 openai_types = _get_openai_response_types()
+                if (
+                    _chunk_type
+                    == openai_types.ResponsesAPIStreamEvents.OUTPUT_ITEM_DONE
+                ):
+                    _done_item = getattr(openai_responses_api_chunk, "item", None)
+                    if _done_item is not None:
+                        self._streamed_output_items.append(_done_item)
                 if openai_responses_api_chunk and _chunk_type in (
                     openai_types.ResponsesAPIStreamEvents.RESPONSE_COMPLETED,
                     openai_types.ResponsesAPIStreamEvents.RESPONSE_INCOMPLETE,
                     openai_types.ResponsesAPIStreamEvents.RESPONSE_FAILED,
                 ):
                     self.completed_response = openai_responses_api_chunk
+                    self._backfill_empty_completed_output()
                     # Add cost to usage object if include_cost_in_streaming_usage is True
                     if (
                         litellm.include_cost_in_streaming_usage
@@ -291,6 +302,20 @@ class BaseResponsesAPIStreamingIterator:
             # This ensures failures are logged even when _process_chunk is called directly
             self._handle_failure(e)
             raise
+
+    def _backfill_empty_completed_output(self) -> None:
+        # Codex ships response.completed with output=[] and emits the answer only via
+        # response.output_item.done. Backfill so the responses->chat bridge does not fail
+        # with "Unknown items in responses API response: []". No-op when output is present.
+        if not self._streamed_output_items:
+            return
+        response_obj = getattr(self.completed_response, "response", None)
+        if response_obj is None or getattr(response_obj, "output", None):
+            return
+        try:
+            setattr(response_obj, "output", list(self._streamed_output_items))
+        except Exception:
+            pass
 
     def _log_completed_response(self, *, is_async: bool) -> None:
         if self._completed_response_logged:
