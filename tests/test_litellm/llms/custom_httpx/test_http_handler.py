@@ -12,18 +12,34 @@ import httpx
 import pytest
 from aiohttp import ClientSession, TCPConnector
 
-sys.path.insert(
-    0, os.path.abspath("../../../..")
-)  # Adds the parent directory to the system path
+sys.path.insert(0, os.path.abspath("../../../.."))  # Adds the parent directory to the system path
 import litellm
 from litellm.llms.custom_httpx.aiohttp_transport import LiteLLMAiohttpTransport
+import importlib.util
+
 from litellm.llms.custom_httpx.http_handler import (
     AsyncHTTPHandler,
     HTTPHandler,
     MaskedHTTPStatusError,
+    _chatgpt_impersonation_transport,
     _get_httpx_client,
     get_ssl_configuration,
 )
+
+
+def test_chatgpt_impersonation_transport_skipped_for_other_providers():
+    assert _chatgpt_impersonation_transport("openai") is None
+
+
+def test_chatgpt_impersonation_transport_skipped_when_disabled(monkeypatch):
+    monkeypatch.setattr(litellm, "chatgpt_tls_impersonate", None, raising=False)
+    assert _chatgpt_impersonation_transport("chatgpt") is None
+
+
+@pytest.mark.skipif(importlib.util.find_spec("curl_cffi") is None, reason="curl_cffi not installed")
+def test_chatgpt_impersonation_transport_built_for_chatgpt(monkeypatch):
+    monkeypatch.setattr(litellm, "chatgpt_tls_impersonate", "chrome124", raising=False)
+    assert isinstance(_chatgpt_impersonation_transport("chatgpt"), httpx.AsyncBaseTransport)
 
 
 @pytest.mark.asyncio
@@ -57,9 +73,7 @@ async def test_async_post_streaming_status_error_should_not_wait_forever_for_bod
 
     litellm_handler = AsyncHTTPHandler()
     await litellm_handler.client.aclose()
-    litellm_handler.client = httpx.AsyncClient(
-        transport=httpx.MockTransport(mock_handler)
-    )
+    litellm_handler.client = httpx.AsyncClient(transport=httpx.MockTransport(mock_handler))
     try:
         with pytest.raises(MaskedHTTPStatusError) as exc_info:
             await asyncio.wait_for(
@@ -244,9 +258,7 @@ async def test_ssl_verification_with_aiohttp_transport():
             transport_connector = transport._get_valid_client_session().connector
             assert isinstance(transport_connector, TCPConnector)
 
-            aiohttp_session = aiohttp.ClientSession(
-                connector=aiohttp.TCPConnector(ssl=False)
-            )
+            aiohttp_session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False))
             try:
                 aiohttp_connector = aiohttp_session.connector
                 assert isinstance(aiohttp_connector, aiohttp.TCPConnector)
@@ -366,9 +378,7 @@ async def test_aiohttp_transport_trust_env_setting(monkeypatch):
         monkeypatch.setenv("AIOHTTP_TRUST_ENV", "False")
         transport_with_false_env = AsyncHTTPHandler._create_aiohttp_transport()
         transports.append(transport_with_false_env)
-        client_session_with_false_env = (
-            transport_with_false_env._get_valid_client_session()
-        )
+        client_session_with_false_env = transport_with_false_env._get_valid_client_session()
 
         # Should respect the litellm.aiohttp_trust_env setting when env var is False
         assert client_session_with_false_env._trust_env == default_trust_env
@@ -503,7 +513,8 @@ async def test_get_async_httpx_client_with_shared_session():
 
     # Test with shared session
     client = get_async_httpx_client(
-        llm_provider=LlmProviders.ANTHROPIC, shared_session=mock_session  # type: ignore
+        llm_provider=LlmProviders.ANTHROPIC,
+        shared_session=mock_session,  # type: ignore
     )
 
     # Verify the client was created successfully
@@ -522,9 +533,7 @@ async def test_get_async_httpx_client_without_shared_session():
     from litellm.types.utils import LlmProviders
 
     # Test without shared session
-    client = get_async_httpx_client(
-        llm_provider=LlmProviders.ANTHROPIC, shared_session=None
-    )
+    client = get_async_httpx_client(llm_provider=LlmProviders.ANTHROPIC, shared_session=None)
 
     # Verify the client was created successfully
     assert client is not None
@@ -601,11 +610,13 @@ async def test_session_reuse_integration():
 
     # Create two clients with the same session
     client1 = get_async_httpx_client(
-        llm_provider=LlmProviders.ANTHROPIC, shared_session=mock_session  # type: ignore
+        llm_provider=LlmProviders.ANTHROPIC,
+        shared_session=mock_session,  # type: ignore
     )
 
     client2 = get_async_httpx_client(
-        llm_provider=LlmProviders.OPENAI, shared_session=mock_session  # type: ignore
+        llm_provider=LlmProviders.OPENAI,
+        shared_session=mock_session,  # type: ignore
     )
 
     # Both clients should be created successfully
@@ -658,9 +669,7 @@ async def test_session_validation():
         (None, None, None, False),  # None value - skip configuration
     ],
 )
-def test_ssl_ecdh_curve(
-    env_curve, litellm_curve, expected_curve, should_call, monkeypatch
-):
+def test_ssl_ecdh_curve(env_curve, litellm_curve, expected_curve, should_call, monkeypatch):
     """Test SSL ECDH curve configuration with valid curves and precedence"""
     from litellm.llms.custom_httpx.http_handler import _ssl_context_cache
 
