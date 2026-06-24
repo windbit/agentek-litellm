@@ -489,6 +489,25 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
                 )
         return redacted_text["text"]
 
+    @staticmethod
+    def _drop_overlapping_results(analyze_results: Any) -> List[Any]:
+        # Presidio can return overlapping spans for one substring (an email also
+        # matches URL; a digit run matches several ID types). The anonymizer
+        # resolves these, but numbered replacement does not, so the spans would
+        # stomp each other. Keep only the highest-score non-overlapping spans.
+        accepted: List[Any] = []
+        for ar in sorted(
+            analyze_results,
+            key=lambda x: (x["score"], x["end"] - x["start"]),
+            reverse=True,
+        ):
+            if not any(
+                ar["start"] < kept["end"] and kept["start"] < ar["end"]
+                for kept in accepted
+            ):
+                accepted.append(ar)
+        return accepted
+
     def _finalize_presidio_anonymize_numbered_tokens(
         self,
         text: str,
@@ -516,7 +535,9 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
 
         # Assign sequence numbers in forward (left-to-right) order so
         # that <PERSON_1> is the first entity in the text, etc.
-        sorted_forward = sorted(analyze_results, key=lambda x: x["start"])
+        sorted_forward = sorted(
+            self._drop_overlapping_results(analyze_results), key=lambda x: x["start"]
+        )
         seq_map = {}
         for idx, ar in enumerate(sorted_forward, start=1):
             seq_map[(ar["start"], ar["end"])] = idx
