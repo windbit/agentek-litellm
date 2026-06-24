@@ -85,6 +85,7 @@ def initialize_presidio(litellm_params: LitellmParams, guardrail: Guardrail):
             guardrail_name=guardrail.get("guardrail_name", ""),
             event_hook=litellm_params.mode,
             output_parse_pii=litellm_params.output_parse_pii,
+            presidio_output_unmask=litellm_params.presidio_output_unmask,
             presidio_ad_hoc_recognizers=litellm_params.presidio_ad_hoc_recognizers,
             mock_redacted_text=litellm_params.mock_redacted_text,
             default_on=litellm_params.default_on,
@@ -106,7 +107,7 @@ def initialize_presidio(litellm_params: LitellmParams, guardrail: Guardrail):
     if run_input:
         primary_callback = _make_presidio_callback()
 
-        if litellm_params.output_parse_pii:
+        if litellm_params.output_parse_pii and litellm_params.presidio_output_unmask is not False:
             _make_presidio_callback(
                 output_parse_pii=True,
                 event_hook=GuardrailEventHooks.post_call.value,

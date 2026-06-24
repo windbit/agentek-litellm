@@ -75,6 +75,7 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
         presidio_analyzer_api_base: Optional[str] = None,
         presidio_anonymizer_api_base: Optional[str] = None,
         output_parse_pii: Optional[bool] = False,
+        presidio_output_unmask: bool = True,
         apply_to_output: bool = False,
         presidio_ad_hoc_recognizers: Optional[str] = None,
         logging_only: Optional[bool] = None,
@@ -98,12 +99,18 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
         )  # mapping of PII token to original text - only used with Presidio `replace` operation
         self.mock_redacted_text = mock_redacted_text
         self.output_parse_pii = output_parse_pii or False
+        self.presidio_output_unmask = presidio_output_unmask
         self.apply_to_output = apply_to_output
 
         # When output_parse_pii or apply_to_output is enabled, the guardrail must
         # also run on post_call to unmask/mask the response.  Expand the event_hook
         # so should_run_guardrail returns True for both pre_call and post_call.
-        if (self.output_parse_pii or self.apply_to_output) and not logging_only:
+        # presidio_output_unmask=False keeps the numbered placeholders in the
+        # response, so no post_call pass is needed in that case.
+        if (
+            self.apply_to_output
+            or (self.output_parse_pii and self.presidio_output_unmask)
+        ) and not logging_only:
             current_hook = self.event_hook
             if isinstance(current_hook, str) and current_hook != "post_call":
                 self.event_hook = cast(
@@ -482,6 +489,25 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
                 )
         return redacted_text["text"]
 
+    @staticmethod
+    def _drop_overlapping_results(analyze_results: Any) -> List[Any]:
+        # Presidio can return overlapping spans for one substring (an email also
+        # matches URL; a digit run matches several ID types). The anonymizer
+        # resolves these, but numbered replacement does not, so the spans would
+        # stomp each other. Keep only the highest-score non-overlapping spans.
+        accepted: List[Any] = []
+        for ar in sorted(
+            analyze_results,
+            key=lambda x: (x["score"], x["end"] - x["start"]),
+            reverse=True,
+        ):
+            if not any(
+                ar["start"] < kept["end"] and kept["start"] < ar["end"]
+                for kept in accepted
+            ):
+                accepted.append(ar)
+        return accepted
+
     def _finalize_presidio_anonymize_numbered_tokens(
         self,
         text: str,
@@ -509,7 +535,9 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
 
         # Assign sequence numbers in forward (left-to-right) order so
         # that <PERSON_1> is the first entity in the text, etc.
-        sorted_forward = sorted(analyze_results, key=lambda x: x["start"])
+        sorted_forward = sorted(
+            self._drop_overlapping_results(analyze_results), key=lambda x: x["start"]
+        )
         seq_map = {}
         for idx, ar in enumerate(sorted_forward, start=1):
             seq_map[(ar["start"], ar["end"])] = idx
@@ -950,6 +978,9 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
             return await self._mask_output_response(
                 response=response, request_data=data
             )
+
+        if self.presidio_output_unmask is False:
+            return response
 
         if self.output_parse_pii is False and litellm.output_parse_pii is False:
             return response

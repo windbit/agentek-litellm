@@ -2849,3 +2849,105 @@ async def test_stream_pii_unmasking_passthrough_when_no_tokens(mock_user_api_key
         chunks.append(chunk)
 
     assert chunks == [raw_chunk]
+
+
+def test_drop_overlapping_results_keeps_highest_score():
+    """Overlapping spans for one substring must collapse to the highest-score entity."""
+    results = [
+        {"entity_type": "RU_INN", "start": 5, "end": 15, "score": 0.7},
+        {"entity_type": "US_BANK_NUMBER", "start": 5, "end": 15, "score": 0.05},
+        {"entity_type": "EMAIL_ADDRESS", "start": 20, "end": 30, "score": 1.0},
+        {"entity_type": "URL", "start": 22, "end": 30, "score": 0.5},
+        {"entity_type": "PERSON", "start": 40, "end": 50, "score": 0.85},
+    ]
+    kept = _OPTIONAL_PresidioPIIMasking._drop_overlapping_results(results)
+    assert sorted(r["entity_type"] for r in kept) == [
+        "EMAIL_ADDRESS",
+        "PERSON",
+        "RU_INN",
+    ]
+
+
+def test_numbered_tokens_do_not_corrupt_on_overlap(presidio_guardrail):
+    """Regression: overlapping detections used to stomp each other and mangle the text."""
+    text = "call 1234567890 now"
+    analyze_results = [
+        {"entity_type": "RU_INN", "start": 5, "end": 15, "score": 0.7},
+        {"entity_type": "US_BANK_NUMBER", "start": 5, "end": 15, "score": 0.05},
+        {"entity_type": "US_DRIVER_LICENSE", "start": 5, "end": 15, "score": 0.01},
+    ]
+    request_data: dict = {"metadata": {}}
+    out = presidio_guardrail._finalize_presidio_anonymize_numbered_tokens(
+        text, analyze_results, request_data, {}
+    )
+    assert out == "call <RU_INN_1> now"
+    assert request_data["metadata"]["pii_tokens"] == {"<RU_INN_1>": "1234567890"}
+
+
+def test_output_unmask_false_skips_post_call_hook():
+    """presidio_output_unmask=False keeps numbered placeholders, so no post_call pass."""
+    redact = _OPTIONAL_PresidioPIIMasking(
+        mock_testing=True,
+        output_parse_pii=True,
+        presidio_output_unmask=False,
+        pii_entities_config={PiiEntityType.PERSON: PiiAction.MASK},
+        event_hook="pre_call",
+    )
+    redact_hooks = (
+        redact.event_hook
+        if isinstance(redact.event_hook, list)
+        else [redact.event_hook]
+    )
+    assert "post_call" not in redact_hooks
+
+    restore = _OPTIONAL_PresidioPIIMasking(
+        mock_testing=True,
+        output_parse_pii=True,
+        presidio_output_unmask=True,
+        pii_entities_config={PiiEntityType.PERSON: PiiAction.MASK},
+        event_hook="pre_call",
+    )
+    restore_hooks = (
+        restore.event_hook
+        if isinstance(restore.event_hook, list)
+        else [restore.event_hook]
+    )
+    assert "post_call" in restore_hooks
+
+
+@pytest.mark.asyncio
+async def test_post_call_unmask_false_keeps_placeholders(mock_user_api_key):
+    redact = _OPTIONAL_PresidioPIIMasking(
+        mock_testing=True,
+        output_parse_pii=True,
+        presidio_output_unmask=False,
+        pii_entities_config={PiiEntityType.PERSON: PiiAction.MASK},
+        event_hook="pre_call",
+    )
+    response = ModelResponse(
+        choices=[Choices(message=Message(content="<PERSON_1> said hi"))]
+    )
+    data = {"metadata": {"pii_tokens": {"<PERSON_1>": "Ivan"}}}
+    out = await redact.async_post_call_success_hook(
+        data=data, user_api_key_dict=mock_user_api_key, response=response
+    )
+    assert out.choices[0].message.content == "<PERSON_1> said hi"
+
+
+@pytest.mark.asyncio
+async def test_post_call_unmask_true_restores_values(mock_user_api_key):
+    restore = _OPTIONAL_PresidioPIIMasking(
+        mock_testing=True,
+        output_parse_pii=True,
+        presidio_output_unmask=True,
+        pii_entities_config={PiiEntityType.PERSON: PiiAction.MASK},
+        event_hook="pre_call",
+    )
+    response = ModelResponse(
+        choices=[Choices(message=Message(content="<PERSON_1> said hi"))]
+    )
+    data = {"metadata": {"pii_tokens": {"<PERSON_1>": "Ivan"}}}
+    out = await restore.async_post_call_success_hook(
+        data=data, user_api_key_dict=mock_user_api_key, response=response
+    )
+    assert out.choices[0].message.content == "Ivan said hi"
