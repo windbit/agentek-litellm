@@ -75,6 +75,7 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
         presidio_analyzer_api_base: Optional[str] = None,
         presidio_anonymizer_api_base: Optional[str] = None,
         output_parse_pii: Optional[bool] = False,
+        presidio_output_unmask: bool = True,
         apply_to_output: bool = False,
         presidio_ad_hoc_recognizers: Optional[str] = None,
         logging_only: Optional[bool] = None,
@@ -98,12 +99,18 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
         )  # mapping of PII token to original text - only used with Presidio `replace` operation
         self.mock_redacted_text = mock_redacted_text
         self.output_parse_pii = output_parse_pii or False
+        self.presidio_output_unmask = presidio_output_unmask
         self.apply_to_output = apply_to_output
 
         # When output_parse_pii or apply_to_output is enabled, the guardrail must
         # also run on post_call to unmask/mask the response.  Expand the event_hook
         # so should_run_guardrail returns True for both pre_call and post_call.
-        if (self.output_parse_pii or self.apply_to_output) and not logging_only:
+        # presidio_output_unmask=False keeps the numbered placeholders in the
+        # response, so no post_call pass is needed in that case.
+        if (
+            self.apply_to_output
+            or (self.output_parse_pii and self.presidio_output_unmask)
+        ) and not logging_only:
             current_hook = self.event_hook
             if isinstance(current_hook, str) and current_hook != "post_call":
                 self.event_hook = cast(
@@ -950,6 +957,9 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
             return await self._mask_output_response(
                 response=response, request_data=data
             )
+
+        if self.presidio_output_unmask is False:
+            return response
 
         if self.output_parse_pii is False and litellm.output_parse_pii is False:
             return response
