@@ -428,6 +428,8 @@ class DualCache(BaseCache):
         result: Optional[float] = None
         try:
             if self.in_memory_cache is not None:
+                if "ttl" not in kwargs and self.default_in_memory_ttl is not None:
+                    kwargs["ttl"] = self.default_in_memory_ttl
                 result = await self.in_memory_cache.async_increment(
                     key, value, **kwargs
                 )
