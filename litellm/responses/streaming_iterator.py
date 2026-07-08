@@ -39,6 +39,10 @@ def _get_openai_response_types():
     return openai_types
 
 
+# Set by the responses bridge (transformation.py) to skip this stream's own success log.
+SUPPRESS_COMPLETED_RESPONSE_LOGGING_KEY = "responses_bridge_suppress_stream_log"
+
+
 def _log_background_task_failure(task: "asyncio.Task[Any]", *, task_name: str) -> None:
     if task.cancelled():
         return
@@ -349,6 +353,12 @@ class BaseResponsesAPIStreamingIterator:
                 pass
 
         end_time = datetime.now()
+        if self.logging_obj.model_call_details.get(
+            SUPPRESS_COMPLETED_RESPONSE_LOGGING_KEY
+        ):
+            self._run_post_success_hooks(end_time=end_time)
+            return
+
         if is_async:
             asyncio.create_task(
                 self.logging_obj.async_success_handler(

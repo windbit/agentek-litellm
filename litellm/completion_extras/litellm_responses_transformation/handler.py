@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, Coroutine, Optional, Union
 
 from typing_extensions import TypedDict
 
+from litellm._internal_context import internal_call_scope
 from litellm.types.llms.openai import ResponsesAPIResponse
 
 if TYPE_CHECKING:
@@ -192,9 +193,12 @@ class ResponsesToCompletionBridgeHandler:
         # than adding an explicit kwarg) avoids the duplicate-keyword
         # TypeError that would otherwise fire on the real bridge path.
         request_data["custom_llm_provider"] = custom_llm_provider
-        result = responses(
-            **request_data,
-        )
+        # Sub-call shares logging_obj with the outer completion() call; suppress
+        # wrapper_async's own log of it (see file_search/emulated_handler.py).
+        with internal_call_scope():
+            result = responses(
+                **request_data,
+            )
 
         from litellm.types.utils import ModelResponse
 
@@ -287,10 +291,13 @@ class ResponsesToCompletionBridgeHandler:
         # keyword TypeError when `sanitized_litellm_params` already
         # carries `custom_llm_provider`.
         request_data["custom_llm_provider"] = custom_llm_provider
-        result = await aresponses(
-            **request_data,
-            aresponses=True,
-        )
+        # Sub-call shares logging_obj with the outer acompletion() call; suppress
+        # wrapper_async's own log of it (see file_search/emulated_handler.py).
+        with internal_call_scope():
+            result = await aresponses(
+                **request_data,
+                aresponses=True,
+            )
 
         from litellm.types.utils import ModelResponse
 

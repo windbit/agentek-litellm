@@ -108,7 +108,7 @@ def test_transform_request_with_response_format():
 
     # Mock logging object
     class MockLoggingObj:
-        pass
+        model_call_details: dict = {}
 
     litellm_logging_obj = MockLoggingObj()
 
@@ -138,7 +138,7 @@ def test_transform_request_includes_extra_headers():
     litellm_params = {}
 
     class MockLoggingObj:
-        pass
+        model_call_details: dict = {}
 
     headers = {"cf-aig-authorization": "secret-token"}
     result = handler.transform_request(
@@ -163,7 +163,7 @@ def test_transform_request_strips_internal_metadata_to_litellm_metadata():
     }
 
     class MockLoggingObj:
-        pass
+        model_call_details: dict = {}
 
     result = handler.transform_request(
         model="gpt-5-pro",
@@ -186,7 +186,7 @@ def test_transform_request_preserves_user_metadata():
     litellm_params = {"metadata": {"internal_key": "secret"}}
 
     class MockLoggingObj:
-        pass
+        model_call_details: dict = {}
 
     result = handler.transform_request(
         model="gpt-5-pro",
@@ -217,7 +217,7 @@ def test_transform_request_drops_user_metadata_with_additional_drop_params():
     litellm_params = {"metadata": {"internal_key": "secret"}}
 
     class MockLoggingObj:
-        pass
+        model_call_details: dict = {}
 
     result = handler.transform_request(
         model="gpt-4o",

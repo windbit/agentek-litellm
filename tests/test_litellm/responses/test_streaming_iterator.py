@@ -1,7 +1,17 @@
+import asyncio
+from datetime import datetime
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
 from litellm.completion_extras.litellm_responses_transformation.transformation import (
     LiteLLMResponsesTransformationHandler,
 )
-from litellm.responses.streaming_iterator import BaseResponsesAPIStreamingIterator
+from litellm.litellm_core_utils.litellm_logging import Logging as LiteLLMLogging
+from litellm.responses.streaming_iterator import (
+    SUPPRESS_COMPLETED_RESPONSE_LOGGING_KEY,
+    BaseResponsesAPIStreamingIterator,
+)
 
 
 class _Resp:
@@ -70,3 +80,64 @@ def test_backfill_is_noop_without_streamed_items():
     iterator._backfill_empty_completed_output()
 
     assert iterator.completed_response.response.output == []
+
+
+def _make_logging_completion_iterator(logging_obj):
+    iterator = object.__new__(BaseResponsesAPIStreamingIterator)
+    iterator._completed_response_logged = False
+    iterator._persist_completed_response_before_logging = False
+    iterator.completed_response = None
+    iterator.logging_obj = logging_obj
+    iterator.start_time = datetime.now()
+    iterator._completed_response_cache_hit = None
+    iterator.request_data = {}
+    return iterator
+
+
+@pytest.mark.asyncio
+async def test_log_completed_response_suppressed_skips_success_handlers():
+    """Regression: the suppression flag must skip the stream-completed self-log."""
+    logging_obj = LiteLLMLogging(
+        litellm_call_id="test-call",
+        call_type="completion",
+        model="chatgpt/gpt-5.4",
+        messages=[{"role": "user", "content": "hi"}],
+        function_id="fn-id",
+        stream=False,
+        start_time=datetime.now(),
+    )
+    logging_obj.model_call_details[SUPPRESS_COMPLETED_RESPONSE_LOGGING_KEY] = True
+    iterator = _make_logging_completion_iterator(logging_obj)
+
+    with (
+        patch.object(logging_obj, "async_success_handler", new=AsyncMock()) as async_handler,
+        patch.object(logging_obj, "success_handler") as sync_handler,
+    ):
+        iterator._log_completed_response(is_async=True)
+        await asyncio.sleep(0)
+
+    async_handler.assert_not_called()
+    sync_handler.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_log_completed_response_runs_success_handler_without_suppression():
+    """Sanity check: non-suppressed callers are unaffected by the guard."""
+    logging_obj = LiteLLMLogging(
+        litellm_call_id="test-call",
+        call_type="responses",
+        model="chatgpt/gpt-5.4",
+        messages=[{"role": "user", "content": "hi"}],
+        function_id="fn-id",
+        stream=False,
+        start_time=datetime.now(),
+    )
+    iterator = _make_logging_completion_iterator(logging_obj)
+
+    with patch.object(
+        logging_obj, "async_success_handler", new=AsyncMock()
+    ) as async_handler:
+        iterator._log_completed_response(is_async=True)
+        await asyncio.sleep(0)
+
+    async_handler.assert_called_once()
