@@ -57,15 +57,27 @@ class Authenticator:
         auth_file: Optional[str] = None,
         api_base: Optional[str] = None,
         credential_required: bool = False,
+        auth_inline: Optional[Dict[str, Any]] = None,
+        credential_name: Optional[str] = None,
     ) -> None:
         self._api_base_override = api_base
         self._credential_required = credential_required
+        # Credential-backed mode: tokens come inline from credential_values, not a file.
+        self._auth_inline: Optional[Dict[str, Any]] = (
+            dict(auth_inline) if auth_inline else None
+        )
+        self._credential_name = credential_name
+
+        if self._auth_inline is not None:
+            self.token_dir: Optional[str] = None
+            self.auth_file: Optional[str] = None
+            return
 
         if credential_required and not token_dir and not auth_file:
             # A deployment requested a credential that resolved to no auth file:
             # fail closed rather than read the global CHATGPT_TOKEN_DIR/auth.json.
-            self.token_dir: Optional[str] = None
-            self.auth_file: Optional[str] = None
+            self.token_dir = None
+            self.auth_file = None
             return
 
         resolved_token_dir = (
@@ -101,6 +113,8 @@ class Authenticator:
             auth_file=cred["auth_file"],
             api_base=cred["api_base"],
             credential_required=True,
+            auth_inline=cred["auth_inline"],
+            credential_name=cred["credential_name"],
         )
 
     def get_api_base(self) -> str:
@@ -172,6 +186,8 @@ class Authenticator:
             os.makedirs(self.token_dir, exist_ok=True)
 
     def _read_auth_file(self) -> Optional[Dict[str, Any]]:
+        if self._auth_inline is not None:
+            return dict(self._auth_inline)
         if self.auth_file is None:
             return None
         try:
@@ -184,6 +200,10 @@ class Authenticator:
             return None
 
     def _write_auth_file(self, data: Dict[str, Any]) -> None:
+        if self._auth_inline is not None:
+            # Refresh stays in-memory for this request; DB write-back is not yet implemented.
+            self._auth_inline = dict(data)
+            return
         if self.auth_file is None:
             return
         try:
