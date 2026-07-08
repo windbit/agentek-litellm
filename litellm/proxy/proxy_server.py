@@ -6640,6 +6640,59 @@ class ProxyConfig:
             )
             return []
 
+    async def refresh_chatgpt_credentials(self, prisma_client: PrismaClient):
+        """Proactively refresh chatgpt credential tokens nearing expiry and write
+        them back to the DB, so no request hits an expired inline token. The 30s
+        get_credentials job then propagates the new tokens to every replica."""
+        from litellm.llms.chatgpt.authenticator import (
+            refresh_chatgpt_credential_values,
+        )
+        from litellm.llms.chatgpt.common_utils import (
+            CHATGPT_CREDENTIAL_REFRESH_LEAD_SECONDS,
+        )
+        from litellm.proxy.credential_endpoints.endpoints import update_db_credential
+        from litellm.proxy.utils import jsonify_object
+
+        try:
+            repo = CredentialsRepository(prisma_client)
+            for record in await repo.find_all():
+                decrypted = self.decrypt_credentials(record)
+                updated_values = refresh_chatgpt_credential_values(
+                    decrypted.credential_values,
+                    CHATGPT_CREDENTIAL_REFRESH_LEAD_SECONDS,
+                )
+                if updated_values is None:
+                    continue
+                name = decrypted.credential_name
+                base = await repo.find_by_name(name)
+                if base is None:
+                    continue
+                patch = CredentialItem(
+                    credential_name=name,
+                    credential_info=decrypted.credential_info,
+                    credential_values={"chatgpt_auth": updated_values["chatgpt_auth"]},
+                )
+                merged = update_db_credential(base, patch)
+                await repo.update_by_name(
+                    name, data=jsonify_object(merged.model_dump())
+                )
+                CredentialAccessor.upsert_credentials(
+                    [
+                        CredentialItem(
+                            credential_name=name,
+                            credential_info=decrypted.credential_info,
+                            credential_values=updated_values,
+                        )
+                    ]
+                )
+                verbose_proxy_logger.info("Refreshed chatgpt credential '%s'", name)
+        except Exception as e:
+            verbose_proxy_logger.exception(
+                "litellm.proxy_server.py::refresh_chatgpt_credentials() - {}".format(
+                    str(e)
+                )
+            )
+
 
 proxy_config = ProxyConfig()
 
@@ -7760,6 +7813,20 @@ class ProxyStartupEvent:
                 misfire_grace_time=APSCHEDULER_MISFIRE_GRACE_TIME,
             )
             await proxy_config.get_credentials(prisma_client=prisma_client)
+
+            from litellm.llms.chatgpt.common_utils import (
+                CHATGPT_CREDENTIAL_REFRESH_INTERVAL_SECONDS,
+            )
+
+            scheduler.add_job(
+                proxy_config.refresh_chatgpt_credentials,
+                "interval",
+                seconds=CHATGPT_CREDENTIAL_REFRESH_INTERVAL_SECONDS,
+                args=[prisma_client],
+                id="refresh_chatgpt_credentials_job",
+                replace_existing=True,
+                misfire_grace_time=APSCHEDULER_MISFIRE_GRACE_TIME,
+            )
 
         await cls._initialize_slack_alerting_jobs(
             scheduler=scheduler,
