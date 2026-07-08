@@ -85,6 +85,24 @@ class TestAuthenticatorFromLitellmParams:
         assert auth.get_access_token() == "tok-a"
         assert auth.get_api_base() == "https://acct-a.example.com"
 
+    def test_inline_credential_values_used_over_file(self):
+        """Tokens carried inline in credential_values (chatgpt_auth) are read from the
+        credential, not a file — so a backend can write them via the LiteLLM credential
+        API and the deployment picks them up without any on-disk auth.json."""
+        future = time.time() + 3600
+        params = {
+            "litellm_credential_name": "chatgpt_acct_a",
+            "chatgpt_auth": {
+                "access_token": "tok-inline",
+                "expires_at": future,
+                "account_id": "acct-a",
+            },
+        }
+        auth = Authenticator.from_litellm_params(params)
+        assert auth.auth_file is None
+        assert auth.get_access_token() == "tok-inline"
+        assert auth.get_account_id() == "acct-a"
+
     def test_account_id_derived_from_id_token(self, tmp_path):
         future = time.time() + 3600
         id_token = _make_jwt(

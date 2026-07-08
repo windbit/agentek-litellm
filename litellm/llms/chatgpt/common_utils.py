@@ -320,14 +320,19 @@ def resolve_chatgpt_deployment_credential(litellm_params: Optional[Any]) -> dict
     token_dir = params.get("chatgpt_token_dir")
     auth_file = params.get("chatgpt_auth_file")
     api_base = params.get("chatgpt_api_base")
+    # chatgpt_auth: tokens carried inline in credential_values (vs the on-disk token_dir/auth_file).
+    auth_inline = params.get("chatgpt_auth")
+    credential_name = params.get("litellm_credential_name")
 
-    requested = bool(params.get("litellm_credential_name") or token_dir or auth_file)
+    requested = bool(credential_name or token_dir or auth_file or auth_inline)
 
     return {
         "requested": requested,
         "token_dir": token_dir,
         "auth_file": auth_file,
         "api_base": api_base,
+        "auth_inline": auth_inline if isinstance(auth_inline, dict) else None,
+        "credential_name": credential_name,
     }
 
 
@@ -344,6 +349,7 @@ CHATGPT_DEPLOYMENT_PARAM_KEYS = (
     "chatgpt_api_base",
     "chatgpt_token_dir",
     "chatgpt_auth_file",
+    "chatgpt_auth",
 )
 
 
