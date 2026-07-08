@@ -20,6 +20,9 @@ CHATGPT_DEVICE_VERIFY_URL = f"{CHATGPT_AUTH_BASE}/codex/device"
 CHATGPT_API_BASE = "https://chatgpt.com/backend-api/codex"
 CHATGPT_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 
+CHATGPT_CREDENTIAL_REFRESH_LEAD_SECONDS = 10 * 60
+CHATGPT_CREDENTIAL_REFRESH_INTERVAL_SECONDS = 5 * 60
+
 DEFAULT_ORIGINATOR = "codex_cli_rs"
 DEFAULT_USER_AGENT = "codex_cli_rs/0.0.0 (Unknown 0; unknown) unknown"
 CHATGPT_DEFAULT_INSTRUCTIONS = """You are Codex, based on GPT-5. You are running as a coding agent in the Codex CLI on a user's computer.

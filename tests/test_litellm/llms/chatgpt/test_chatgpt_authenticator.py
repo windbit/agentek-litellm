@@ -1,11 +1,14 @@
 import base64
 import json
 import time
-from unittest.mock import mock_open, patch
+from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
 
-from litellm.llms.chatgpt.authenticator import Authenticator
+from litellm.llms.chatgpt.authenticator import (
+    Authenticator,
+    refresh_chatgpt_credential_values,
+)
 
 
 def _make_jwt(payload: dict) -> str:
@@ -68,3 +71,74 @@ class TestChatGPTAuthenticator:
             assert account_id == "acct-123"
             mock_write.assert_called_once()
             assert mock_write.call_args[0][0]["account_id"] == "acct-123"
+
+
+class TestRefreshChatgptCredentialValues:
+    @staticmethod
+    def _http_client(tokens: dict) -> MagicMock:
+        client = MagicMock()
+        response = MagicMock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = tokens
+        client.post.return_value = response
+        return client
+
+    def test_none_when_no_chatgpt_auth(self):
+        assert refresh_chatgpt_credential_values({"other": "x"}, 600) is None
+
+    def test_none_when_token_fresh(self):
+        values = {
+            "chatgpt_auth": {
+                "access_token": "old",
+                "refresh_token": "r1",
+                "expires_at": time.time() + 10000,
+            }
+        }
+        with patch(
+            "litellm.llms.chatgpt.authenticator._get_httpx_client"
+        ) as mock_client:
+            assert refresh_chatgpt_credential_values(values, 600) is None
+            mock_client.assert_not_called()
+
+    def test_refreshes_when_expiring(self):
+        new_access = _make_jwt({"exp": int(time.time()) + 3600})
+        tokens = {
+            "access_token": new_access,
+            "id_token": "id-new",
+            "refresh_token": "r2",
+        }
+        values = {
+            "chatgpt_token_dir": "/keep",
+            "chatgpt_auth": {
+                "access_token": "old",
+                "refresh_token": "r1",
+                "expires_at": time.time() + 100,
+            },
+        }
+        with patch(
+            "litellm.llms.chatgpt.authenticator._get_httpx_client",
+            return_value=self._http_client(tokens),
+        ):
+            result = refresh_chatgpt_credential_values(values, 600)
+
+        assert result is not None
+        assert result["chatgpt_token_dir"] == "/keep"
+        assert result["chatgpt_auth"]["access_token"] == new_access
+        assert result["chatgpt_auth"]["refresh_token"] == "r2"
+        assert result["chatgpt_auth"]["expires_at"] > time.time()
+
+    def test_none_on_refresh_failure(self):
+        client = MagicMock()
+        client.post.side_effect = Exception("boom")
+        values = {
+            "chatgpt_auth": {
+                "access_token": "old",
+                "refresh_token": "r1",
+                "expires_at": time.time() + 100,
+            }
+        }
+        with patch(
+            "litellm.llms.chatgpt.authenticator._get_httpx_client",
+            return_value=client,
+        ):
+            assert refresh_chatgpt_credential_values(values, 600) is None

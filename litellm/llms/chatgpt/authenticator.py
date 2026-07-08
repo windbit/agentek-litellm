@@ -181,6 +181,23 @@ class Authenticator:
             self._write_auth_file(auth_data)
         return derived
 
+    def refresh_if_expiring(self, lead_seconds: int) -> Optional[Dict[str, Any]]:
+        """Refresh the stored token when it expires within lead_seconds and return
+        the new auth record; return None when no refresh is due."""
+        auth_data = self._read_auth_file()
+        if not auth_data:
+            return None
+        refresh_token = auth_data.get("refresh_token")
+        expires_at = auth_data.get("expires_at")
+        if not isinstance(refresh_token, str) or not isinstance(
+            expires_at, (int, float)
+        ):
+            return None
+        if time.time() < float(expires_at) - lead_seconds:
+            return None
+        self._refresh_tokens(refresh_token)
+        return self._read_auth_file()
+
     def _ensure_token_dir(self) -> None:
         if self.token_dir and not os.path.exists(self.token_dir):
             os.makedirs(self.token_dir, exist_ok=True)
@@ -499,3 +516,23 @@ class Authenticator:
                 break
             time.sleep(sleep_for)
         return None
+
+
+def refresh_chatgpt_credential_values(
+    credential_values: Dict[str, Any],
+    lead_seconds: int,
+) -> Optional[Dict[str, Any]]:
+    """Return credential_values with a refreshed chatgpt_auth when its access token
+    expires within lead_seconds; None when there is nothing to refresh."""
+    auth = credential_values.get("chatgpt_auth")
+    if not isinstance(auth, dict):
+        return None
+    authenticator = Authenticator(auth_inline=auth, credential_required=True)
+    try:
+        refreshed = authenticator.refresh_if_expiring(lead_seconds)
+    except RefreshAccessTokenError as exc:
+        verbose_logger.warning("chatgpt credential refresh failed: %s", exc)
+        return None
+    if refreshed is None:
+        return None
+    return {**credential_values, "chatgpt_auth": refreshed}
