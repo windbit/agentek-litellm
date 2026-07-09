@@ -1289,6 +1289,15 @@ class UserAPIKeyCacheTTLEnum(enum.Enum):
     in_memory_cache_ttl = 60  # 1 min ttl ## configure via `general_settings::user_api_key_cache_ttl: <your-value>`
 
 
+class SpendCounterCacheTTLEnum(enum.Enum):
+    # Budget reservation counters must outlive the slowest in-flight completion,
+    # not just the auth-cache TTL above (a request can take several minutes for
+    # providers like chatgpt/codex). If the counter expires before the request's
+    # spend is persisted, reconciliation falls back to a direct (unreserved)
+    # increment - see _reconcile_budget_reservation_for_counter_update.
+    cache_ttl_seconds = 1800  # 30 min
+
+
 @app.exception_handler(ProxyException)
 async def openai_exception_handler(request: Request, exc: ProxyException):
     # NOTE: DO NOT MODIFY THIS, its crucial to map to Openai exceptions
@@ -1887,7 +1896,7 @@ user_api_key_cache: UserApiKeyCache = UserApiKeyCache(
     default_in_memory_ttl=UserAPIKeyCacheTTLEnum.in_memory_cache_ttl.value
 )
 spend_counter_cache = DualCache(
-    default_in_memory_ttl=UserAPIKeyCacheTTLEnum.in_memory_cache_ttl.value
+    default_in_memory_ttl=SpendCounterCacheTTLEnum.cache_ttl_seconds.value
 )
 model_max_budget_limiter = _PROXY_VirtualKeyModelMaxBudgetLimiter(
     dual_cache=user_api_key_cache
@@ -2478,6 +2487,7 @@ async def _increment_spend_counter_cache(counter_key: str, increment: float):
             current_value = await spend_counter_cache.redis_cache.async_increment(
                 key=counter_key,
                 value=increment,
+                ttl=SpendCounterCacheTTLEnum.cache_ttl_seconds.value,
                 refresh_ttl=True,
             )
         except Exception:
