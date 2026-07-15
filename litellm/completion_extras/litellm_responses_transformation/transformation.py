@@ -35,6 +35,9 @@ from litellm.responses.sse_output_recovery import (
     record_output_item_chunk,
     record_output_text_chunk,
 )
+from litellm.responses.streaming_iterator import (
+    SUPPRESS_COMPLETED_RESPONSE_LOGGING_KEY,
+)
 from litellm.types.llms.openai import (
     ChatCompletionAnnotation,
     ChatCompletionReasoningItem,
@@ -451,6 +454,12 @@ class LiteLLMResponsesTransformationHandler(CompletionTransformationBridge):
         from litellm.types.utils import CallTypes
 
         setattr(litellm_logging_obj, "call_type", CallTypes.responses.value)
+        if not stream:
+            # Suppress the inner sub-call's own stream-completed log (streaming_iterator.py) -
+            # it would consume the dedupe flag the outer non-stream call needs for its own log.
+            litellm_logging_obj.model_call_details[
+                SUPPRESS_COMPLETED_RESPONSE_LOGGING_KEY
+            ] = True
 
         sanitized_litellm_params = self._build_sanitized_litellm_params(litellm_params)
 

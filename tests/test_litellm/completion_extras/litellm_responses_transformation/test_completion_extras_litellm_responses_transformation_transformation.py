@@ -872,6 +872,7 @@ def test_transform_request_system_only_message_maps_to_system_input_item():
     """
     handler = LiteLLMResponsesTransformationHandler()
     logging_obj = Mock()
+    logging_obj.model_call_details = {}
     messages = [{"role": "system", "content": "You are a helpful assistant."}]
 
     result = handler.transform_request(
@@ -913,6 +914,7 @@ def test_transform_request_single_char_keys_not_matched():
 
     # Create mock objects
     logging_obj = Mock()
+    logging_obj.model_call_details = {}
 
     messages = [{"role": "user", "content": "test"}]
 
@@ -2853,3 +2855,47 @@ def test_streaming_function_call_tool_id_for_degenerate_call_id():
 
     assert stream_tool_id("fc_unique_abc123", "call_0") == "fc_unique_abc123"
     assert stream_tool_id("fc_2", "call_tokyo") == "call_tokyo"
+
+
+def test_transform_request_suppresses_inner_stream_log_for_non_stream_caller():
+    """Regression: chatgpt/* cost tracking silently failed without this flag."""
+    from litellm.responses.streaming_iterator import (
+        SUPPRESS_COMPLETED_RESPONSE_LOGGING_KEY,
+    )
+
+    handler = LiteLLMResponsesTransformationHandler()
+    logging_obj = Mock()
+    logging_obj.model_call_details = {}
+
+    handler.transform_request(
+        model="chatgpt/gpt-5.4",
+        messages=[{"role": "user", "content": "hi"}],
+        optional_params={},
+        litellm_params={},
+        headers={},
+        litellm_logging_obj=logging_obj,
+    )
+
+    assert logging_obj.model_call_details[SUPPRESS_COMPLETED_RESPONSE_LOGGING_KEY] is True
+
+
+def test_transform_request_does_not_suppress_inner_stream_log_for_streaming_caller():
+    """Streaming callers are unaffected by the non-stream dedupe fix above."""
+    from litellm.responses.streaming_iterator import (
+        SUPPRESS_COMPLETED_RESPONSE_LOGGING_KEY,
+    )
+
+    handler = LiteLLMResponsesTransformationHandler()
+    logging_obj = Mock()
+    logging_obj.model_call_details = {}
+
+    handler.transform_request(
+        model="chatgpt/gpt-5.4",
+        messages=[{"role": "user", "content": "hi"}],
+        optional_params={"stream": True},
+        litellm_params={},
+        headers={},
+        litellm_logging_obj=logging_obj,
+    )
+
+    assert SUPPRESS_COMPLETED_RESPONSE_LOGGING_KEY not in logging_obj.model_call_details

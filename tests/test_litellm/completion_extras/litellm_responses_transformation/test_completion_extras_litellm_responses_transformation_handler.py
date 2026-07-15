@@ -7,6 +7,7 @@ import pytest
 
 sys.path.insert(0, os.path.abspath("../../.."))
 
+from litellm._internal_context import is_internal_call
 from litellm.completion_extras.litellm_responses_transformation.handler import (
     ResponsesToCompletionBridgeHandler,
 )
@@ -203,3 +204,54 @@ async def test_acompletion_preserves_top_level_stream_flag_in_responses_request(
 
     assert result is stream
     assert transform_request.call_args.kwargs["optional_params"]["stream"] is True
+
+
+@pytest.mark.asyncio
+async def test_acompletion_marks_inner_aresponses_call_as_internal():
+    """Regression: aresponses() sub-call must run under internal_call_scope()."""
+    cached = ModelResponse(id="chatcmpl-internal-call-check", model="gpt-5.4")
+    bridge = ResponsesToCompletionBridgeHandler()
+    seen_during_call = {}
+
+    async def fake_aresponses(*a, **kw):
+        seen_during_call["is_internal_call"] = is_internal_call.get()
+        return cached
+
+    assert is_internal_call.get() is False
+    with (
+        patch.object(
+            bridge.transformation_handler,
+            "transform_request",
+            return_value={"model": "gpt-5.4", "input": "hi"},
+        ),
+        patch("litellm.aresponses", new=fake_aresponses),
+    ):
+        await bridge.acompletion(**_bridge_kwargs(stream=False))
+
+    assert seen_during_call["is_internal_call"] is True
+    assert is_internal_call.get() is False
+
+
+def test_completion_marks_inner_responses_call_as_internal():
+    """Sync counterpart of the async regression above."""
+    cached = ModelResponse(id="chatcmpl-internal-call-check-sync", model="gpt-5.4")
+    bridge = ResponsesToCompletionBridgeHandler()
+    seen_during_call = {}
+
+    def fake_responses(*a, **kw):
+        seen_during_call["is_internal_call"] = is_internal_call.get()
+        return cached
+
+    assert is_internal_call.get() is False
+    with (
+        patch.object(
+            bridge.transformation_handler,
+            "transform_request",
+            return_value={"model": "gpt-5.4", "input": "hi"},
+        ),
+        patch("litellm.responses", new=fake_responses),
+    ):
+        bridge.completion(**_bridge_kwargs(stream=False))
+
+    assert seen_during_call["is_internal_call"] is True
+    assert is_internal_call.get() is False
