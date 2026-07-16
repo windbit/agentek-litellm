@@ -793,7 +793,8 @@ class ResetBudgetJob:
                     "Failed to reset Redis counter %s: %s", counter_key, redis_err
                 )
         window["reset_at"] = get_budget_reset_time(
-            budget_duration=window["budget_duration"]
+            budget_duration=window["budget_duration"],
+            anchor=window.get("anchor"),
         ).isoformat()
         return True
 
