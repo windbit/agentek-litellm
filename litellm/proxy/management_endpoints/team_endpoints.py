@@ -1249,16 +1249,13 @@ async def new_team(
 
         # If budget_limits is set, initialize reset_at for each window
         if complete_team_data.budget_limits:
-            from litellm.proxy.common_utils.timezone_utils import get_budget_reset_time
+            from litellm.proxy.common_utils.timezone_utils import (
+                initialize_budget_windows,
+            )
 
-            initialized_windows = []
-            for window in complete_team_data.budget_limits:
-                w = window if isinstance(window, dict) else window.model_dump()
-                w["reset_at"] = get_budget_reset_time(
-                    budget_duration=w["budget_duration"]
-                ).isoformat()
-                initialized_windows.append(w)
-            complete_team_data.budget_limits = initialized_windows  # type: ignore[assignment]
+            complete_team_data.budget_limits = initialize_budget_windows(  # type: ignore[assignment]
+                complete_team_data.budget_limits
+            )
 
         ## Add Team Member Budget Table
         members_with_roles: List[Member] = []
@@ -2048,16 +2045,11 @@ def _set_budget_reset_at(data: UpdateTeamRequest, updated_kv: dict) -> None:
         updated_kv["budget_reset_at"] = None
 
     if data.budget_limits is not None and len(data.budget_limits) > 0:
-        from litellm.proxy.common_utils.timezone_utils import get_budget_reset_time
+        from litellm.proxy.common_utils.timezone_utils import initialize_budget_windows
 
-        initialized_windows = []
-        for window in data.budget_limits:
-            w = window if isinstance(window, dict) else window.model_dump()
-            w["reset_at"] = get_budget_reset_time(
-                budget_duration=w["budget_duration"]
-            ).isoformat()
-            initialized_windows.append(w)
-        updated_kv["budget_limits"] = json.dumps(initialized_windows)
+        updated_kv["budget_limits"] = json.dumps(
+            initialize_budget_windows(data.budget_limits)
+        )
 
 
 async def handle_update_object_permission(

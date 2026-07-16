@@ -57,7 +57,10 @@ from litellm.proxy.common_utils.callback_utils import (
     encrypt_callback_vars,
 )
 from litellm.proxy.common_utils.rbac_utils import check_org_admin_can_generate_keys
-from litellm.proxy.common_utils.timezone_utils import get_budget_reset_time
+from litellm.proxy.common_utils.timezone_utils import (
+    get_budget_reset_time,
+    initialize_budget_windows,
+)
 from litellm.proxy.common_utils.user_api_key_cache import UserApiKeyCache
 from litellm.proxy.hooks.key_management_event_hooks import KeyManagementEventHooks
 from litellm.proxy.hooks.model_max_budget_limiter import (
@@ -1868,16 +1871,9 @@ async def prepare_key_update_data(
     if "budget_limits" in non_default_values:
         raw_windows = non_default_values["budget_limits"]
         if raw_windows:
-            from litellm.proxy.common_utils.timezone_utils import get_budget_reset_time
-
-            initialized_windows = []
-            for window in raw_windows:
-                w = window if isinstance(window, dict) else window.model_dump()
-                w["reset_at"] = get_budget_reset_time(
-                    budget_duration=w["budget_duration"]
-                ).isoformat()
-                initialized_windows.append(w)
-            non_default_values["budget_limits"] = json.dumps(initialized_windows)
+            non_default_values["budget_limits"] = json.dumps(
+                initialize_budget_windows(raw_windows)
+            )
         else:
             # [] / None clears the field; prisma-client-py has no DbNull
             # sentinel for Json? columns, so store the JSON literal null
@@ -3602,14 +3598,7 @@ async def generate_key_helper_fn(
     # Initialize reset_at for each budget window
     budget_limits_json: Optional[str] = None
     if budget_limits:
-        initialized_windows = []
-        for window in budget_limits:
-            w = dict(window) if not isinstance(window, dict) else {**window}
-            w["reset_at"] = get_budget_reset_time(
-                budget_duration=w["budget_duration"]
-            ).isoformat()
-            initialized_windows.append(w)
-        budget_limits_json = json.dumps(initialized_windows)
+        budget_limits_json = json.dumps(initialize_budget_windows(budget_limits))
 
     aliases_json = json.dumps(aliases)
     config_json = json.dumps(config)

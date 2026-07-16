@@ -95,21 +95,29 @@ def duration_in_seconds(duration: str) -> int:
 
 
 def get_next_standardized_reset_time(
-    duration: str, current_time: datetime, timezone_str: str = "UTC"
+    duration: str,
+    current_time: datetime,
+    timezone_str: str = "UTC",
+    anchor: Optional[datetime] = None,
 ) -> datetime:
     """
     Get the next standardized reset time based on the duration.
 
-    All durations will reset at predictable intervals, aligned from the current time:
+    Without an anchor, durations reset at predictable calendar intervals:
     - Nd: If N=1, reset at next midnight; if N>1, reset every N days from now
     - Nh: Every N hours, aligned to hour boundaries (e.g., 1:00, 2:00)
     - Nm: Every N minutes, aligned to minute boundaries (e.g., 1:05, 1:10)
     - Ns: Every N seconds, aligned to second boundaries
 
+    With an anchor (billing period start), the window resets relative to the
+    anchor instead of snapping to calendar boundaries: monthly on the anchor's
+    day-of-month, weekly on the anchor's weekday, otherwise anchor + N periods.
+
     Parameters:
     - duration: Duration string (e.g. "30s", "30m", "30h", "30d")
     - current_time: Current datetime
     - timezone_str: Timezone string (e.g. "UTC", "US/Eastern", "Asia/Kolkata")
+    - anchor: Optional billing period start; when set, reset is anchored to it
 
     Returns:
     - Next reset time at a standardized interval in the specified timezone
@@ -124,6 +132,13 @@ def get_next_standardized_reset_time(
         return current_time.replace(
             hour=0, minute=0, second=0, microsecond=0
         ) + timedelta(days=1)
+
+    if anchor is not None:
+        anchored = _next_anchored_reset(
+            _to_timezone(anchor, tz), current_time, value, unit
+        )
+        if anchored is not None:
+            return anchored
 
     # Midnight of the current day in the specified timezone
     base_midnight = current_time.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -179,6 +194,55 @@ def _parse_duration(duration: str) -> Tuple[Optional[int], Optional[str]]:
 
     value, unit = match.groups()
     return int(value), unit
+
+
+def _to_timezone(dt: datetime, tz: tzinfo) -> datetime:
+    """Normalize a datetime into tz; naive datetimes are assumed to be UTC."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(tz)
+
+
+def _add_months(dt: datetime, months: int) -> datetime:
+    """Advance dt by whole months, clamping the day to the target month's length."""
+    total = dt.month - 1 + months
+    year = dt.year + total // 12
+    month = total % 12 + 1
+    day = min(dt.day, get_last_day_of_month(year, month))
+    return dt.replace(year=year, month=month, day=day)
+
+
+def _next_anchored_month(
+    anchor: datetime, current_time: datetime, value: int
+) -> datetime:
+    """Midnight on the anchor's day-of-month, first such boundary after current_time.
+
+    The anchor's time of day is dropped: monthly budgets reset at 00:00 like the
+    calendar resets, only the day-of-month moves to the anchor's.
+    """
+    base = anchor.replace(hour=0, minute=0, second=0, microsecond=0)
+    months = (current_time.year - base.year) * 12 + (current_time.month - base.month)
+    base_steps = (months // value) * value
+    candidate = _add_months(base, base_steps)
+    if candidate > current_time:
+        return candidate
+    return _add_months(base, base_steps + value)
+
+
+def _next_anchored_reset(
+    anchor: datetime, current_time: datetime, value: int, unit: str
+) -> Optional[datetime]:
+    """Anchored reset for monthly windows only: midnight on the anchor's day-of-month.
+
+    Returns None for every other duration (daily, weekly, sub-day, zero), which
+    keeps its calendar reset so the anchor never shifts a non-monthly window.
+    """
+    if value == 0:
+        return None
+    if unit == "mo" or (unit == "d" and value == 30):
+        months = value if unit == "mo" else 1
+        return _next_anchored_month(anchor, current_time, months)
+    return None
 
 
 def _handle_day_reset(

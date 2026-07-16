@@ -48,6 +48,7 @@ class BudgetLimitEntry(LiteLLMPydanticObjectBase):
     budget_duration: str
     max_budget: float
     reset_at: Optional[datetime] = None
+    anchor: Optional[datetime] = None
 
 
 class LiteLLM_ModelTable(LiteLLMPydanticObjectBase):

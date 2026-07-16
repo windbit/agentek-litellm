@@ -1,7 +1,11 @@
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING, List, Optional, Union
 
 import litellm
 from litellm.litellm_core_utils.duration_parser import get_next_standardized_reset_time
+
+if TYPE_CHECKING:
+    from litellm.models.team import BudgetLimitEntry
 
 
 def get_budget_reset_timezone():
@@ -15,15 +19,53 @@ def get_budget_reset_timezone():
     return getattr(litellm, "timezone", None) or "UTC"
 
 
-def get_budget_reset_time(budget_duration: str) -> datetime:
+def _parse_anchor(anchor: Optional[Union[str, datetime]]) -> Optional[datetime]:
+    if anchor is None or isinstance(anchor, datetime):
+        return anchor
+    return datetime.fromisoformat(anchor.replace("Z", "+00:00"))
+
+
+def get_budget_reset_time(
+    budget_duration: str, anchor: Optional[Union[str, datetime]] = None
+) -> datetime:
     """
     Get the budget reset time based on the configured timezone.
     Falls back to UTC if not specified.
+
+    When anchor (billing period start) is given, the window resets relative to
+    it (same day-of-month / weekday) instead of snapping to calendar boundaries.
     """
 
     reset_at = get_next_standardized_reset_time(
         duration=budget_duration,
         current_time=datetime.now(timezone.utc),
         timezone_str=get_budget_reset_timezone(),
+        anchor=_parse_anchor(anchor),
     )
     return reset_at
+
+
+def initialize_budget_windows(
+    windows: List[Union[dict, "BudgetLimitEntry"]],
+) -> List[dict]:
+    """
+    Set reset_at on each budget window from its duration and optional anchor.
+
+    Accepts dicts or Pydantic BudgetLimitEntry values; returns plain JSON-safe
+    dicts with reset_at (and, when present, a normalized anchor) as ISO strings.
+    """
+    return [_initialize_window(w) for w in windows]
+
+
+def _initialize_window(window: Union[dict, "BudgetLimitEntry"]) -> dict:
+    w = dict(window) if isinstance(window, dict) else window.model_dump()
+    anchor = _parse_anchor(w.get("anchor"))
+    reset_at = get_budget_reset_time(
+        budget_duration=w["budget_duration"], anchor=anchor
+    )
+    initialized = {**w, "reset_at": reset_at.isoformat()}
+    if anchor is None:
+        initialized.pop("anchor", None)
+    else:
+        initialized["anchor"] = anchor.isoformat()
+    return initialized
