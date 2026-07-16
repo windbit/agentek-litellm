@@ -200,65 +200,76 @@ class TestStandardizedResetTime(unittest.TestCase):
 
 
 class TestAnchoredResetTime(unittest.TestCase):
-    """When an anchor (billing period start) is given, monthly/weekly/daily
-    windows reset relative to the anchor instead of snapping to calendar
-    boundaries (1st of month / Monday)."""
+    """With an anchor, only monthly windows move: they reset at midnight on the
+    anchor's day-of-month instead of the 1st. The anchor's time of day is
+    dropped, and daily / weekly / sub-day windows keep their calendar reset."""
 
-    def test_monthly_anchor_same_day_next_month(self):
-        # Billing started on the 15th; now past the 15th -> next reset is the
-        # 15th of the following month at the anchor's time of day (not the 1st).
-        anchor = datetime(2026, 1, 15, 8, 0, 0, tzinfo=timezone.utc)
+    def test_monthly_resets_on_anchor_day_at_midnight(self):
+        # Anchor at 08:00 on the 15th; reset lands on the 15th at 00:00, not 08:00.
+        anchor = datetime(2026, 1, 15, 8, 30, 0, tzinfo=timezone.utc)
         now = datetime(2026, 3, 20, 12, 0, 0, tzinfo=timezone.utc)
-        expected = datetime(2026, 4, 15, 8, 0, 0, tzinfo=timezone.utc)
+        expected = datetime(2026, 4, 15, 0, 0, 0, tzinfo=timezone.utc)
         result = get_next_standardized_reset_time("1mo", now, "UTC", anchor=anchor)
         self.assertEqual(result, expected)
 
-    def test_monthly_anchor_before_reset_day_stays_this_month(self):
-        # Now is before this month's anchor day -> reset lands this month.
+    def test_monthly_before_reset_day_stays_this_month(self):
+        # Now is before this month's anchor day -> reset lands this month at midnight.
         anchor = datetime(2026, 1, 15, 8, 0, 0, tzinfo=timezone.utc)
         now = datetime(2026, 3, 10, 12, 0, 0, tzinfo=timezone.utc)
-        expected = datetime(2026, 3, 15, 8, 0, 0, tzinfo=timezone.utc)
+        expected = datetime(2026, 3, 15, 0, 0, 0, tzinfo=timezone.utc)
         result = get_next_standardized_reset_time("1mo", now, "UTC", anchor=anchor)
         self.assertEqual(result, expected)
 
     def test_monthly_anchor_day_31_clamps_to_short_month(self):
         # Anchor on the 31st clamps to the last day of shorter months.
-        anchor = datetime(2026, 1, 31, 0, 0, 0, tzinfo=timezone.utc)
+        anchor = datetime(2026, 1, 31, 9, 0, 0, tzinfo=timezone.utc)
         now = datetime(2026, 2, 1, 0, 0, 0, tzinfo=timezone.utc)
         expected = datetime(2026, 2, 28, 0, 0, 0, tzinfo=timezone.utc)
         result = get_next_standardized_reset_time("1mo", now, "UTC", anchor=anchor)
         self.assertEqual(result, expected)
 
-    def test_monthly_anchor_30d_equivalent(self):
-        # 30d with an anchor behaves like a month (does NOT snap to the 1st).
+    def test_monthly_30d_equivalent(self):
+        # 30d with an anchor behaves like a month (anchor day, midnight).
         anchor = datetime(2026, 1, 15, 8, 0, 0, tzinfo=timezone.utc)
         now = datetime(2026, 3, 20, 12, 0, 0, tzinfo=timezone.utc)
-        expected = datetime(2026, 4, 15, 8, 0, 0, tzinfo=timezone.utc)
+        expected = datetime(2026, 4, 15, 0, 0, 0, tzinfo=timezone.utc)
         result = get_next_standardized_reset_time("30d", now, "UTC", anchor=anchor)
         self.assertEqual(result, expected)
 
-    def test_weekly_anchor_resets_on_anchor_weekday(self):
-        # Anchor is a Wednesday; 7d must reset on Wednesdays, not the next Monday.
-        anchor = datetime(2026, 1, 7, 9, 0, 0, tzinfo=timezone.utc)  # Wednesday
-        now = datetime(2026, 1, 12, 0, 0, 0, tzinfo=timezone.utc)  # Monday
-        expected = datetime(2026, 1, 14, 9, 0, 0, tzinfo=timezone.utc)  # Wednesday
+    def test_monthly_on_boundary_advances_one_month(self):
+        # At the midnight boundary the next reset is strictly in the future.
+        anchor = datetime(2026, 1, 15, 8, 0, 0, tzinfo=timezone.utc)
+        now = datetime(2026, 3, 15, 0, 0, 0, tzinfo=timezone.utc)
+        expected = datetime(2026, 4, 15, 0, 0, 0, tzinfo=timezone.utc)
+        result = get_next_standardized_reset_time("1mo", now, "UTC", anchor=anchor)
+        self.assertEqual(result, expected)
+
+    def test_daily_anchor_is_ignored(self):
+        # Daily windows keep their calendar reset (next midnight) regardless of anchor.
+        anchor = datetime(2026, 1, 15, 8, 0, 0, tzinfo=timezone.utc)
+        now = datetime(2026, 3, 20, 12, 0, 0, tzinfo=timezone.utc)
+        expected = datetime(2026, 3, 21, 0, 0, 0, tzinfo=timezone.utc)
+        result = get_next_standardized_reset_time("1d", now, "UTC", anchor=anchor)
+        self.assertEqual(result, expected)
+
+    def test_weekly_anchor_is_ignored(self):
+        # Weekly windows keep their calendar reset (next Monday) regardless of anchor.
+        anchor = datetime(2026, 1, 7, 9, 0, 0, tzinfo=timezone.utc)  # a Wednesday
+        now = datetime(2026, 3, 18, 12, 0, 0, tzinfo=timezone.utc)  # a Wednesday
+        expected = datetime(2026, 3, 23, 0, 0, 0, tzinfo=timezone.utc)  # next Monday
         result = get_next_standardized_reset_time("7d", now, "UTC", anchor=anchor)
         self.assertEqual(result, expected)
 
-    def test_now_before_anchor_returns_anchor(self):
-        # Budget created before its billing period begins -> first reset is the anchor.
-        anchor = datetime(2026, 2, 15, 8, 0, 0, tzinfo=timezone.utc)
-        now = datetime(2026, 2, 1, 12, 0, 0, tzinfo=timezone.utc)
-        result = get_next_standardized_reset_time("1mo", now, "UTC", anchor=anchor)
-        self.assertEqual(result, anchor)
-
-    def test_now_exactly_on_boundary_advances_one_period(self):
-        # On the boundary, the next reset is strictly in the future.
+    def test_zero_duration_anchor_does_not_crash(self):
+        # Zero-length durations defer to the calendar handlers (immediate reset),
+        # instead of dividing by a zero timedelta (ZeroDivisionError).
         anchor = datetime(2026, 1, 15, 8, 0, 0, tzinfo=timezone.utc)
-        now = datetime(2026, 3, 15, 8, 0, 0, tzinfo=timezone.utc)
-        expected = datetime(2026, 4, 15, 8, 0, 0, tzinfo=timezone.utc)
-        result = get_next_standardized_reset_time("1mo", now, "UTC", anchor=anchor)
-        self.assertEqual(result, expected)
+        now = datetime(2026, 3, 20, 12, 0, 0, tzinfo=timezone.utc)
+        for duration in ("0d", "0h", "0m", "0s"):
+            result = get_next_standardized_reset_time(
+                duration, now, "UTC", anchor=anchor
+            )
+            self.assertEqual(result, now, msg=duration)
 
     def test_none_anchor_keeps_calendar_behavior(self):
         # No anchor -> unchanged: monthly snaps to the 1st.

@@ -134,7 +134,11 @@ def get_next_standardized_reset_time(
         ) + timedelta(days=1)
 
     if anchor is not None:
-        return _next_anchored_reset(_to_timezone(anchor, tz), current_time, value, unit)
+        anchored = _next_anchored_reset(
+            _to_timezone(anchor, tz), current_time, value, unit
+        )
+        if anchored is not None:
+            return anchored
 
     # Midnight of the current day in the specified timezone
     base_midnight = current_time.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -199,13 +203,6 @@ def _to_timezone(dt: datetime, tz: tzinfo) -> datetime:
     return dt.astimezone(tz)
 
 
-def _fixed_unit_seconds(value: int, unit: str) -> Optional[int]:
-    """Seconds per period for fixed-length units; None for calendar units (mo)."""
-    per_unit = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
-    seconds = per_unit.get(unit)
-    return seconds * value if seconds is not None else None
-
-
 def _add_months(dt: datetime, months: int) -> datetime:
     """Advance dt by whole months, clamping the day to the target month's length."""
     total = dt.month - 1 + months
@@ -218,33 +215,34 @@ def _add_months(dt: datetime, months: int) -> datetime:
 def _next_anchored_month(
     anchor: datetime, current_time: datetime, value: int
 ) -> datetime:
-    """First anchor + k*value months strictly after current_time (k >= 0)."""
-    months = (current_time.year - anchor.year) * 12 + (
-        current_time.month - anchor.month
-    )
+    """Midnight on the anchor's day-of-month, first such boundary after current_time.
+
+    The anchor's time of day is dropped: monthly budgets reset at 00:00 like the
+    calendar resets, only the day-of-month moves to the anchor's.
+    """
+    base = anchor.replace(hour=0, minute=0, second=0, microsecond=0)
+    months = (current_time.year - base.year) * 12 + (current_time.month - base.month)
     base_steps = (months // value) * value
-    candidate = _add_months(anchor, base_steps)
-    extra = 0 if candidate > current_time else value
-    return _add_months(anchor, base_steps + extra)
+    candidate = _add_months(base, base_steps)
+    if candidate > current_time:
+        return candidate
+    return _add_months(base, base_steps + value)
 
 
 def _next_anchored_reset(
     anchor: datetime, current_time: datetime, value: int, unit: str
-) -> datetime:
-    """Next reset time relative to the anchor, strictly after current_time."""
-    if current_time < anchor:
-        return anchor
+) -> Optional[datetime]:
+    """Anchored reset for monthly windows only: midnight on the anchor's day-of-month.
+
+    Returns None for every other duration (daily, weekly, sub-day, zero), which
+    keeps its calendar reset so the anchor never shifts a non-monthly window.
+    """
+    if value == 0:
+        return None
     if unit == "mo" or (unit == "d" and value == 30):
-        months = value // 30 if unit == "d" else value
+        months = value if unit == "mo" else 1
         return _next_anchored_month(anchor, current_time, months)
-    seconds = _fixed_unit_seconds(value, unit)
-    if seconds is None:
-        return current_time.replace(
-            hour=0, minute=0, second=0, microsecond=0
-        ) + timedelta(days=1)
-    period = timedelta(seconds=seconds)
-    steps = (current_time - anchor) // period + 1
-    return anchor + steps * period
+    return None
 
 
 def _handle_day_reset(
