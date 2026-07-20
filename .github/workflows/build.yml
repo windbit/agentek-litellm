@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, agentek]
     steps:
       - uses: actions/checkout@v6
 
