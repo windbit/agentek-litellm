@@ -18,6 +18,8 @@ permissions:
 
 jobs:
   build:
+    # Форк-PR не пускаем на self-hosted раннер: там docker, то есть root на хосте.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, agentek]
     steps:
       - uses: actions/checkout@v6
