@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   build:
-    # Форк-PR не пускаем на self-hosted раннер: там docker, то есть root на хосте.
+    # PR из форков наш раннер не обслуживает.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, agentek]
     steps:
@@ -41,7 +41,8 @@ jobs:
           context: .
           platforms: linux/amd64
           push: true
+          # :latest — только с master, даже если в триггер добавят ещё ветку.
           tags: |
-            ghcr.io/windbit/agentek-litellm:latest
             ghcr.io/windbit/agentek-litellm:${{ github.sha }}
+            ${{ github.ref == 'refs/heads/master' && 'ghcr.io/windbit/agentek-litellm:latest' || '' }}
           provenance: false
