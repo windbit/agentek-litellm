@@ -39,7 +39,8 @@ _SPECIAL_HEADERS_CACHE = frozenset(
 
 # Matches any header of the form x-<something>-session-id (case-insensitive).
 # Excludes the two explicit litellm headers which are handled with higher priority.
-_GENERIC_SESSION_ID_HEADER_RE = re.compile(r"^x-.+-session-id$", re.IGNORECASE)
+# The bare `session_id` form has no vendor prefix: that is what Codex and OpenCode send.
+_GENERIC_SESSION_ID_HEADER_RE = re.compile(r"^(x-.+-)?session[-_]id$", re.IGNORECASE)
 _EXPLICIT_SESSION_HEADERS = frozenset({"x-litellm-trace-id", "x-litellm-session-id"})
 # Session-id values must be non-empty strings of alphanumerics, hyphens, or underscores
 # (covers UUIDs and most common session-id formats).
