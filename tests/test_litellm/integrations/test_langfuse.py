@@ -930,3 +930,24 @@ def test_max_langfuse_clients_limit():
         assert litellm.initialized_langfuse_clients == 2
 
     litellm.initialized_langfuse_clients = original_initialized_langfuse_clients
+
+
+def test_add_metadata_from_header_takes_a_harness_session_id():
+    """A harness (Codex, OpenCode) sends `session_id` and knows nothing about Langfuse."""
+    from litellm.integrations.langfuse.langfuse import LangFuseLogger
+
+    litellm_params = {"proxy_server_request": {"headers": {"session_id": "3a52c612-3b80-4535-84f6"}}}
+
+    metadata = LangFuseLogger.add_metadata_from_header(litellm_params, {})
+
+    assert metadata["session_id"] == "3a52c612-3b80-4535-84f6"
+
+
+def test_add_metadata_from_header_keeps_an_explicit_session_id():
+    from litellm.integrations.langfuse.langfuse import LangFuseLogger
+
+    litellm_params = {"proxy_server_request": {"headers": {"session_id": "from-header"}}}
+
+    metadata = LangFuseLogger.add_metadata_from_header(litellm_params, {"session_id": "explicit"})
+
+    assert metadata["session_id"] == "explicit"
