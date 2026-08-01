@@ -271,12 +271,6 @@ class LangFuseLogger:
                     )
                 metadata[trace_param_key] = proxy_headers.get(metadata_param_key)
 
-        # Harnesses (Codex, OpenCode) send their conversation id as a plain `session_id` header and
-        # know nothing about Langfuse. Without it their calls arrive as sessionless traces, which is
-        # what an observability pipeline keyed on sessions has to drop.
-        if "session_id" not in metadata and proxy_headers.get("session_id"):
-            metadata["session_id"] = proxy_headers["session_id"]
-
         return metadata
 
     def log_event_on_langfuse(

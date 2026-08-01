@@ -2399,6 +2399,18 @@ def test_get_chain_id_from_headers_generic_vendor_session_id():
     )
 
 
+def test_get_chain_id_from_headers_plain_session_id():
+    """Codex and OpenCode send a bare `session_id` header, without a vendor prefix."""
+    from litellm.proxy.litellm_pre_call_utils import get_chain_id_from_headers
+
+    assert (
+        get_chain_id_from_headers({"session_id": "01996f2c-0d5e-7a11-9c31-2d1f8a0b4c77"})
+        == "01996f2c-0d5e-7a11-9c31-2d1f8a0b4c77"
+    )
+    assert get_chain_id_from_headers({"Session-Id": "opencode-1785587482"}) == "opencode-1785587482"
+    assert get_chain_id_from_headers({"session_id": "short"}) is None
+
+
 def test_get_internal_user_header_from_mapping_returns_expected_header():
     mappings = [
         {"header_name": "X-OpenWebUI-User-Id", "litellm_user_role": "internal_user"},
