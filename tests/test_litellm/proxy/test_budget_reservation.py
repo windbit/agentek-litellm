@@ -961,6 +961,38 @@ def test_should_start_window_without_reset_at_at_duration_boundary():
     assert before <= window_start <= after
 
 
+def test_should_start_window_at_spend_since_after_a_mid_period_reset():
+    reset_at = datetime.now(timezone.utc) + timedelta(hours=8)
+    spend_since = datetime.now(timezone.utc) - timedelta(minutes=5)
+
+    window_start = get_budget_window_start(
+        {
+            "budget_duration": "1d",
+            "reset_at": reset_at.isoformat(),
+            "spend_since": spend_since.isoformat(),
+        }
+    )
+
+    # Without spend_since the window would start 16h ago and a cold counter would re-seed the spend
+    # the reset was supposed to forget.
+    assert window_start == spend_since
+
+
+def test_should_ignore_spend_since_older_than_the_running_window():
+    reset_at = datetime.now(timezone.utc) + timedelta(hours=8)
+    spend_since = datetime.now(timezone.utc) - timedelta(days=3)
+
+    window_start = get_budget_window_start(
+        {
+            "budget_duration": "1d",
+            "reset_at": reset_at.isoformat(),
+            "spend_since": spend_since.isoformat(),
+        }
+    )
+
+    assert window_start == reset_at - timedelta(days=1)
+
+
 @pytest.mark.asyncio
 async def test_should_skip_budget_window_with_unparseable_duration(
     spend_counter_state,

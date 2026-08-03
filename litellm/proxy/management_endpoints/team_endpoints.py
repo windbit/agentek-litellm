@@ -3939,6 +3939,94 @@ async def unblock_team(
     return record
 
 
+@router.post(
+    "/team/{team_id}/reset_spend",
+    tags=["team management"],
+    dependencies=[Depends(user_api_key_auth)],
+)
+@management_endpoint_wrapper
+async def reset_team_spend(
+    team_id: str,
+    user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth),
+):
+    """
+    Starts every budget window of a team over: counters go to zero and spend booked so far stops
+    counting against them. Budgets, limits and spend history are left alone.
+
+    Meant for a new billing period (plan change, period restart), where the customer is entitled to
+    the full allowance again even though the calendar window has not turned over yet.
+
+    Example:
+    ```
+    curl --location --request POST 'http://0.0.0.0:4000/team/team-1234/reset_spend' \
+    --header 'Authorization: Bearer sk-1234'
+    ```
+
+    Returns:
+    - team_id, the durations that were reset, and the timestamp they now count spend from
+    """
+    from litellm.proxy.common_utils.reset_budget_job import ResetBudgetJob
+    from litellm.proxy.proxy_server import (
+        prisma_client,
+        proxy_logging_obj,
+        spend_counter_cache,
+        user_api_key_cache,
+    )
+
+    if prisma_client is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": "DB not connected. prisma_client is None"},
+        )
+
+    existing_team = await TeamRepository(prisma_client).table.find_unique(
+        where={"team_id": team_id}
+    )
+    if existing_team is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": f"Team not found, passed team_id={team_id}"},
+        )
+
+    await _verify_team_access(
+        team_obj=LiteLLM_TeamTable(**existing_team.model_dump()),
+        user_api_key_dict=user_api_key_dict,
+    )
+
+    raw_windows = existing_team.budget_limits
+    if isinstance(raw_windows, str):
+        raw_windows = json.loads(raw_windows)
+    windows: List[dict] = raw_windows if isinstance(raw_windows, list) else []
+    if not windows:
+        return {"team_id": team_id, "windows_reset": [], "spend_since": None}
+
+    spend_since = datetime.now(timezone.utc).isoformat()
+    for window in windows:
+        await ResetBudgetJob.zero_window_counter(
+            counter_key=f"spend:team:{team_id}:window:{window['budget_duration']}",
+            spend_counter_cache=spend_counter_cache,
+        )
+        # Zeroing the counter alone lasts only until its TTL: a cold counter re-seeds from the spend
+        # logs of the running window, which would bring the reset spend straight back.
+        window["spend_since"] = spend_since
+
+    record = await TeamRepository(prisma_client).table.update(
+        where={"team_id": team_id},
+        data={"budget_limits": json.dumps(windows)},  # type: ignore[arg-type]
+    )
+    await _refresh_cached_team(
+        team_row=record,
+        user_api_key_cache=user_api_key_cache,
+        proxy_logging_obj=proxy_logging_obj,
+    )
+
+    return {
+        "team_id": team_id,
+        "windows_reset": [window["budget_duration"] for window in windows],
+        "spend_since": spend_since,
+    }
+
+
 @router.get("/team/available")
 async def list_available_teams(
     http_request: Request,

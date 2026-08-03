@@ -762,6 +762,11 @@ def _get_entry_reserved_cost(entry: dict, default_reserved_cost: float) -> float
 
 
 def get_budget_window_start(window: Any) -> Optional[datetime]:
+    """Start of the window's running period — what a cold counter re-seeds its spend from.
+
+    A window reset mid-period (POST /team/{id}/reset_spend) carries spend_since, so the re-seed
+    skips spend booked against the period that was thrown away.
+    """
     window_dict = _coerce_window(window)
     budget_duration = window_dict.get("budget_duration")
     if budget_duration is None:
@@ -773,10 +778,18 @@ def get_budget_window_start(window: Any) -> Optional[datetime]:
 
     reset_at = _coerce_datetime(window_dict.get("reset_at"))
     if reset_at is None:
-        return datetime.now(timezone.utc) - timedelta(seconds=duration_seconds)
-    if reset_at.tzinfo is None:
-        reset_at = reset_at.replace(tzinfo=timezone.utc)
-    return reset_at - timedelta(seconds=duration_seconds)
+        period_start = datetime.now(timezone.utc) - timedelta(seconds=duration_seconds)
+    else:
+        if reset_at.tzinfo is None:
+            reset_at = reset_at.replace(tzinfo=timezone.utc)
+        period_start = reset_at - timedelta(seconds=duration_seconds)
+
+    spend_since = _coerce_datetime(window_dict.get("spend_since"))
+    if spend_since is None:
+        return period_start
+    if spend_since.tzinfo is None:
+        spend_since = spend_since.replace(tzinfo=timezone.utc)
+    return max(period_start, spend_since)
 
 
 def _coerce_datetime(value: Any) -> Optional[datetime]:
