@@ -718,5 +718,50 @@ class TestLangfuseOtelResponsesAPI:
             assert output_data[0]["arguments"]["unit"] == "celsius"
 
 
+def test_cost_details_come_from_litellm():
+    """Langfuse must price the trace with what LiteLLM charged, not with its own model table."""
+    kwargs = {
+        "standard_logging_object": {"response_cost": 0.0010773},
+        "model": "gpt-5.4",
+        "optional_params": {},
+    }
+
+    mock_span = MagicMock()
+
+    with patch(
+        "litellm.integrations.arize._utils.safe_set_attribute"
+    ) as mock_safe_set_attribute:
+        LangfuseOtelLogger._set_langfuse_specific_attributes(mock_span, kwargs, None)
+
+        cost_calls = [
+            call
+            for call in mock_safe_set_attribute.call_args_list
+            if call.args[1] == LangfuseSpanAttributes.OBSERVATION_COST_DETAILS.value
+        ]
+
+    assert len(cost_calls) == 1
+    assert json.loads(cost_calls[0].args[2]) == {"total": 0.0010773}
+
+
+def test_no_cost_details_without_a_price():
+    """A call LiteLLM could not price stays unpriced; a zero would read as a free request."""
+    kwargs = {"standard_logging_object": {}, "model": "gpt-5.4", "optional_params": {}}
+
+    mock_span = MagicMock()
+
+    with patch(
+        "litellm.integrations.arize._utils.safe_set_attribute"
+    ) as mock_safe_set_attribute:
+        LangfuseOtelLogger._set_langfuse_specific_attributes(mock_span, kwargs, None)
+
+        cost_calls = [
+            call
+            for call in mock_safe_set_attribute.call_args_list
+            if call.args[1] == LangfuseSpanAttributes.OBSERVATION_COST_DETAILS.value
+        ]
+
+    assert cost_calls == []
+
+
 if __name__ == "__main__":
     pytest.main([__file__])
