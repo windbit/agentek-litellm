@@ -221,6 +221,24 @@ class LangfuseOtelLogger(OpenTelemetry):
                 )
 
     @staticmethod
+    def _set_cost_attribute(span: Span, kwargs) -> None:
+        """Reports the cost LiteLLM charged; without it Langfuse prices the call from its own
+        model table, so the trace and the spend logs disagree and only the latter bills."""
+        from litellm.integrations.arize._utils import safe_set_attribute
+        from litellm.litellm_core_utils.safe_json_dumps import safe_dumps
+
+        standard_logging_object = kwargs.get("standard_logging_object") or {}
+        response_cost = standard_logging_object.get("response_cost")
+        if not isinstance(response_cost, (int, float)):
+            return
+
+        safe_set_attribute(
+            span,
+            LangfuseSpanAttributes.OBSERVATION_COST_DETAILS.value,
+            safe_dumps({"total": float(response_cost)}),
+        )
+
+    @staticmethod
     def _set_langfuse_specific_attributes(span: Span, kwargs, response_obj):
         """
         Sets Langfuse specific metadata attributes onto the OTEL span.
@@ -240,6 +258,8 @@ class LangfuseOtelLogger(OpenTelemetry):
                 LangfuseSpanAttributes.LANGFUSE_ENVIRONMENT.value,
                 langfuse_environment,
             )
+
+        LangfuseOtelLogger._set_cost_attribute(span=span, kwargs=kwargs)
 
         metadata = LangfuseOtelLogger._extract_langfuse_metadata(kwargs)
         LangfuseOtelLogger._set_metadata_attributes(span=span, metadata=metadata)
