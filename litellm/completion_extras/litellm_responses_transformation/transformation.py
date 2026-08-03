@@ -104,6 +104,37 @@ def _build_reasoning_item(
     }
 
 
+def _terminal_finish_reason(
+    event_type: str,
+    response_data: dict[str, Any],
+    has_function_calls: bool,
+) -> str:
+    if (
+        event_type == "response.completed"
+        and response_data.get("status") != "incomplete"
+    ):
+        return "tool_calls" if has_function_calls else "stop"
+    incomplete_details = response_data.get("incomplete_details") or {}
+    reason = (
+        incomplete_details.get("reason")
+        if isinstance(incomplete_details, dict)
+        else getattr(incomplete_details, "reason", None)
+    )
+    return "content_filter" if reason == "content_filter" else "length"
+
+
+def _responses_stream_failure(parsed_chunk: dict[str, Any]) -> "litellm.APIError":
+    response_data = parsed_chunk.get("response") or {}
+    error = response_data.get("error") or parsed_chunk.get("error") or parsed_chunk
+    message = error.get("message") if isinstance(error, dict) else None
+    return litellm.APIError(
+        status_code=500,
+        message=message or "Responses API stream ended without a completed response",
+        llm_provider="",
+        model=response_data.get("model", ""),
+    )
+
+
 def _reasoning_item_to_response_input(
     r_item: Union[ChatCompletionReasoningItem, Dict[str, Any]],
 ) -> Dict[str, Any]:
@@ -1447,12 +1478,7 @@ class OpenAiResponsesToChatCompletionStreamIterator(BaseModelResponseIterator):
                         )
                     ]
                 )
-        elif event_type == "response.completed":
-            # Response is fully complete - now we can signal is_finished=True
-            # This ensures we don't prematurely end the stream before tool_calls arrive
-
-            # Check if response contains function_call items in output
-            # to determine correct finish_reason
+        elif event_type in ("response.completed", "response.incomplete"):
             response_data = parsed_chunk.get("response", {})
             output_items = response_data.get("output", []) if response_data else []
 
@@ -1462,7 +1488,9 @@ class OpenAiResponsesToChatCompletionStreamIterator(BaseModelResponseIterator):
                 if isinstance(item, dict)
             )
 
-            finish_reason = "tool_calls" if has_function_calls else "stop"
+            finish_reason = _terminal_finish_reason(
+                event_type, response_data or {}, has_function_calls
+            )
 
             # Extract reasoning items with encrypted_content for round-tripping
             completed_reasoning_items: Optional[List[Dict[str, Any]]] = None
@@ -1505,6 +1533,8 @@ class OpenAiResponsesToChatCompletionStreamIterator(BaseModelResponseIterator):
                 ],
                 usage=usage,
             )
+        elif event_type in ("response.failed", "error"):
+            raise _responses_stream_failure(parsed_chunk)
         else:
             pass
         # For any unhandled event types, create a minimal valid chunk or skip
