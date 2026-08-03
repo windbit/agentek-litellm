@@ -257,3 +257,105 @@ def test_translate_responses_chunk_passthrough_chat_completion_chunk():
 
     assert result.choices[0].delta.content == "Hi! How can I help?"
     assert result.choices[0].finish_reason is None
+
+
+def _translate(chunk):
+    from litellm.completion_extras.litellm_responses_transformation.transformation import (
+        OpenAiResponsesToChatCompletionStreamIterator,
+    )
+
+    return OpenAiResponsesToChatCompletionStreamIterator.translate_responses_chunk_to_openai_stream(
+        chunk
+    )
+
+
+def test_translate_responses_chunk_incomplete_max_output_tokens():
+    result = _translate(
+        {
+            "type": "response.incomplete",
+            "response": {
+                "status": "incomplete",
+                "incomplete_details": {"reason": "max_output_tokens"},
+                "output": [],
+                "usage": {"input_tokens": 213000, "output_tokens": 2777},
+            },
+        }
+    )
+
+    assert result.choices[0].finish_reason == "length"
+    assert result.usage is not None
+    assert result.usage.prompt_tokens == 213000
+    assert result.usage.completion_tokens == 2777
+
+
+def test_translate_responses_chunk_incomplete_content_filter():
+    result = _translate(
+        {
+            "type": "response.incomplete",
+            "response": {
+                "status": "incomplete",
+                "incomplete_details": {"reason": "content_filter"},
+                "output": [],
+                "usage": {"input_tokens": 10, "output_tokens": 1},
+            },
+        }
+    )
+
+    assert result.choices[0].finish_reason == "content_filter"
+
+
+def test_translate_responses_chunk_failed_raises():
+    import litellm
+
+    with pytest.raises(litellm.APIError) as exc_info:
+        _translate(
+            {
+                "type": "response.failed",
+                "response": {
+                    "status": "failed",
+                    "model": "gpt-5.4",
+                    "error": {"code": "server_error", "message": "upstream exploded"},
+                },
+            }
+        )
+
+    assert "upstream exploded" in str(exc_info.value)
+
+
+def test_translate_responses_chunk_error_event_raises():
+    import litellm
+
+    with pytest.raises(litellm.APIError):
+        _translate({"type": "error", "code": "server_error", "message": "boom"})
+
+
+def test_translate_responses_chunk_completed_still_reports_stop():
+    result = _translate(
+        {
+            "type": "response.completed",
+            "response": {
+                "status": "completed",
+                "output": [],
+                "usage": {"input_tokens": 5, "output_tokens": 7},
+            },
+        }
+    )
+
+    assert result.choices[0].finish_reason == "stop"
+    assert result.usage.completion_tokens == 7
+
+
+def test_translate_responses_chunk_completed_event_with_incomplete_status():
+    result = _translate(
+        {
+            "type": "response.completed",
+            "response": {
+                "status": "incomplete",
+                "incomplete_details": {"reason": "max_output_tokens"},
+                "output": [],
+                "usage": {"input_tokens": 10, "output_tokens": 2},
+            },
+        }
+    )
+
+    assert result.choices[0].finish_reason == "length"
