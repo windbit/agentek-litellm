@@ -765,6 +765,26 @@ class ResetBudgetJob:
             verbose_proxy_logger.exception("Failed to reset budget for teams: %s", e)
 
     @staticmethod
+    async def zero_window_counter(
+        counter_key: str,
+        spend_counter_cache: Any,
+    ) -> None:
+        """Zero a window's spend counter in both cache layers.
+
+        A Redis failure is logged, not raised: the caller still has to move the window forward.
+        """
+        spend_counter_cache.in_memory_cache.set_cache(key=counter_key, value=0.0)
+        if spend_counter_cache.redis_cache is not None:
+            try:
+                await spend_counter_cache.redis_cache.async_set_cache(
+                    key=counter_key, value=0.0
+                )
+            except Exception as redis_err:
+                verbose_proxy_logger.warning(
+                    "Failed to reset Redis counter %s: %s", counter_key, redis_err
+                )
+
+    @staticmethod
     async def _reset_expired_window(
         window: dict,
         counter_key: str,
@@ -782,20 +802,13 @@ class ResetBudgetJob:
         )
         if reset_at > now:
             return False
-        spend_counter_cache.in_memory_cache.set_cache(key=counter_key, value=0.0)
-        if spend_counter_cache.redis_cache is not None:
-            try:
-                await spend_counter_cache.redis_cache.async_set_cache(
-                    key=counter_key, value=0.0
-                )
-            except Exception as redis_err:
-                verbose_proxy_logger.warning(
-                    "Failed to reset Redis counter %s: %s", counter_key, redis_err
-                )
+        await ResetBudgetJob.zero_window_counter(counter_key, spend_counter_cache)
         window["reset_at"] = get_budget_reset_time(
             budget_duration=window["budget_duration"],
             anchor=window.get("anchor"),
         ).isoformat()
+        # The period boundary caught up on its own, so a manual reset's offset is spent.
+        window.pop("spend_since", None)
         return True
 
     async def reset_budget_windows(self) -> None:
