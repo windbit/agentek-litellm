@@ -1819,6 +1819,81 @@ class OpenTelemetry(OTELGenAISemconvMixin, CustomLogger):
             return _trace.set_span_in_context(parent_span)
         return fallback_ctx
 
+    def _merge_guardrail_information(
+        self, kwargs: dict, entries: List[dict]
+    ) -> List[dict]:
+        """Collapse the entries of one request into one per (guardrail, mode).
+
+        A guardrail records one entry per unit of text it scans — presidio runs
+        ``check_pii`` per message, so a chat with a long history produced dozens
+        of spans for a single guardrail run, and the count grew with every turn.
+        Merged: the window spans first start to last end, the masked counts are
+        summed, ``guardrail_checks`` carries how many scans went in. Only the
+        span is merged; ``guardrail_information`` itself is left untouched for
+        spend logs.
+
+        Entries already emitted for this request are skipped: the same list is
+        re-read from several lifecycle points and grows between them (a
+        post-call scan lands after the pre-call ones), so what is left over
+        becomes its own span rather than a second copy of the first one.
+        """
+        groups: Dict[str, List[dict]] = {}
+        for entry in entries:
+            if not self._emit_once(
+                kwargs,
+                "guardrail",
+                entry.get("guardrail_name"),
+                entry.get("start_time"),
+                safe_dumps(entry.get("guardrail_mode")),
+            ):
+                continue
+            key = safe_dumps([entry.get("guardrail_name"), entry.get("guardrail_mode")])
+            groups.setdefault(key, []).append(entry)
+        return [self._merge_guardrail_group(group) for group in groups.values()]
+
+    @staticmethod
+    def _merge_guardrail_group(entries: List[dict]) -> dict:
+        if len(entries) == 1:
+            return entries[0]
+
+        merged = dict(entries[0])
+        starts = [e["start_time"] for e in entries if e.get("start_time") is not None]
+        ends = [e["end_time"] for e in entries if e.get("end_time") is not None]
+        merged["start_time"] = min(starts) if starts else None
+        merged["end_time"] = max(ends) if ends else None
+        durations = [
+            e["duration"]
+            for e in entries
+            if isinstance(e.get("duration"), (int, float))
+        ]
+        merged["duration"] = sum(durations) if durations else None
+
+        masked_entity_count: Dict[str, int] = {}
+        for entry in entries:
+            for entity, count in (entry.get("masked_entity_count") or {}).items():
+                masked_entity_count[entity] = masked_entity_count.get(entity, 0) + count
+        merged["masked_entity_count"] = masked_entity_count
+
+        categories: List[Any] = []
+        for entry in entries:
+            for category in entry.get("violation_categories") or []:
+                if category not in categories:
+                    categories.append(category)
+        if categories:
+            merged["violation_categories"] = categories
+
+        # Keep only a failing scan's response: clean scans carry an empty one,
+        # and stitching dozens of them into one attribute is the noise this merge removes.
+        failed = next(
+            (e for e in entries if e.get("guardrail_status") != "success"), None
+        )
+        merged["guardrail_status"] = (
+            failed.get("guardrail_status") if failed else "success"
+        )
+        merged["guardrail_response"] = (failed or {}).get("guardrail_response")
+        merged["guardrail_checks"] = len(entries)
+        return merged
+
     def _create_guardrail_span(
         self, kwargs: Optional[dict], context: Optional[Context]
     ):
@@ -1850,23 +1925,11 @@ class OpenTelemetry(OTELGenAISemconvMixin, CustomLogger):
             return
 
         otel_tracer: Tracer = self.get_tracer_to_use_for_request(kwargs)
-        for guardrail_information in guardrail_information_list:
+        for guardrail_information in self._merge_guardrail_information(
+            kwargs, guardrail_information_list
+        ):
             start_time_float = guardrail_information.get("start_time")
             end_time_float = guardrail_information.get("end_time")
-
-            # ``_create_guardrail_span`` is called from three lifecycle
-            # points (``async_post_call_success_hook``, ``_handle_success``,
-            # ``_handle_failure``) and re-reads the (mutating) entry list
-            # each time. Dedupe at entry granularity so a single real
-            # guardrail invocation produces exactly one span per handler.
-            if not self._emit_once(
-                kwargs,
-                "guardrail",
-                guardrail_information.get("guardrail_name"),
-                start_time_float,
-                guardrail_information.get("guardrail_mode"),
-            ):
-                continue
 
             start_time_datetime = datetime.now()
             if start_time_float is not None:
@@ -1904,6 +1967,10 @@ class OpenTelemetry(OTELGenAISemconvMixin, CustomLogger):
                 guardrail_span.set_attribute(
                     "masked_entity_count", safe_dumps(masked_entity_count)
                 )
+
+            guardrail_checks = guardrail_information.get("guardrail_checks")
+            if guardrail_checks:
+                guardrail_span.set_attribute("guardrail_checks", guardrail_checks)
 
             guardrail_response = guardrail_information.get("guardrail_response")
             if guardrail_response is not None:
