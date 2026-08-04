@@ -144,6 +144,46 @@ class TestLangfuseOtelIntegration:
         extracted = LangfuseOtelLogger._extract_langfuse_metadata(kwargs)
         assert extracted == metadata_in
 
+    def test_trace_user_defaults_to_the_team_that_pays(self):
+        """A key without an explicit trace user is signed by its team, not by the key holder."""
+        kwargs = {
+            "litellm_params": {
+                "metadata": {
+                    "user_api_key_team_alias": "prod-team-user-42",
+                    "user_api_key_user_id": "prod-space-user-7",
+                }
+            }
+        }
+        assert LangfuseOtelLogger._extract_langfuse_metadata(kwargs)["trace_user_id"] == "prod-team-user-42"
+
+    def test_team_metadata_pins_the_trace_user(self):
+        """A value pinned on the team wins over its alias — that is the provisioning knob."""
+        kwargs = {
+            "litellm_params": {
+                "metadata": {
+                    "user_api_key_team_alias": "prod-team-user-42",
+                    "user_api_key_team_metadata": {"trace_user_id": "user-42"},
+                }
+            }
+        }
+        assert LangfuseOtelLogger._extract_langfuse_metadata(kwargs)["trace_user_id"] == "user-42"
+
+    def test_explicit_trace_user_is_not_overwritten(self):
+        """The caller knows better: hermes passes the space owner for its turns."""
+        kwargs = {
+            "litellm_params": {
+                "metadata": {
+                    "trace_user_id": "org-3",
+                    "user_api_key_team_alias": "prod-team-user-42",
+                }
+            }
+        }
+        assert LangfuseOtelLogger._extract_langfuse_metadata(kwargs)["trace_user_id"] == "org-3"
+
+    def test_teamless_key_keeps_its_metadata(self):
+        kwargs = {"litellm_params": {"metadata": {"custom": "data"}}}
+        assert "trace_user_id" not in LangfuseOtelLogger._extract_langfuse_metadata(kwargs)
+
     def test_extract_langfuse_metadata_with_header_enrichment(self, monkeypatch):
         """_extract_langfuse_metadata should call LangFuseLogger.add_metadata_from_header when available."""
         import sys
