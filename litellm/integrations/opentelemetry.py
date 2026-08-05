@@ -811,7 +811,7 @@ class OpenTelemetry(OTELGenAISemconvMixin, CustomLogger):
 
         parent_otel_span = user_api_key_dict.parent_otel_span
         if parent_otel_span is not None:
-            parent_otel_span.set_status(Status(StatusCode.ERROR))
+            parent_otel_span.set_status(Status(StatusCode.ERROR, str(original_exception)))
 
             # Stamp team attributes onto the SERVER (root) span too, so the
             # trace root is team-filterable on the failure path like the
@@ -2061,7 +2061,7 @@ class OpenTelemetry(OTELGenAISemconvMixin, CustomLogger):
             if self._gen_ai_semconv_latest_experimental:
                 span_kwargs["kind"] = self.span_kind.CLIENT
             span = otel_tracer.start_span(**span_kwargs)
-            span.set_status(Status(StatusCode.ERROR))
+            span.set_status(self._error_status(kwargs))
             self.set_attributes(span, kwargs, response_obj)
 
             # Record exception information using OTEL standard method
@@ -2074,7 +2074,7 @@ class OpenTelemetry(OTELGenAISemconvMixin, CustomLogger):
             # Only set attributes if the span is still recording (not closed)
             # Note: parent_otel_span is guaranteed to be not None here
             if parent_otel_span.is_recording():
-                parent_otel_span.set_status(Status(StatusCode.ERROR))
+                parent_otel_span.set_status(self._error_status(kwargs))
                 self.set_attributes(parent_otel_span, kwargs, response_obj)
                 self._record_exception_on_span(span=parent_otel_span, kwargs=kwargs)
 
@@ -2093,6 +2093,20 @@ class OpenTelemetry(OTELGenAISemconvMixin, CustomLogger):
             and parent_otel_span.name == LITELLM_PROXY_REQUEST_SPAN_NAME
         ):
             parent_otel_span.end(end_time=self._to_ns(end_time))
+
+    @staticmethod
+    def _error_status(kwargs: dict):
+        """ERROR с текстом причины: без описания UI трейса показывает голый ERROR, а «почему» лежит в атрибутах."""
+        from opentelemetry.trace import Status, StatusCode
+
+        payload = kwargs.get("standard_logging_object") or {}
+        error_information = payload.get("error_information") or {}
+        description = (
+            error_information.get("error_message")
+            or payload.get("error_str")
+            or (str(kwargs["exception"]) if kwargs.get("exception") else None)
+        )
+        return Status(StatusCode.ERROR, description) if description else Status(StatusCode.ERROR)
 
     def _record_exception_on_span(self, span: Span, kwargs: dict):
         """
