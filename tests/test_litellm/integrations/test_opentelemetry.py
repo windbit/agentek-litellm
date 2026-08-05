@@ -149,6 +149,123 @@ class TestOpenTelemetryGuardrails(unittest.TestCase):
         ]
         self.assertNotIn("guardrail_response", attribute_keys)
 
+    @patch("litellm.integrations.opentelemetry.datetime")
+    def test_per_scan_entries_merge_into_one_span(self, mock_datetime):
+        """One guardrail run scanning many messages (presidio calls check_pii per
+        message) must yield ONE span with the counts summed, not one per scan."""
+        otel = OpenTelemetry()
+        otel.tracer = MagicMock()
+        mock_span = MagicMock()
+        otel.tracer.start_span.return_value = mock_span
+
+        def scan(start: float, masked: dict) -> dict:
+            return {
+                "guardrail_name": "pii-full-mask",
+                "guardrail_mode": "pre_call",
+                "guardrail_status": "success",
+                "masked_entity_count": masked,
+                "duration": 0.5,
+                "start_time": start,
+                "end_time": start + 0.5,
+            }
+
+        kwargs = {
+            "standard_logging_object": {
+                "guardrail_information": [
+                    scan(1609459200.0, {"PHONE_NUMBER": 2}),
+                    scan(1609459201.0, {}),
+                    scan(1609459202.0, {"PHONE_NUMBER": 1, "EMAIL_ADDRESS": 3}),
+                ]
+            }
+        }
+
+        otel._create_guardrail_span(kwargs=kwargs, context=None)
+
+        otel.tracer.start_span.assert_called_once()
+        mock_span.set_attribute.assert_any_call(
+            "masked_entity_count", safe_dumps({"PHONE_NUMBER": 3, "EMAIL_ADDRESS": 3})
+        )
+        mock_span.set_attribute.assert_any_call("guardrail_checks", 3)
+        # The span window runs from the first scan to the last.
+        mock_datetime.fromtimestamp.assert_any_call(1609459200.0)
+        mock_datetime.fromtimestamp.assert_any_call(1609459202.5)
+
+    @patch("litellm.integrations.opentelemetry.datetime")
+    def test_failed_scan_keeps_its_status_and_response(self, mock_datetime):
+        """A failing scan among clean ones must not be hidden by the merge."""
+        otel = OpenTelemetry()
+        otel.tracer = MagicMock()
+        mock_span = MagicMock()
+        otel.tracer.start_span.return_value = mock_span
+
+        kwargs = {
+            "standard_logging_object": {
+                "guardrail_information": [
+                    {
+                        "guardrail_name": "pii-full-mask",
+                        "guardrail_mode": "pre_call",
+                        "guardrail_status": "success",
+                        "guardrail_response": [],
+                        "start_time": 1609459200.0,
+                        "end_time": 1609459200.5,
+                    },
+                    {
+                        "guardrail_name": "pii-full-mask",
+                        "guardrail_mode": "pre_call",
+                        "guardrail_status": "guardrail_failed_to_respond",
+                        "guardrail_response": "connection refused",
+                        "start_time": 1609459201.0,
+                        "end_time": 1609459201.5,
+                    },
+                ]
+            }
+        }
+
+        otel._create_guardrail_span(kwargs=kwargs, context=None)
+
+        otel.tracer.start_span.assert_called_once()
+        mock_span.set_attribute.assert_any_call(
+            "guardrail_status", "guardrail_failed_to_respond"
+        )
+        mock_span.set_attribute.assert_any_call(
+            "guardrail_response", safe_dumps("connection refused")
+        )
+
+    @patch("litellm.integrations.opentelemetry.datetime")
+    def test_entries_recorded_later_get_their_own_span(self, mock_datetime):
+        """The entry list is re-read from several lifecycle points and grows
+        between them — the late entries are a span of their own, not a re-emit."""
+        otel = OpenTelemetry()
+        otel.tracer = MagicMock()
+        otel.tracer.start_span.return_value = MagicMock()
+
+        entries = [
+            {
+                "guardrail_name": "pii-full-mask",
+                "guardrail_mode": "pre_call",
+                "guardrail_status": "success",
+                "start_time": 1609459200.0,
+                "end_time": 1609459200.5,
+            }
+        ]
+        kwargs = {"standard_logging_object": {"guardrail_information": entries}}
+
+        otel._create_guardrail_span(kwargs=kwargs, context=None)
+        otel._create_guardrail_span(kwargs=kwargs, context=None)
+        self.assertEqual(otel.tracer.start_span.call_count, 1)
+
+        entries.append(
+            {
+                "guardrail_name": "pii-full-mask",
+                "guardrail_mode": "post_call",
+                "guardrail_status": "success",
+                "start_time": 1609459203.0,
+                "end_time": 1609459203.5,
+            }
+        )
+        otel._create_guardrail_span(kwargs=kwargs, context=None)
+        self.assertEqual(otel.tracer.start_span.call_count, 2)
+
 
 class TestOpenTelemetryTeamAttributesOnChildSpans(unittest.TestCase):
     """team_id / team_alias must land on every child span of a
