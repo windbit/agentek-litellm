@@ -69,6 +69,8 @@ class LangfuseOtelLogger(OpenTelemetry):
         if metadata is None or not isinstance(metadata, dict):
             metadata = {}
 
+        metadata = LangfuseOtelLogger._with_account_trace_user(metadata)
+
         # Re-use header extraction logic from the vanilla logger if available
         try:
             from litellm.integrations.langfuse.langfuse import (
@@ -81,6 +83,25 @@ class LangfuseOtelLogger(OpenTelemetry):
             pass
 
         return metadata
+
+    @staticmethod
+    def _with_account_trace_user(metadata: dict) -> dict:
+        """Default the Langfuse user to the account the key belongs to — its team.
+
+        Without this a trace is signed by whoever holds the key, so one paying account
+        shows up as several users (a service user per space, per bot, per integration) and
+        cannot be grouped. The team is the account: it carries the budget and every key is
+        issued under it. Precedence: an explicit ``trace_user_id`` from the caller, then a
+        value pinned on the team, then the team alias. Teamless keys stay as they were.
+        """
+        if metadata.get("trace_user_id"):
+            return metadata
+        team_metadata = metadata.get("user_api_key_team_metadata")
+        pinned = team_metadata.get("trace_user_id") if isinstance(team_metadata, dict) else None
+        account = pinned or metadata.get("user_api_key_team_alias")
+        if not account:
+            return metadata
+        return {**metadata, "trace_user_id": account}
 
     @staticmethod
     def _set_metadata_attributes(span: Span, metadata: dict):
