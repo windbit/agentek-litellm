@@ -3496,6 +3496,43 @@ class TestOpenTelemetrySemanticConventions138(unittest.TestCase):
         error_spans = [s for s in spans if s.status.status_code == StatusCode.ERROR]
         self.assertTrue(error_spans, "Expected at least one span with ERROR status")
 
+    def test_handle_failure_puts_the_reason_in_the_status(self):
+        """The trace UI shows the span status, so the reason has to be there and not only in attributes."""
+        span_exporter = InMemorySpanExporter()
+        tracer_provider = TracerProvider()
+        tracer_provider.add_span_processor(SimpleSpanProcessor(span_exporter))
+
+        otel = OpenTelemetry(tracer_provider=tracer_provider)
+        otel.tracer = tracer_provider.get_tracer("litellm")
+
+        start = datetime.utcnow()
+        end = start + timedelta(seconds=1)
+        kwargs = {
+            "model": "hermes-agent",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "optional_params": {},
+            "litellm_params": {"custom_llm_provider": "openai"},
+            "standard_logging_object": {
+                "id": "test-id",
+                "call_type": "completion",
+                "metadata": {},
+                "error_information": {
+                    "error_code": "400",
+                    "error_class": "ProxyModelNotFoundError",
+                    "error_message": "Invalid model name passed in model=hermes-agent",
+                },
+            },
+            "exception": Exception("Invalid model name passed in model=hermes-agent"),
+        }
+
+        otel._handle_failure(kwargs, None, start, end)
+
+        from opentelemetry.trace import StatusCode
+
+        error_spans = [s for s in span_exporter.get_finished_spans() if s.status.status_code == StatusCode.ERROR]
+        self.assertTrue(error_spans, "Expected at least one span with ERROR status")
+        self.assertIn("Invalid model name", error_spans[0].status.description or "")
+
 
 class TestRawSpanAttributeIsolation(unittest.TestCase):
     """Issue #3: raw_gen_ai_request span should only contain provider-specific
