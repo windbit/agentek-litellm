@@ -652,14 +652,7 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
     def apply_keep_entities(
         self, analyze_results: Union[List[PresidioAnalyzeResponseItem], Dict]
     ) -> Union[List[PresidioAnalyzeResponseItem], Dict]:
-        """
-        Honour PiiAction.KEEP: a keep entity is detected only to protect its span.
-        Drop the keep spans themselves (never mask/block them) and drop any other
-        detection overlapped by a keep span with a lower-or-equal score. This lets a
-        high-confidence DATE_TIME shadow a greedy PHONE_NUMBER match on a date like
-        "07.08.2026" so the date passes through untouched, without raising the phone
-        score threshold (which would also drop real phones scoring the same).
-        """
+        """Honour PiiAction.KEEP: drop keep spans and any lower/equal-score detection they overlap, so a high-confidence DATE_TIME shadows a greedy PHONE_NUMBER match on a date."""
         keep_types = {
             str(getattr(entity, "value", entity))
             for entity, action in self.pii_entities_config.items()
@@ -756,8 +749,7 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
                     analyze_results=analyze_results
                 )
 
-                # Resolve KEEP entities before blocking/masking so a shadowed
-                # false positive (e.g. a date matched as a phone) is dropped.
+                # Resolve KEEP before block/mask so shadowed false positives are dropped.
                 analyze_results = self.apply_keep_entities(
                     analyze_results=analyze_results
                 )

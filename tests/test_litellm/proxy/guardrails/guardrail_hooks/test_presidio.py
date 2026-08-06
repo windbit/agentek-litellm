@@ -2953,13 +2953,7 @@ async def test_post_call_unmask_true_restores_values(mock_user_api_key):
     assert out.choices[0].message.content == "Ivan said hi"
 
 
-# ---------------------------------------------------------------------------
-# PiiAction.KEEP: detect an entity only to protect its span. The keep span is
-# never masked/blocked and shadows any lower-or-equal-score overlapping
-# detection. Motivating case: DateRecognizer (DATE_TIME, 0.60) shadows the
-# greedy PhoneRecognizer (PHONE_NUMBER, 0.40) on a date like "07.08.2026", so
-# the date passes through untouched while real phones stay masked (windbit/issues#507).
-# ---------------------------------------------------------------------------
+# PiiAction.KEEP: keep spans are never masked/blocked and shadow lower/equal-score overlaps, so a DATE_TIME match keeps a date the greedy PhoneRecognizer would mask (windbit/issues#507).
 
 
 def _keep_res(entity_type, start, end, score):
@@ -3027,8 +3021,7 @@ def test_keep_still_blocks_real_phone():
 
 @pytest.mark.asyncio
 async def test_check_pii_keep_lets_date_pass_through():
-    """Full check_pii path: a date matched as both DATE_TIME (keep) and
-    PHONE_NUMBER (mask) passes through untouched."""
+    """Full check_pii path: a date matched as both DATE_TIME (keep) and PHONE_NUMBER (mask) passes through untouched."""
     presidio = _OPTIONAL_PresidioPIIMasking(
         presidio_analyzer_api_base="http://mock-presidio:5002/",
         presidio_anonymizer_api_base="http://mock-presidio:5001/",

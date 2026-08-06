@@ -172,9 +172,7 @@ class LakeraCategoryThresholds(TypedDict, total=False):
 class PiiAction(str, Enum):
     BLOCK = "BLOCK"
     MASK = "MASK"
-    # Detect the entity but leave it untouched. Its span also shadows any
-    # lower/equal-score detection overlapping it (e.g. DATE_TIME over a greedy
-    # PHONE_NUMBER match on "07.08.2026"), so that span is neither masked nor blocked.
+    # Detect but leave untouched; the span shadows lower/equal-score overlaps (e.g. DATE_TIME over a greedy PHONE_NUMBER match on a date).
     KEEP = "KEEP"
 
 
