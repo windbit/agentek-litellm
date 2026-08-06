@@ -10781,7 +10781,8 @@
         "PiiAction": {
           "enum": [
             "BLOCK",
-            "MASK"
+            "MASK",
+            "KEEP"
           ],
           "title": "PiiAction",
           "type": "string"
