@@ -28172,7 +28172,7 @@ export interface components {
          * PiiAction
          * @enum {string}
          */
-        PiiAction: "BLOCK" | "MASK";
+        PiiAction: "BLOCK" | "MASK" | "KEEP";
         /**
          * PiiEntityType
          * @enum {string}

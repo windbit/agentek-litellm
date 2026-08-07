@@ -19,7 +19,7 @@ from litellm.proxy._types import UserAPIKeyAuth
 from litellm.proxy.guardrails.guardrail_hooks.presidio import (
     _OPTIONAL_PresidioPIIMasking,
 )
-from litellm.exceptions import GuardrailRaisedException
+from litellm.exceptions import BlockedPiiEntityError, GuardrailRaisedException
 from litellm.types.guardrails import LitellmParams, PiiAction, PiiEntityType
 from litellm.types.utils import Choices, Message, ModelResponse
 
@@ -2951,3 +2951,125 @@ async def test_post_call_unmask_true_restores_values(mock_user_api_key):
         data=data, user_api_key_dict=mock_user_api_key, response=response
     )
     assert out.choices[0].message.content == "Ivan said hi"
+
+
+# PiiAction.KEEP: keep spans are never masked/blocked and shadow lower/equal-score overlaps, so a DATE_TIME match keeps a date the greedy PhoneRecognizer would mask (windbit/issues#507).
+
+
+def _keep_res(entity_type, start, end, score):
+    return {"entity_type": entity_type, "start": start, "end": end, "score": score}
+
+
+def _keep_guardrail(config):
+    return _OPTIONAL_PresidioPIIMasking(mock_testing=True, pii_entities_config=config)
+
+
+def test_keep_drops_keep_span_and_shadowed_overlap():
+    g = _keep_guardrail(
+        {PiiEntityType.DATE_TIME: PiiAction.KEEP, PiiEntityType.PHONE_NUMBER: PiiAction.MASK}
+    )
+    out = g.apply_keep_entities(
+        [_keep_res("DATE_TIME", 0, 10, 0.60), _keep_res("PHONE_NUMBER", 0, 10, 0.40)]
+    )
+    assert out == []  # date left untouched: nothing to mask
+
+
+def test_keep_preserves_nonoverlapping_real_phone():
+    g = _keep_guardrail(
+        {PiiEntityType.DATE_TIME: PiiAction.KEEP, PiiEntityType.PHONE_NUMBER: PiiAction.MASK}
+    )
+    real_phone = _keep_res("PHONE_NUMBER", 20, 32, 0.60)
+    out = g.apply_keep_entities(
+        [_keep_res("DATE_TIME", 0, 10, 0.60), _keep_res("PHONE_NUMBER", 0, 10, 0.40), real_phone]
+    )
+    assert out == [real_phone]  # a genuine phone elsewhere is still masked
+
+
+def test_keep_does_not_shadow_higher_score_overlap():
+    g = _keep_guardrail(
+        {PiiEntityType.DATE_TIME: PiiAction.KEEP, PiiEntityType.PERSON: PiiAction.MASK}
+    )
+    person = _keep_res("PERSON", 0, 10, 0.85)
+    out = g.apply_keep_entities([_keep_res("DATE_TIME", 0, 10, 0.60), person])
+    assert out == [person]
+
+
+def test_keep_noop_without_keep_config():
+    g = _keep_guardrail({PiiEntityType.PHONE_NUMBER: PiiAction.MASK})
+    results = [_keep_res("PHONE_NUMBER", 0, 12, 0.60)]
+    assert g.apply_keep_entities(results) == results
+
+
+def test_keep_shadows_block_so_date_is_not_blocked():
+    g = _keep_guardrail(
+        {PiiEntityType.DATE_TIME: PiiAction.KEEP, PiiEntityType.PHONE_NUMBER: PiiAction.BLOCK}
+    )
+    date_results = g.apply_keep_entities(
+        [_keep_res("DATE_TIME", 0, 10, 0.60), _keep_res("PHONE_NUMBER", 0, 10, 0.40)]
+    )
+    g.raise_exception_if_blocked_entities_detected(date_results)  # must not raise
+
+
+def test_keep_still_blocks_real_phone():
+    g = _keep_guardrail(
+        {PiiEntityType.DATE_TIME: PiiAction.KEEP, PiiEntityType.PHONE_NUMBER: PiiAction.BLOCK}
+    )
+    phone_results = g.apply_keep_entities([_keep_res("PHONE_NUMBER", 8, 20, 0.60)])
+    with pytest.raises(BlockedPiiEntityError):
+        g.raise_exception_if_blocked_entities_detected(phone_results)
+
+
+@pytest.mark.asyncio
+async def test_check_pii_keep_lets_date_pass_through():
+    """Full check_pii path: a date matched as both DATE_TIME (keep) and PHONE_NUMBER (mask) passes through untouched."""
+    presidio = _OPTIONAL_PresidioPIIMasking(
+        presidio_analyzer_api_base="http://mock-presidio:5002/",
+        presidio_anonymizer_api_base="http://mock-presidio:5001/",
+        output_parse_pii=True,
+        pii_entities_config={
+            PiiEntityType.DATE_TIME: PiiAction.KEEP,
+            PiiEntityType.PHONE_NUMBER: PiiAction.MASK,
+        },
+    )
+    text = "дата 07.08.2026"  # "07.08.2026" spans indices 5..15
+    analyze_json = [
+        _keep_res("DATE_TIME", 5, 15, 0.60),
+        _keep_res("PHONE_NUMBER", 5, 15, 0.40),
+    ]
+    with patch.object(
+        presidio, "_get_session_iterator", _make_mock_session_iterator(analyze_json)
+    ):
+        result = await presidio.check_pii(
+            text=text,
+            output_parse_pii=True,
+            presidio_config=None,
+            request_data={"metadata": {}},
+        )
+    assert result == text
+
+
+@pytest.mark.asyncio
+async def test_check_pii_keep_still_masks_real_phone():
+    """Full check_pii path: a genuine phone (no overlapping keep span) is masked."""
+    presidio = _OPTIONAL_PresidioPIIMasking(
+        presidio_analyzer_api_base="http://mock-presidio:5002/",
+        presidio_anonymizer_api_base="http://mock-presidio:5001/",
+        output_parse_pii=True,
+        pii_entities_config={
+            PiiEntityType.DATE_TIME: PiiAction.KEEP,
+            PiiEntityType.PHONE_NUMBER: PiiAction.MASK,
+        },
+    )
+    text = "звоните 79161234567"  # phone spans indices 8..19
+    analyze_json = [_keep_res("PHONE_NUMBER", 8, 19, 0.40)]
+    with patch.object(
+        presidio, "_get_session_iterator", _make_mock_session_iterator(analyze_json)
+    ):
+        result = await presidio.check_pii(
+            text=text,
+            output_parse_pii=True,
+            presidio_config=None,
+            request_data={"metadata": {}},
+        )
+    assert "79161234567" not in result
+    assert "<PHONE_NUMBER_1>" in result

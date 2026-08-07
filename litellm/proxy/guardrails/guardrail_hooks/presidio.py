@@ -649,6 +649,45 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
 
         return filtered_results
 
+    def apply_keep_entities(
+        self, analyze_results: Union[List[PresidioAnalyzeResponseItem], Dict]
+    ) -> Union[List[PresidioAnalyzeResponseItem], Dict]:
+        """Honour PiiAction.KEEP: drop keep spans and any lower/equal-score detection they overlap, so a high-confidence DATE_TIME shadows a greedy PHONE_NUMBER match on a date."""
+        keep_types = {
+            str(getattr(entity, "value", entity))
+            for entity, action in self.pii_entities_config.items()
+            if action == PiiAction.KEEP
+        }
+        if not keep_types or not isinstance(analyze_results, list):
+            return analyze_results
+
+        keep_spans = [
+            ar
+            for ar in analyze_results
+            if str(getattr(ar.get("entity_type"), "value", ar.get("entity_type")))
+            in keep_types
+        ]
+        if not keep_spans:
+            return analyze_results
+
+        kept: List[PresidioAnalyzeResponseItem] = []
+        for ar in analyze_results:
+            entity_type = str(
+                getattr(ar.get("entity_type"), "value", ar.get("entity_type"))
+            )
+            if entity_type in keep_types:
+                continue
+            shadowed = any(
+                ar["start"] < span["end"]
+                and span["start"] < ar["end"]
+                and span["score"] >= ar["score"]
+                for span in keep_spans
+            )
+            if shadowed:
+                continue
+            kept.append(ar)
+        return kept
+
     def raise_exception_if_blocked_entities_detected(
         self, analyze_results: Union[List[PresidioAnalyzeResponseItem], Dict]
     ):
@@ -707,6 +746,11 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
 
                 # Apply score threshold filtering if configured
                 analyze_results = self.filter_analyze_results_by_score(
+                    analyze_results=analyze_results
+                )
+
+                # Resolve KEEP before block/mask so shadowed false positives are dropped.
+                analyze_results = self.apply_keep_entities(
                     analyze_results=analyze_results
                 )
 

@@ -172,6 +172,8 @@ class LakeraCategoryThresholds(TypedDict, total=False):
 class PiiAction(str, Enum):
     BLOCK = "BLOCK"
     MASK = "MASK"
+    # Detect but leave untouched; the span shadows lower/equal-score overlaps (e.g. DATE_TIME over a greedy PHONE_NUMBER match on a date).
+    KEEP = "KEEP"
 
 
 class PiiEntityCategory(str, Enum):
