@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -5,6 +6,8 @@ import pytest
 
 import litellm
 from litellm.caching.dual_cache import DualCache
+from litellm.models.team import BudgetLimitEntry
+from litellm.proxy.common_utils.timezone_utils import initialize_budget_windows
 from litellm.proxy._types import (
     LiteLLM_BudgetTable,
     LiteLLM_EndUserTable,
@@ -991,6 +994,39 @@ def test_should_ignore_spend_since_older_than_the_running_window():
     )
 
     assert window_start == reset_at - timedelta(days=1)
+
+
+def test_should_keep_spend_since_through_the_team_model():
+    # The auth path reads windows off a parsed LiteLLM_TeamTable, so a spend_since that survives only
+    # as a raw dict key is dropped there and the reset silently undone.
+    reset_at = datetime.now(timezone.utc) + timedelta(hours=8)
+    spend_since = datetime.now(timezone.utc) - timedelta(minutes=5)
+
+    team = LiteLLM_TeamTable(
+        team_id="team-1",
+        budget_limits=[
+            {
+                "budget_duration": "1d",
+                "max_budget": 2.73,
+                "reset_at": reset_at.isoformat(),
+                "spend_since": spend_since.isoformat(),
+            }
+        ],
+    )
+
+    assert get_budget_window_start(team.budget_limits[0]) == spend_since
+
+
+def test_should_initialize_windows_json_safe_with_spend_since():
+    spend_since = datetime.now(timezone.utc)
+
+    windows = initialize_budget_windows(
+        [BudgetLimitEntry(budget_duration="1d", max_budget=2.73, spend_since=spend_since)]
+    )
+
+    # Windows are persisted with json.dumps — a datetime left in place would raise there.
+    json.dumps(windows)
+    assert datetime.fromisoformat(windows[0]["spend_since"]) == spend_since
 
 
 @pytest.mark.asyncio
