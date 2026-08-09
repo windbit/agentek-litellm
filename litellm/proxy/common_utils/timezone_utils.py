@@ -64,8 +64,14 @@ def _initialize_window(window: Union[dict, "BudgetLimitEntry"]) -> dict:
         budget_duration=w["budget_duration"], anchor=anchor
     )
     initialized = {**w, "reset_at": reset_at.isoformat()}
-    if anchor is None:
-        initialized.pop("anchor", None)
-    else:
-        initialized["anchor"] = anchor.isoformat()
+    _set_or_drop(initialized, "anchor", anchor)
+    # Windows are persisted with json.dumps, so a datetime off the model has to go out as a string.
+    _set_or_drop(initialized, "spend_since", _parse_anchor(w.get("spend_since")))
     return initialized
+
+
+def _set_or_drop(window: dict, key: str, value: Optional[datetime]) -> None:
+    if value is None:
+        window.pop(key, None)
+    else:
+        window[key] = value.isoformat()
