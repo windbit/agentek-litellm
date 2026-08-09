@@ -49,9 +49,8 @@ class BudgetLimitEntry(LiteLLMPydanticObjectBase):
     max_budget: float
     reset_at: Optional[datetime] = None
     anchor: Optional[datetime] = None
-    # Set by POST /team/{id}/reset_spend. A field, not an extra key: the auth path reads the window
-    # through this model, and an unmodelled key is dropped there — a cold counter would then re-seed
-    # from the period start and undo the reset.
+    # Set by POST /team/{id}/reset_spend — must be a field: the auth path reads windows through this
+    # model, and an unmodelled key is dropped there, undoing the reset.
     spend_since: Optional[datetime] = None
 
 

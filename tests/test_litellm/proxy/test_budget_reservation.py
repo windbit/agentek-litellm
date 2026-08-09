@@ -7,7 +7,6 @@ import pytest
 import litellm
 from litellm.caching.dual_cache import DualCache
 from litellm.models.team import BudgetLimitEntry
-from litellm.proxy.common_utils.timezone_utils import initialize_budget_windows
 from litellm.proxy._types import (
     LiteLLM_BudgetTable,
     LiteLLM_EndUserTable,
@@ -18,6 +17,7 @@ from litellm.proxy._types import (
     LiteLLM_UserTable,
     UserAPIKeyAuth,
 )
+from litellm.proxy.common_utils.timezone_utils import initialize_budget_windows
 from litellm.proxy.spend_tracking.budget_reservation import (
     estimate_request_max_cost,
     get_budget_window_start,
@@ -997,8 +997,7 @@ def test_should_ignore_spend_since_older_than_the_running_window():
 
 
 def test_should_keep_spend_since_through_the_team_model():
-    # The auth path reads windows off a parsed LiteLLM_TeamTable, so a spend_since that survives only
-    # as a raw dict key is dropped there and the reset silently undone.
+    # The auth path reads windows off a parsed team, where an unmodelled key is silently dropped.
     reset_at = datetime.now(timezone.utc) + timedelta(hours=8)
     spend_since = datetime.now(timezone.utc) - timedelta(minutes=5)
 
@@ -1024,7 +1023,6 @@ def test_should_initialize_windows_json_safe_with_spend_since():
         [BudgetLimitEntry(budget_duration="1d", max_budget=2.73, spend_since=spend_since)]
     )
 
-    # Windows are persisted with json.dumps — a datetime left in place would raise there.
     json.dumps(windows)
     assert datetime.fromisoformat(windows[0]["spend_since"]) == spend_since
 

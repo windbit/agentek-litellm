@@ -65,7 +65,7 @@ def _initialize_window(window: Union[dict, "BudgetLimitEntry"]) -> dict:
     )
     initialized = {**w, "reset_at": reset_at.isoformat()}
     _set_or_drop(initialized, "anchor", anchor)
-    # spend_since is stored as JSON, so a datetime coming from BudgetLimitEntry has to be normalized too.
+    # Windows are persisted with json.dumps, so a datetime off the model has to go out as a string.
     _set_or_drop(initialized, "spend_since", _parse_anchor(w.get("spend_since")))
     return initialized
 
