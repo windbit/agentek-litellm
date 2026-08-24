@@ -269,11 +269,15 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
 
         # Check if we are in the stored main thread
         if threading.get_ident() == self._main_thread_id:
-            # Main thread -> use shared session
-            async with self._session_lock:
-                if self._http_session is None or self._http_session.closed:
-                    self._http_session = aiohttp.ClientSession()
-                yield self._http_session
+            # Main thread -> use shared session.
+            # Замок держим только на создание сессии. Если не отпускать его на время
+            # запроса, все обращения к анализатору в процессе выстраиваются в очередь:
+            # шлюз шлёт историю хода одним gather, но разбирает её по одному сообщению.
+            if self._http_session is None or self._http_session.closed:
+                async with self._session_lock:
+                    if self._http_session is None or self._http_session.closed:
+                        self._http_session = aiohttp.ClientSession()
+            yield self._http_session
         else:
             # Background thread/loop -> use loop-bound session cache
             # This avoids "attached to a different loop" or "no running event loop" errors
@@ -701,19 +705,22 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
             if isinstance(analyze_results, list) and len(analyze_results) == 0:
                 return text
 
+            # Нумерованные плейсхолдеры собираются локально из текста и спанов, ответ
+            # анонимайзера в этой ветке не используется — значит и ходить за ним незачем.
+            # Круглый рейс к сервису на каждое сообщение стоит дороже самой замены.
+            if output_parse_pii:
+                return self._finalize_presidio_anonymize_numbered_tokens(
+                    text, analyze_results, request_data, masked_entity_count
+                )
+
             redacted_text = await self._post_presidio_anonymize(text, analyze_results)
             if redacted_text is None:
                 raise Exception("Invalid anonymizer response: received None")
 
             verbose_proxy_logger.debug("redacted_text: %s", redacted_text)
 
-            if not output_parse_pii:
-                return self._finalize_presidio_anonymize_simple(
-                    redacted_text, masked_entity_count
-                )
-
-            return self._finalize_presidio_anonymize_numbered_tokens(
-                text, analyze_results, request_data, masked_entity_count
+            return self._finalize_presidio_anonymize_simple(
+                redacted_text, masked_entity_count
             )
         except Exception as e:
             # Sanitize exception to avoid leaking the original text (which may
