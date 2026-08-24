@@ -3190,3 +3190,105 @@ async def test_validated_rule_outscores_the_analyzer(rulebook_file, monkeypatch)
     )
     kept = guardrail._drop_overlapping_results(merged)
     assert [span["entity_type"] for span in kept] == ["RU_INN"]
+
+
+@pytest.mark.asyncio
+async def test_repeated_message_is_analyzed_once(rulebook_file, monkeypatch):
+    # pre_call присылает всю историю на каждом шаге хода — без кэша один и тот же
+    # системный промпт уезжает в анализатор по разу на шаг.
+    guardrail = _OPTIONAL_PresidioPIIMasking(
+        mock_testing=True, pii_rulebook=rulebook_file
+    )
+    calls = []
+
+    async def fake_analyzer(text, **kwargs):
+        calls.append(text)
+        return []
+
+    monkeypatch.setattr(guardrail, "_analyze_with_analyzer", fake_analyzer)
+    for _ in range(5):
+        await guardrail.analyze_text(
+            text="Инструкция агенту, неизменная между шагами",
+            presidio_config=None,
+            request_data={},
+        )
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_new_message_still_reaches_the_analyzer(rulebook_file, monkeypatch):
+    guardrail = _OPTIONAL_PresidioPIIMasking(
+        mock_testing=True, pii_rulebook=rulebook_file
+    )
+    calls = []
+
+    async def fake_analyzer(text, **kwargs):
+        calls.append(text)
+        return []
+
+    monkeypatch.setattr(guardrail, "_analyze_with_analyzer", fake_analyzer)
+    await guardrail.analyze_text(text="первое", presidio_config=None, request_data={})
+    await guardrail.analyze_text(text="первое", presidio_config=None, request_data={})
+    await guardrail.analyze_text(text="второе", presidio_config=None, request_data={})
+    assert calls == ["первое", "второе"]
+
+
+@pytest.mark.asyncio
+async def test_cached_spans_are_returned_intact(rulebook_file, monkeypatch):
+    guardrail = _OPTIONAL_PresidioPIIMasking(
+        mock_testing=True, pii_rulebook=rulebook_file
+    )
+
+    async def fake_analyzer(**kwargs):
+        return [{"entity_type": "PERSON", "start": 0, "end": 7, "score": 0.85}]
+
+    monkeypatch.setattr(guardrail, "_analyze_with_analyzer", fake_analyzer)
+    first = await guardrail.analyze_text(
+        text="Смирнов, ИНН 500100732259", presidio_config=None, request_data={}
+    )
+    second = await guardrail.analyze_text(
+        text="Смирнов, ИНН 500100732259", presidio_config=None, request_data={}
+    )
+    assert [span["entity_type"] for span in first] == [
+        span["entity_type"] for span in second
+    ]
+    # Отдаём копию: правка результата вызывающим не должна портить закэшированное.
+    first.clear()
+    third = await guardrail.analyze_text(
+        text="Смирнов, ИНН 500100732259", presidio_config=None, request_data={}
+    )
+    assert len(third) == 2
+
+
+@pytest.mark.asyncio
+async def test_rulebook_version_invalidates_the_cache(tmp_path, monkeypatch):
+    def build(version):
+        path = tmp_path / f"rb-{version}.yaml"
+        path.write_text(
+            RULEBOOK_YAML.replace("wiring-test", version), encoding="utf-8"
+        )
+        return _OPTIONAL_PresidioPIIMasking(
+            mock_testing=True, pii_rulebook=str(path)
+        )
+
+    old, new = build("v1"), build("v2")
+    key_old = old._span_cache_key(text="один текст", presidio_config=None, request_data={})
+    key_new = new._span_cache_key(text="один текст", presidio_config=None, request_data={})
+    assert key_old != key_new
+
+
+@pytest.mark.asyncio
+async def test_cache_is_bounded(rulebook_file, monkeypatch):
+    guardrail = _OPTIONAL_PresidioPIIMasking(
+        mock_testing=True, pii_rulebook=rulebook_file, span_cache_size=3
+    )
+
+    async def fake_analyzer(**kwargs):
+        return []
+
+    monkeypatch.setattr(guardrail, "_analyze_with_analyzer", fake_analyzer)
+    for i in range(10):
+        await guardrail.analyze_text(
+            text=f"сообщение {i}", presidio_config=None, request_data={}
+        )
+    assert len(guardrail._span_cache) == 3

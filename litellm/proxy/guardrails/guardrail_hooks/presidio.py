@@ -9,8 +9,10 @@
 
 
 import asyncio
+import hashlib
 import json
 import threading
+from collections import OrderedDict
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import (
@@ -94,6 +96,7 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
         presidio_entities_deny_list: Optional[List[Union[PiiEntityType, str]]] = None,
         pii_rulebook: Optional[str] = None,
         pii_rule_groups: Optional[List[str]] = None,
+        span_cache_size: int = 5000,
         **kwargs,
     ):
         if logging_only is True:
@@ -137,6 +140,13 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
             presidio_entities_deny_list or []
         )
         self.presidio_language = presidio_language or "en"
+        # Кэш спанов по содержимому сообщения. pre_call присылает всю историю на каждом шаге хода,
+        # поэтому системный промпт и переписка иначе анализируются заново по десять раз за ход.
+        # Ключ считается по payload анализатора, то есть учитывает текст, язык, состав сущностей
+        # и набор ad-hoc-рекогнайзеров; версия рулбука добавляется отдельно.
+        self._span_cache: "OrderedDict[str, List[PresidioAnalyzeResponseItem]]" = OrderedDict()
+        self._span_cache_limit = span_cache_size
+
         # Shared HTTP session to prevent memory leaks (issue #14540)
         self._http_session: Optional[aiohttp.ClientSession] = None
         # Lock to prevent race conditions when creating session under concurrent load
@@ -342,14 +352,61 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
         который оставляет находку с большим score, поэтому проверенная контрольная сумма
         выигрывает у догадки NLP на том же фрагменте.
         """
+        cache_key = self._span_cache_key(
+            text=text, presidio_config=presidio_config, request_data=request_data
+        )
+        if cache_key is not None:
+            cached = self._span_cache.get(cache_key)
+            if cached is not None:
+                self._span_cache.move_to_end(cache_key)
+                return list(cached)
+
         rule_spans = self._analyze_with_rules(text)
         nlp_results = await self._analyze_with_analyzer(
             text=text, presidio_config=presidio_config, request_data=request_data
         )
-        # dict — это ответ мока или разобранная ошибка анализатора; такой ответ не смешиваем.
+        # dict — это ответ мока или разобранная ошибка анализатора; такой ответ не смешиваем и не кэшируем.
         if isinstance(nlp_results, dict):
             return nlp_results
-        return list(nlp_results) + rule_spans
+        merged = list(nlp_results) + rule_spans
+        if cache_key is not None:
+            self._span_cache[cache_key] = list(merged)
+            while len(self._span_cache) > self._span_cache_limit:
+                self._span_cache.popitem(last=False)
+        return merged
+
+    def _span_cache_key(
+        self,
+        text: str,
+        presidio_config: Optional[PresidioPerRequestConfig],
+        request_data: dict,
+    ) -> Optional[str]:
+        """Ключ по содержимому: тот же текст с той же конфигурацией даёт те же спаны.
+
+        Позиция сообщения в истории в ключ не входит — смещения спанов считаются от начала
+        текста сообщения, а сообщение при этом остаётся собой независимо от того, каким
+        по счёту оно приехало. Мок не кэшируем: он должен отдавать заранее заданный ответ.
+        """
+        if not text or self.mock_redacted_text is not None:
+            return None
+        payload = self._get_presidio_analyze_request_payload(
+            text=text, presidio_config=presidio_config, request_data=request_data
+        )
+        try:
+            fingerprint = json.dumps(payload, sort_keys=True, default=str)
+        except (TypeError, ValueError) as err:
+            # Кэш — оптимизация, ронять из-за него запрос нельзя; но и молчать не будем.
+            verbose_proxy_logger.warning(
+                "Presidio span cache disabled for this call: payload is not serialisable (%s)",
+                err,
+            )
+            return None
+        rulebook_version = (
+            self.rule_engine.rulebook.version if self.rule_engine is not None else "-"
+        )
+        return hashlib.sha256(
+            f"{rulebook_version}|{fingerprint}".encode("utf-8")
+        ).hexdigest()
 
     async def _analyze_with_analyzer(
         self,
