@@ -842,6 +842,88 @@ async def test_presidio_filter_scope_initializer(monkeypatch):
     assert any(c.apply_to_output for c in created)
 
 
+def test_initialize_presidio_forwards_rulebook_params(monkeypatch):
+    """Ключи рулбука и кэша обязаны доезжать из config.yaml до конструктора.
+
+    Прямая сборка класса в остальных тестах эту связку не проверяет: пока
+    initialize_presidio их не пробрасывал, детерминированный слой молча не работал
+    в развёрнутом шлюзе, хотя все юнит-тесты проходили.
+    """
+    created = []
+
+    class DummyGuardrail:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.apply_to_output = kwargs.get("apply_to_output", False)
+            created.append(self)
+
+    class DummyManager:
+        def add_litellm_callback(self, cb):
+            pass
+
+    monkeypatch.setattr(litellm, "logging_callback_manager", DummyManager(), raising=False)
+    import litellm.proxy.guardrails.guardrail_hooks.presidio as presidio_mod
+    import litellm.proxy.guardrails.guardrail_initializers as gi
+
+    # initialize_presidio импортирует класс внутри функции, поэтому патчить надо и модуль-источник.
+    monkeypatch.setattr(
+        presidio_mod, "_OPTIONAL_PresidioPIIMasking", DummyGuardrail, raising=False
+    )
+    monkeypatch.setattr(gi, "_OPTIONAL_PresidioPIIMasking", DummyGuardrail, raising=False)
+
+    params = LitellmParams(
+        guardrail="presidio",
+        mode="pre_call",
+        presidio_filter_scope="input",
+        pii_rulebook="/etc/litellm/pii/rulebook.yaml",
+        pii_rule_groups=["personal_data", "names"],
+        span_cache_size=1234,
+        require_person_entity=True,
+    )
+    gi.initialize_presidio(params, {"guardrail_name": "g1"})
+
+    kwargs = created[0].kwargs
+    assert kwargs["pii_rulebook"] == "/etc/litellm/pii/rulebook.yaml"
+    assert kwargs["pii_rule_groups"] == ["personal_data", "names"]
+    assert kwargs["span_cache_size"] == 1234
+    assert kwargs["require_person_entity"] is True
+
+
+def test_initialize_presidio_keeps_constructor_defaults(monkeypatch):
+    """Отсутствие ключа в конфиге не должно затирать дефолт конструктора значением None."""
+    created = []
+
+    class DummyGuardrail:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.apply_to_output = kwargs.get("apply_to_output", False)
+            created.append(self)
+
+    class DummyManager:
+        def add_litellm_callback(self, cb):
+            pass
+
+    monkeypatch.setattr(litellm, "logging_callback_manager", DummyManager(), raising=False)
+    import litellm.proxy.guardrails.guardrail_hooks.presidio as presidio_mod
+    import litellm.proxy.guardrails.guardrail_initializers as gi
+
+    # initialize_presidio импортирует класс внутри функции, поэтому патчить надо и модуль-источник.
+    monkeypatch.setattr(
+        presidio_mod, "_OPTIONAL_PresidioPIIMasking", DummyGuardrail, raising=False
+    )
+    monkeypatch.setattr(gi, "_OPTIONAL_PresidioPIIMasking", DummyGuardrail, raising=False)
+
+    params = LitellmParams(
+        guardrail="presidio", mode="pre_call", presidio_filter_scope="input"
+    )
+    gi.initialize_presidio(params, {"guardrail_name": "g1"})
+
+    kwargs = created[0].kwargs
+    assert "span_cache_size" not in kwargs
+    assert "require_person_entity" not in kwargs
+    assert kwargs["pii_rulebook"] is None
+
+
 @pytest.mark.asyncio
 async def test_empty_content_handling(
     presidio_guardrail, mock_user_api_key, mock_cache

@@ -380,6 +380,28 @@ class PresidioConfigModel(PresidioPresidioConfigModelUserInterface):
         default=None,
         description="Path to a JSON file containing ad-hoc recognizers for Presidio",
     )
+    pii_rulebook: Optional[str] = Field(
+        default=None,
+        description=(
+            "Path to a YAML rulebook of deterministic PII rules (regex + checksum). "
+            "Runs alongside the analyzer; validated matches outrank NLP guesses."
+        ),
+    )
+    pii_rule_groups: Optional[List[str]] = Field(
+        default=None,
+        description="Subset of rulebook groups to enable. Empty means every group.",
+    )
+    span_cache_size: Optional[int] = Field(
+        default=None,
+        description=(
+            "Number of analyzed messages kept per process. An agent turn re-sends the "
+            "whole history on every step, so repeat messages are analyzed once."
+        ),
+    )
+    require_person_entity: Optional[bool] = Field(
+        default=None,
+        description="Refuse to start when PERSON is missing from pii_entities_config.",
+    )
     mock_redacted_text: Optional[dict] = Field(
         default=None, description="Mock redacted text for testing"
     )
