@@ -1449,6 +1449,29 @@ def test_update_in_memory_applies_score_thresholds():
 
 
 @pytest.mark.asyncio
+async def test_session_iterator_does_not_serialize_callers(presidio_guardrail):
+    """Держатели сессии обязаны работать одновременно.
+
+    Пока замок сессии удерживался на всё время запроса, обращения к анализатору шли
+    по одному, и ход агента разбирался последовательно вместо одного gather. Тест
+    ловит именно это: считает, сколько вызовов держат сессию одновременно.
+    """
+    in_flight = 0
+    peak = 0
+
+    async def hold_session():
+        nonlocal in_flight, peak
+        async with presidio_guardrail._get_session_iterator():
+            in_flight += 1
+            peak = max(peak, in_flight)
+            await asyncio.sleep(0.05)
+            in_flight -= 1
+
+    await asyncio.gather(*[hold_session() for _ in range(5)])
+    assert peak == 5, f"session holders serialized: peak concurrency {peak} of 5"
+
+
+@pytest.mark.asyncio
 async def test_get_session_iterator_thread_safety(presidio_guardrail):
     """
     Test that _get_session_iterator yields:
