@@ -3292,3 +3292,35 @@ async def test_cache_is_bounded(rulebook_file, monkeypatch):
             text=f"сообщение {i}", presidio_config=None, request_data={}
         )
     assert len(guardrail._span_cache) == 3
+
+
+def test_person_required_rejects_config_without_it():
+    # Правила берут только канонические ФИО; конфигурация без PERSON выпускала бы
+    # редкие и иностранные имена, обращения по имени и фамилии без имени.
+    with pytest.raises(Exception, match="PERSON is required"):
+        _OPTIONAL_PresidioPIIMasking(
+            mock_testing=True,
+            require_person_entity=True,
+            pii_entities_config={PiiEntityType.CREDIT_CARD: PiiAction.MASK},
+        )
+
+
+def test_person_required_accepts_config_with_it():
+    guardrail = _OPTIONAL_PresidioPIIMasking(
+        mock_testing=True,
+        require_person_entity=True,
+        pii_entities_config={
+            PiiEntityType.PERSON: PiiAction.MASK,
+            PiiEntityType.CREDIT_CARD: PiiAction.MASK,
+        },
+    )
+    assert guardrail.pii_entities_config
+
+
+def test_person_requirement_is_opt_in():
+    # Апстримное поведение не меняем: без флага конфигурация без PERSON допустима.
+    guardrail = _OPTIONAL_PresidioPIIMasking(
+        mock_testing=True,
+        pii_entities_config={PiiEntityType.CREDIT_CARD: PiiAction.MASK},
+    )
+    assert guardrail.pii_entities_config

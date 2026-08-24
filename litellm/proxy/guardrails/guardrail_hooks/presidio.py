@@ -97,6 +97,7 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
         pii_rulebook: Optional[str] = None,
         pii_rule_groups: Optional[List[str]] = None,
         span_cache_size: int = 5000,
+        require_person_entity: bool = False,
         **kwargs,
     ):
         if logging_only is True:
@@ -159,6 +160,21 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
 
         # Loop-bound session cache for background threads
         self._loop_sessions: Dict[asyncio.AbstractEventLoop, aiohttp.ClientSession] = {}
+
+        # Имена нельзя оставить на усмотрение конфигурации: правила берут ФИО только в
+        # канонических формах, всё остальное — редкие и иностранные имена, фамилия без имени,
+        # обращение по имени — держится на языковом слое. Гардрейл, настроенный без PERSON,
+        # выглядел бы работающим и молча выпускал имена, поэтому такую конфигурацию отвергаем.
+        if (
+            require_person_entity
+            and pii_entities_config
+            and PiiEntityType.PERSON not in pii_entities_config
+            and "PERSON" not in pii_entities_config
+        ):
+            raise Exception(
+                f"guardrail {kwargs.get('guardrail_name', 'presidio')}: PERSON is required in "
+                "pii_entities_config when require_person_entity is set"
+            )
 
         # Детерминированный слой: структурные ПДн находятся правилами с контрольной суммой,
         # анализатору остаются сущности, которым нужен язык. Битый рулбук роняет старт — гардрейл
