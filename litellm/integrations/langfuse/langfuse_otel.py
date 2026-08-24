@@ -35,6 +35,31 @@ class LangfuseOtelLogger(OpenTelemetry):
             config = self._create_open_telemetry_config_from_langfuse_env()
         super().__init__(config=config, *args, **kwargs)
 
+    async def async_log_success_event(self, kwargs, response_obj, start_time, end_time):
+        """Маскируем полезную нагрузку спана до того, как из неё соберут атрибуты.
+
+        Колбэк вызывается после того, как ответ отдан клиенту, поэтому на время хода
+        маскирование не влияет. Оно не смотрит на конфигурацию гардрейлов: секрет в
+        спане остаётся секретом, даже если запрос ушёл провайдеру без маски.
+        """
+        from litellm.integrations.telemetry_masking import (
+            TelemetryMaskingUnavailable,
+            get_telemetry_masker,
+        )
+
+        masker = get_telemetry_masker()
+        if masker.configured:
+            try:
+                kwargs = await masker.mask(kwargs)
+                response_obj = await masker.mask(response_obj)
+            except TelemetryMaskingUnavailable as err:
+                # Спан наполовину замаскированный хуже отсутствующего: он выглядит обработанным.
+                verbose_logger.warning(
+                    "Dropping Langfuse span: telemetry masking unavailable (%s)", err
+                )
+                return
+        await super().async_log_success_event(kwargs, response_obj, start_time, end_time)
+
     @staticmethod
     def set_langfuse_otel_attributes(span: Span, kwargs, response_obj):
         """
