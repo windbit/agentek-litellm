@@ -3073,3 +3073,120 @@ async def test_check_pii_keep_still_masks_real_phone():
         )
     assert "79161234567" not in result
     assert "<PHONE_NUMBER_1>" in result
+
+
+RULEBOOK_YAML = """
+version: wiring-test
+groups:
+  - name: personal_data
+    rules:
+      - rule_id: pii.inn.person
+        entity: RU_INN
+        regex: '\\b\\d{12}\\b'
+        validator: inn
+  - name: secrets
+    rules:
+      - rule_id: secrets.aws
+        entity: SECRET
+        regex: '\\bAKIA[0-9A-Z]{16}\\b'
+"""
+
+
+@pytest.fixture
+def rulebook_file(tmp_path):
+    path = tmp_path / "rulebook.yaml"
+    path.write_text(RULEBOOK_YAML, encoding="utf-8")
+    return str(path)
+
+
+def test_broken_rulebook_fails_startup(tmp_path):
+    # Гардрейл с половиной правил тише и опаснее гардрейла, который не поднялся.
+    path = tmp_path / "broken.yaml"
+    path.write_text(
+        "groups:\n  - name: g\n    rules:\n      - rule_id: r\n        entity: E\n"
+        "        regex: 'x'\n        validator: nosuch\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(Exception, match="unknown validator"):
+        _OPTIONAL_PresidioPIIMasking(mock_testing=True, pii_rulebook=str(path))
+
+
+def test_missing_rulebook_fails_startup(tmp_path):
+    with pytest.raises(Exception, match="cannot read rulebook"):
+        _OPTIONAL_PresidioPIIMasking(
+            mock_testing=True, pii_rulebook=str(tmp_path / "nope.yaml")
+        )
+
+
+def test_no_rulebook_keeps_engine_off():
+    guardrail = _OPTIONAL_PresidioPIIMasking(mock_testing=True)
+    assert guardrail.rule_engine is None
+    assert guardrail._analyze_with_rules("ИНН 500100732259") == []
+
+
+def test_rules_find_structured_data_without_the_analyzer(rulebook_file):
+    guardrail = _OPTIONAL_PresidioPIIMasking(
+        mock_testing=True, pii_rulebook=rulebook_file
+    )
+    spans = guardrail._analyze_with_rules("ИНН 500100732259 в договоре")
+    assert [span["entity_type"] for span in spans] == ["RU_INN"]
+
+
+def test_checksum_keeps_a_bare_phone_out(rulebook_file):
+    guardrail = _OPTIONAL_PresidioPIIMasking(
+        mock_testing=True, pii_rulebook=rulebook_file
+    )
+    assert guardrail._analyze_with_rules("телефон 987678967612") == []
+
+
+def test_group_toggle_leaves_secrets_off(rulebook_file):
+    guardrail = _OPTIONAL_PresidioPIIMasking(
+        mock_testing=True, pii_rulebook=rulebook_file, pii_rule_groups=["personal_data"]
+    )
+    assert guardrail._analyze_with_rules("ключ AKIA0123456789ABCDEF") == []
+
+
+def test_entity_config_narrows_rule_output(rulebook_file):
+    guardrail = _OPTIONAL_PresidioPIIMasking(
+        mock_testing=True,
+        pii_rulebook=rulebook_file,
+        pii_entities_config={PiiEntityType.CREDIT_CARD: PiiAction.MASK},
+    )
+    # Гардрейл спрашивает только карты — ИНН из рулбука в выдачу не попадает.
+    assert guardrail._analyze_with_rules("ИНН 500100732259") == []
+
+
+@pytest.mark.asyncio
+async def test_analyze_text_merges_both_stages(rulebook_file, monkeypatch):
+    guardrail = _OPTIONAL_PresidioPIIMasking(
+        mock_testing=True, pii_rulebook=rulebook_file
+    )
+
+    async def fake_analyzer(**kwargs):
+        return [{"entity_type": "PERSON", "start": 0, "end": 7, "score": 0.85}]
+
+    monkeypatch.setattr(guardrail, "_analyze_with_analyzer", fake_analyzer)
+    results = await guardrail.analyze_text(
+        text="Смирнов, ИНН 500100732259", presidio_config=None, request_data={}
+    )
+    assert sorted(span["entity_type"] for span in results) == ["PERSON", "RU_INN"]
+
+
+@pytest.mark.asyncio
+async def test_validated_rule_outscores_the_analyzer(rulebook_file, monkeypatch):
+    # Дедуп перекрытий оставляет спан с большим score, поэтому контрольная сумма
+    # обязана перебивать догадку NLP на том же фрагменте.
+    guardrail = _OPTIONAL_PresidioPIIMasking(
+        mock_testing=True, pii_rulebook=rulebook_file
+    )
+    text = "500100732259"
+
+    async def fake_analyzer(**kwargs):
+        return [{"entity_type": "PHONE_NUMBER", "start": 0, "end": 12, "score": 0.9}]
+
+    monkeypatch.setattr(guardrail, "_analyze_with_analyzer", fake_analyzer)
+    merged = await guardrail.analyze_text(
+        text=text, presidio_config=None, request_data={}
+    )
+    kept = guardrail._drop_overlapping_results(merged)
+    assert [span["entity_type"] for span in kept] == ["RU_INN"]

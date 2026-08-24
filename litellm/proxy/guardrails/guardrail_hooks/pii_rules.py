@@ -17,6 +17,9 @@ from typing import Any, Callable, Dict, List, Optional, Sequence
 import yaml
 
 DEFAULT_SCORE = 0.85
+# Совпадение, прошедшее контрольную сумму, — не догадка, а проверенный факт, поэтому оно должно
+# выигрывать у находки NLP на том же фрагменте: дедуп перекрытий оставляет спан с большим score.
+VALIDATED_SCORE = 0.95
 
 
 def _digits(value: str) -> str:
@@ -220,12 +223,13 @@ class PiiRuleEngine:
                     continue
                 if not rule.validate(match.group(group_index)):
                     continue
+                score = max(rule.score, VALIDATED_SCORE) if rule.validator else rule.score
                 spans.append(
                     {
                         "entity_type": rule.entity,
                         "start": start,
                         "end": end,
-                        "score": rule.score,
+                        "score": score,
                         "analysis_explanation": None,
                         "recognition_metadata": {"recognizer_name": rule.rule_id},
                     }

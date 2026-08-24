@@ -50,6 +50,11 @@ from litellm.types.guardrails import (
     PiiEntityType,
     PresidioPerRequestConfig,
 )
+from litellm.proxy.guardrails.guardrail_hooks.pii_rules import (
+    PiiRuleEngine,
+    RulebookError,
+    load_rulebook,
+)
 from litellm.types.proxy.guardrails.guardrail_hooks.presidio import (
     PresidioAnalyzeRequest,
     PresidioAnalyzeResponseItem,
@@ -87,6 +92,8 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
             Dict[Union[PiiEntityType, str], float]
         ] = None,
         presidio_entities_deny_list: Optional[List[Union[PiiEntityType, str]]] = None,
+        pii_rulebook: Optional[str] = None,
+        pii_rule_groups: Optional[List[str]] = None,
         **kwargs,
     ):
         if logging_only is True:
@@ -142,6 +149,18 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
 
         # Loop-bound session cache for background threads
         self._loop_sessions: Dict[asyncio.AbstractEventLoop, aiohttp.ClientSession] = {}
+
+        # Детерминированный слой: структурные ПДн находятся правилами с контрольной суммой,
+        # анализатору остаются сущности, которым нужен язык. Битый рулбук роняет старт — гардрейл
+        # с половиной правил молча пропускал бы данные, которые обязан прятать.
+        self.rule_engine: Optional[PiiRuleEngine] = None
+        if pii_rulebook:
+            try:
+                self.rule_engine = PiiRuleEngine(
+                    load_rulebook(pii_rulebook), enabled_groups=pii_rule_groups
+                )
+            except RulebookError as err:
+                raise Exception(f"pii rulebook: {err}")
 
         if mock_testing is True:  # for testing purposes only
             return
@@ -301,7 +320,38 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
         )
         return cast(PresidioAnalyzeRequest, casted_analyze_payload)
 
+    def _analyze_with_rules(self, text: str) -> List[PresidioAnalyzeResponseItem]:
+        """Детерминированная ступень: структурные ПДн и секреты, без обращения к анализатору."""
+        if self.rule_engine is None:
+            return []
+        wanted = list(self.pii_entities_config.keys()) or None
+        return [
+            cast(PresidioAnalyzeResponseItem, span)
+            for span in self.rule_engine.analyze(text, entities=wanted)
+        ]
+
     async def analyze_text(
+        self,
+        text: str,
+        presidio_config: Optional[PresidioPerRequestConfig],
+        request_data: dict,
+    ) -> Union[List[PresidioAnalyzeResponseItem], Dict]:
+        """Две ступени детекции: сначала правила, затем анализатор.
+
+        Спаны складываются в один список — дальше по коду их разбирает общий дедуп перекрытий,
+        который оставляет находку с большим score, поэтому проверенная контрольная сумма
+        выигрывает у догадки NLP на том же фрагменте.
+        """
+        rule_spans = self._analyze_with_rules(text)
+        nlp_results = await self._analyze_with_analyzer(
+            text=text, presidio_config=presidio_config, request_data=request_data
+        )
+        # dict — это ответ мока или разобранная ошибка анализатора; такой ответ не смешиваем.
+        if isinstance(nlp_results, dict):
+            return nlp_results
+        return list(nlp_results) + rule_spans
+
+    async def _analyze_with_analyzer(
         self,
         text: str,
         presidio_config: Optional[PresidioPerRequestConfig],
