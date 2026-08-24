@@ -168,3 +168,16 @@ class TestEngine:
         assert set(span) >= {"entity_type", "start", "end", "score"}
         assert isinstance(span["score"], float)
         assert span["recognition_metadata"]["recognizer_name"] == "pii.inn.person"
+
+
+class TestGroupSelection:
+    def test_unknown_group_name_is_a_no_op(self):
+        # Чарт перечисляет `domain` заранее, а появляется она только когда окружение задаст
+        # свои идентификаторы — ссылка на отсутствующую группу обязана быть безобидной.
+        engine = build_engine(groups=["personal_data", "domain"])
+        spans = engine.analyze("ИНН 500100732259")
+        assert entities(spans) == ["RU_INN"]
+
+    def test_only_unknown_groups_find_nothing(self):
+        engine = build_engine(groups=["domain"])
+        assert engine.analyze("ИНН 500100732259, ключ AKIA0123456789ABCDEF") == []

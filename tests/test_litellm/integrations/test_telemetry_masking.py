@@ -89,3 +89,21 @@ async def test_kill_switch(rulebook, monkeypatch):
     monkeypatch.setenv("LITELLM_TELEMETRY_MASKING", "false")
     masker = build(rulebook)
     assert masker.configured is False
+
+
+@pytest.mark.asyncio
+async def test_unusable_rulebook_does_not_raise_on_construction(tmp_path):
+    # Колбэк логирования не место для падения: исключение сломало бы телеметрию целиком.
+    path = tmp_path / "broken.yaml"
+    path.write_text("groups: [\n", encoding="utf-8")
+    masker = TelemetryMasker(rulebook_path=str(path), entities=[])
+    assert masker.configured is True
+    with pytest.raises(TelemetryMaskingUnavailable):
+        await masker.mask({"content": "ИНН 500100732259"})
+
+
+@pytest.mark.asyncio
+async def test_missing_rulebook_behaves_as_unavailable(tmp_path):
+    masker = TelemetryMasker(rulebook_path=str(tmp_path / "nope.yaml"), entities=[])
+    with pytest.raises(TelemetryMaskingUnavailable):
+        await masker.mask({"content": "что угодно"})

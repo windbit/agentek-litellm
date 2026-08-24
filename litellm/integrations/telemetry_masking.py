@@ -75,17 +75,22 @@ class TelemetryMasker:
             "LITELLM_TELEMETRY_ENTITIES", DEFAULT_ENTITIES
         )
         self._engine: Optional[PiiRuleEngine] = None
+        self._broken = False
         if self.rulebook_path:
             try:
                 self._engine = PiiRuleEngine(
                     load_rulebook(self.rulebook_path), enabled_groups=self.groups
                 )
             except RulebookError as err:
-                raise Exception(f"telemetry rulebook: {err}")
+                # Здесь нельзя падать, как падает гардрейл: это колбэк логирования, и исключение
+                # сломало бы телеметрию целиком, ничего не защитив. Помечаем слой сломанным —
+                # дальше он ведёт себя как недоступный, то есть нагрузка спана не уезжает.
+                verbose_logger.error("telemetry rulebook unusable: %s", err)
+                self._broken = True
 
     @property
     def configured(self) -> bool:
-        return self.enabled and bool(self._engine or self.analyzer_base)
+        return self.enabled and (self._broken or bool(self._engine or self.analyzer_base))
 
     async def mask(self, value: Any) -> Any:
         """Рекурсивно маскирует строки в структуре спана, сохраняя её форму."""
@@ -99,6 +104,8 @@ class TelemetryMasker:
         return value
 
     async def _mask_text(self, text: str) -> str:
+        if self._broken:
+            raise TelemetryMaskingUnavailable("rulebook unusable")
         if not text.strip():
             return text
         spans: List[Dict[str, Any]] = []
