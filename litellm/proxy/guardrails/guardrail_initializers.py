@@ -95,8 +95,16 @@ def initialize_presidio(litellm_params: LitellmParams, guardrail: Guardrail):
             presidio_anonymizer_api_base=litellm_params.presidio_anonymizer_api_base,
             presidio_language=litellm_params.presidio_language,
             presidio_entities_deny_list=litellm_params.presidio_entities_deny_list,
+            pii_rulebook=litellm_params.pii_rulebook,
+            pii_rule_groups=litellm_params.pii_rule_groups,
             apply_to_output=False,
         )
+        # Оба параметра имеют осмысленный дефолт в конструкторе, поэтому None из конфига
+        # не передаём — иначе отсутствие ключа в config.yaml затирало бы дефолт.
+        if litellm_params.span_cache_size is not None:
+            params["span_cache_size"] = litellm_params.span_cache_size
+        if litellm_params.require_person_entity is not None:
+            params["require_person_entity"] = litellm_params.require_person_entity
         params.update(overrides)
         callback = _OPTIONAL_PresidioPIIMasking(**params)
         litellm.logging_callback_manager.add_litellm_callback(callback)

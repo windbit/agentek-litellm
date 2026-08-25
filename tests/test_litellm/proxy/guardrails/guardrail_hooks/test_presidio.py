@@ -7,7 +7,7 @@ import asyncio
 import os
 import sys
 from contextlib import asynccontextmanager
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -842,6 +842,88 @@ async def test_presidio_filter_scope_initializer(monkeypatch):
     assert any(c.apply_to_output for c in created)
 
 
+def test_initialize_presidio_forwards_rulebook_params(monkeypatch):
+    """Ключи рулбука и кэша обязаны доезжать из config.yaml до конструктора.
+
+    Прямая сборка класса в остальных тестах эту связку не проверяет: пока
+    initialize_presidio их не пробрасывал, детерминированный слой молча не работал
+    в развёрнутом шлюзе, хотя все юнит-тесты проходили.
+    """
+    created = []
+
+    class DummyGuardrail:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.apply_to_output = kwargs.get("apply_to_output", False)
+            created.append(self)
+
+    class DummyManager:
+        def add_litellm_callback(self, cb):
+            pass
+
+    monkeypatch.setattr(litellm, "logging_callback_manager", DummyManager(), raising=False)
+    import litellm.proxy.guardrails.guardrail_hooks.presidio as presidio_mod
+    import litellm.proxy.guardrails.guardrail_initializers as gi
+
+    # initialize_presidio импортирует класс внутри функции, поэтому патчить надо и модуль-источник.
+    monkeypatch.setattr(
+        presidio_mod, "_OPTIONAL_PresidioPIIMasking", DummyGuardrail, raising=False
+    )
+    monkeypatch.setattr(gi, "_OPTIONAL_PresidioPIIMasking", DummyGuardrail, raising=False)
+
+    params = LitellmParams(
+        guardrail="presidio",
+        mode="pre_call",
+        presidio_filter_scope="input",
+        pii_rulebook="/etc/litellm/pii/rulebook.yaml",
+        pii_rule_groups=["personal_data", "names"],
+        span_cache_size=1234,
+        require_person_entity=True,
+    )
+    gi.initialize_presidio(params, {"guardrail_name": "g1"})
+
+    kwargs = created[0].kwargs
+    assert kwargs["pii_rulebook"] == "/etc/litellm/pii/rulebook.yaml"
+    assert kwargs["pii_rule_groups"] == ["personal_data", "names"]
+    assert kwargs["span_cache_size"] == 1234
+    assert kwargs["require_person_entity"] is True
+
+
+def test_initialize_presidio_keeps_constructor_defaults(monkeypatch):
+    """Отсутствие ключа в конфиге не должно затирать дефолт конструктора значением None."""
+    created = []
+
+    class DummyGuardrail:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.apply_to_output = kwargs.get("apply_to_output", False)
+            created.append(self)
+
+    class DummyManager:
+        def add_litellm_callback(self, cb):
+            pass
+
+    monkeypatch.setattr(litellm, "logging_callback_manager", DummyManager(), raising=False)
+    import litellm.proxy.guardrails.guardrail_hooks.presidio as presidio_mod
+    import litellm.proxy.guardrails.guardrail_initializers as gi
+
+    # initialize_presidio импортирует класс внутри функции, поэтому патчить надо и модуль-источник.
+    monkeypatch.setattr(
+        presidio_mod, "_OPTIONAL_PresidioPIIMasking", DummyGuardrail, raising=False
+    )
+    monkeypatch.setattr(gi, "_OPTIONAL_PresidioPIIMasking", DummyGuardrail, raising=False)
+
+    params = LitellmParams(
+        guardrail="presidio", mode="pre_call", presidio_filter_scope="input"
+    )
+    gi.initialize_presidio(params, {"guardrail_name": "g1"})
+
+    kwargs = created[0].kwargs
+    assert "span_cache_size" not in kwargs
+    assert "require_person_entity" not in kwargs
+    assert kwargs["pii_rulebook"] is None
+
+
 @pytest.mark.asyncio
 async def test_empty_content_handling(
     presidio_guardrail, mock_user_api_key, mock_cache
@@ -1364,6 +1446,29 @@ def test_update_in_memory_applies_score_thresholds():
     guardrail.update_in_memory_litellm_params(params)
 
     assert guardrail.presidio_score_thresholds == {PiiEntityType.CREDIT_CARD: 0.85}
+
+
+@pytest.mark.asyncio
+async def test_session_iterator_does_not_serialize_callers(presidio_guardrail):
+    """Держатели сессии обязаны работать одновременно.
+
+    Пока замок сессии удерживался на всё время запроса, обращения к анализатору шли
+    по одному, и ход агента разбирался последовательно вместо одного gather. Тест
+    ловит именно это: считает, сколько вызовов держат сессию одновременно.
+    """
+    in_flight = 0
+    peak = 0
+
+    async def hold_session():
+        nonlocal in_flight, peak
+        async with presidio_guardrail._get_session_iterator():
+            in_flight += 1
+            peak = max(peak, in_flight)
+            await asyncio.sleep(0.05)
+            in_flight -= 1
+
+    await asyncio.gather(*[hold_session() for _ in range(5)])
+    assert peak == 5, f"session holders serialized: peak concurrency {peak} of 5"
 
 
 @pytest.mark.asyncio
@@ -2669,7 +2774,10 @@ async def test_anonymize_text_uses_correct_positions_with_parse_pii():
 
     masked_entity_count = {}
     request_data = {"metadata": {}}
-    with patch.object(guardrail, "_get_session_iterator", mock_iterator):
+    anonymizer_call = AsyncMock(return_value=anonymizer_response)
+    with patch.object(guardrail, "_get_session_iterator", mock_iterator), patch.object(
+        guardrail, "_post_presidio_anonymize", anonymizer_call
+    ):
         result = await guardrail.anonymize_text(
             text=original_text,
             analyze_results=analyze_results,
@@ -2693,6 +2801,11 @@ async def test_anonymize_text_uses_correct_positions_with_parse_pii():
     # Tokens must be numbered in left-to-right order of appearance:
     # PERSON (pos 11) → _1, EMAIL_ADDRESS (pos 35) → _2, PHONE_NUMBER (pos 59) → _3
     assert pii_tokens.get("<PERSON_1>") == "John Smith"
+
+    # Нумерованные плейсхолдеры строятся локально, поэтому анонимайзер в этой ветке
+    # не нужен вовсе. Без этой проверки возврат лишнего round-trip прошёл бы молча:
+    # мок выше просто перестал бы использоваться, а тест остался бы зелёным.
+    anonymizer_call.assert_not_awaited()
     assert pii_tokens.get("<EMAIL_ADDRESS_2>") == "john@example.com"
     assert pii_tokens.get("<PHONE_NUMBER_3>") == "555-867-5309"
 
@@ -3073,3 +3186,254 @@ async def test_check_pii_keep_still_masks_real_phone():
         )
     assert "79161234567" not in result
     assert "<PHONE_NUMBER_1>" in result
+
+
+RULEBOOK_YAML = """
+version: wiring-test
+groups:
+  - name: personal_data
+    rules:
+      - rule_id: pii.inn.person
+        entity: RU_INN
+        regex: '\\b\\d{12}\\b'
+        validator: inn
+  - name: secrets
+    rules:
+      - rule_id: secrets.aws
+        entity: SECRET
+        regex: '\\bAKIA[0-9A-Z]{16}\\b'
+"""
+
+
+@pytest.fixture
+def rulebook_file(tmp_path):
+    path = tmp_path / "rulebook.yaml"
+    path.write_text(RULEBOOK_YAML, encoding="utf-8")
+    return str(path)
+
+
+def test_broken_rulebook_fails_startup(tmp_path):
+    # Гардрейл с половиной правил тише и опаснее гардрейла, который не поднялся.
+    path = tmp_path / "broken.yaml"
+    path.write_text(
+        "groups:\n  - name: g\n    rules:\n      - rule_id: r\n        entity: E\n"
+        "        regex: 'x'\n        validator: nosuch\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(Exception, match="unknown validator"):
+        _OPTIONAL_PresidioPIIMasking(mock_testing=True, pii_rulebook=str(path))
+
+
+def test_missing_rulebook_fails_startup(tmp_path):
+    with pytest.raises(Exception, match="cannot read rulebook"):
+        _OPTIONAL_PresidioPIIMasking(
+            mock_testing=True, pii_rulebook=str(tmp_path / "nope.yaml")
+        )
+
+
+def test_no_rulebook_keeps_engine_off():
+    guardrail = _OPTIONAL_PresidioPIIMasking(mock_testing=True)
+    assert guardrail.rule_engine is None
+    assert guardrail._analyze_with_rules("ИНН 500100732259") == []
+
+
+def test_rules_find_structured_data_without_the_analyzer(rulebook_file):
+    guardrail = _OPTIONAL_PresidioPIIMasking(
+        mock_testing=True, pii_rulebook=rulebook_file
+    )
+    spans = guardrail._analyze_with_rules("ИНН 500100732259 в договоре")
+    assert [span["entity_type"] for span in spans] == ["RU_INN"]
+
+
+def test_checksum_keeps_a_bare_phone_out(rulebook_file):
+    guardrail = _OPTIONAL_PresidioPIIMasking(
+        mock_testing=True, pii_rulebook=rulebook_file
+    )
+    assert guardrail._analyze_with_rules("телефон 987678967612") == []
+
+
+def test_group_toggle_leaves_secrets_off(rulebook_file):
+    guardrail = _OPTIONAL_PresidioPIIMasking(
+        mock_testing=True, pii_rulebook=rulebook_file, pii_rule_groups=["personal_data"]
+    )
+    assert guardrail._analyze_with_rules("ключ AKIA0123456789ABCDEF") == []
+
+
+def test_entity_config_narrows_rule_output(rulebook_file):
+    guardrail = _OPTIONAL_PresidioPIIMasking(
+        mock_testing=True,
+        pii_rulebook=rulebook_file,
+        pii_entities_config={PiiEntityType.CREDIT_CARD: PiiAction.MASK},
+    )
+    # Гардрейл спрашивает только карты — ИНН из рулбука в выдачу не попадает.
+    assert guardrail._analyze_with_rules("ИНН 500100732259") == []
+
+
+@pytest.mark.asyncio
+async def test_analyze_text_merges_both_stages(rulebook_file, monkeypatch):
+    guardrail = _OPTIONAL_PresidioPIIMasking(
+        mock_testing=True, pii_rulebook=rulebook_file
+    )
+
+    async def fake_analyzer(**kwargs):
+        return [{"entity_type": "PERSON", "start": 0, "end": 7, "score": 0.85}]
+
+    monkeypatch.setattr(guardrail, "_analyze_with_analyzer", fake_analyzer)
+    results = await guardrail.analyze_text(
+        text="Смирнов, ИНН 500100732259", presidio_config=None, request_data={}
+    )
+    assert sorted(span["entity_type"] for span in results) == ["PERSON", "RU_INN"]
+
+
+@pytest.mark.asyncio
+async def test_validated_rule_outscores_the_analyzer(rulebook_file, monkeypatch):
+    # Дедуп перекрытий оставляет спан с большим score, поэтому контрольная сумма
+    # обязана перебивать догадку NLP на том же фрагменте.
+    guardrail = _OPTIONAL_PresidioPIIMasking(
+        mock_testing=True, pii_rulebook=rulebook_file
+    )
+    text = "500100732259"
+
+    async def fake_analyzer(**kwargs):
+        return [{"entity_type": "PHONE_NUMBER", "start": 0, "end": 12, "score": 0.9}]
+
+    monkeypatch.setattr(guardrail, "_analyze_with_analyzer", fake_analyzer)
+    merged = await guardrail.analyze_text(
+        text=text, presidio_config=None, request_data={}
+    )
+    kept = guardrail._drop_overlapping_results(merged)
+    assert [span["entity_type"] for span in kept] == ["RU_INN"]
+
+
+@pytest.mark.asyncio
+async def test_repeated_message_is_analyzed_once(rulebook_file, monkeypatch):
+    # pre_call присылает всю историю на каждом шаге хода — без кэша один и тот же
+    # системный промпт уезжает в анализатор по разу на шаг.
+    guardrail = _OPTIONAL_PresidioPIIMasking(
+        mock_testing=True, pii_rulebook=rulebook_file
+    )
+    calls = []
+
+    async def fake_analyzer(text, **kwargs):
+        calls.append(text)
+        return []
+
+    monkeypatch.setattr(guardrail, "_analyze_with_analyzer", fake_analyzer)
+    for _ in range(5):
+        await guardrail.analyze_text(
+            text="Инструкция агенту, неизменная между шагами",
+            presidio_config=None,
+            request_data={},
+        )
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_new_message_still_reaches_the_analyzer(rulebook_file, monkeypatch):
+    guardrail = _OPTIONAL_PresidioPIIMasking(
+        mock_testing=True, pii_rulebook=rulebook_file
+    )
+    calls = []
+
+    async def fake_analyzer(text, **kwargs):
+        calls.append(text)
+        return []
+
+    monkeypatch.setattr(guardrail, "_analyze_with_analyzer", fake_analyzer)
+    await guardrail.analyze_text(text="первое", presidio_config=None, request_data={})
+    await guardrail.analyze_text(text="первое", presidio_config=None, request_data={})
+    await guardrail.analyze_text(text="второе", presidio_config=None, request_data={})
+    assert calls == ["первое", "второе"]
+
+
+@pytest.mark.asyncio
+async def test_cached_spans_are_returned_intact(rulebook_file, monkeypatch):
+    guardrail = _OPTIONAL_PresidioPIIMasking(
+        mock_testing=True, pii_rulebook=rulebook_file
+    )
+
+    async def fake_analyzer(**kwargs):
+        return [{"entity_type": "PERSON", "start": 0, "end": 7, "score": 0.85}]
+
+    monkeypatch.setattr(guardrail, "_analyze_with_analyzer", fake_analyzer)
+    first = await guardrail.analyze_text(
+        text="Смирнов, ИНН 500100732259", presidio_config=None, request_data={}
+    )
+    second = await guardrail.analyze_text(
+        text="Смирнов, ИНН 500100732259", presidio_config=None, request_data={}
+    )
+    assert [span["entity_type"] for span in first] == [
+        span["entity_type"] for span in second
+    ]
+    # Отдаём копию: правка результата вызывающим не должна портить закэшированное.
+    first.clear()
+    third = await guardrail.analyze_text(
+        text="Смирнов, ИНН 500100732259", presidio_config=None, request_data={}
+    )
+    assert len(third) == 2
+
+
+@pytest.mark.asyncio
+async def test_rulebook_version_invalidates_the_cache(tmp_path, monkeypatch):
+    def build(version):
+        path = tmp_path / f"rb-{version}.yaml"
+        path.write_text(
+            RULEBOOK_YAML.replace("wiring-test", version), encoding="utf-8"
+        )
+        return _OPTIONAL_PresidioPIIMasking(
+            mock_testing=True, pii_rulebook=str(path)
+        )
+
+    old, new = build("v1"), build("v2")
+    key_old = old._span_cache_key(text="один текст", presidio_config=None, request_data={})
+    key_new = new._span_cache_key(text="один текст", presidio_config=None, request_data={})
+    assert key_old != key_new
+
+
+@pytest.mark.asyncio
+async def test_cache_is_bounded(rulebook_file, monkeypatch):
+    guardrail = _OPTIONAL_PresidioPIIMasking(
+        mock_testing=True, pii_rulebook=rulebook_file, span_cache_size=3
+    )
+
+    async def fake_analyzer(**kwargs):
+        return []
+
+    monkeypatch.setattr(guardrail, "_analyze_with_analyzer", fake_analyzer)
+    for i in range(10):
+        await guardrail.analyze_text(
+            text=f"сообщение {i}", presidio_config=None, request_data={}
+        )
+    assert len(guardrail._span_cache) == 3
+
+
+def test_person_required_rejects_config_without_it():
+    # Правила берут только канонические ФИО; конфигурация без PERSON выпускала бы
+    # редкие и иностранные имена, обращения по имени и фамилии без имени.
+    with pytest.raises(Exception, match="PERSON is required"):
+        _OPTIONAL_PresidioPIIMasking(
+            mock_testing=True,
+            require_person_entity=True,
+            pii_entities_config={PiiEntityType.CREDIT_CARD: PiiAction.MASK},
+        )
+
+
+def test_person_required_accepts_config_with_it():
+    guardrail = _OPTIONAL_PresidioPIIMasking(
+        mock_testing=True,
+        require_person_entity=True,
+        pii_entities_config={
+            PiiEntityType.PERSON: PiiAction.MASK,
+            PiiEntityType.CREDIT_CARD: PiiAction.MASK,
+        },
+    )
+    assert guardrail.pii_entities_config
+
+
+def test_person_requirement_is_opt_in():
+    # Апстримное поведение не меняем: без флага конфигурация без PERSON допустима.
+    guardrail = _OPTIONAL_PresidioPIIMasking(
+        mock_testing=True,
+        pii_entities_config={PiiEntityType.CREDIT_CARD: PiiAction.MASK},
+    )
+    assert guardrail.pii_entities_config
