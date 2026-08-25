@@ -45,6 +45,7 @@ class LangfuseOtelLogger(OpenTelemetry):
         from litellm.integrations.telemetry_masking import (
             TelemetryMaskingUnavailable,
             get_telemetry_masker,
+            record_dropped_span,
         )
 
         masker = get_telemetry_masker()
@@ -57,6 +58,7 @@ class LangfuseOtelLogger(OpenTelemetry):
                 verbose_logger.warning(
                     "Dropping Langfuse span: telemetry masking unavailable (%s)", err
                 )
+                record_dropped_span("masking_unavailable")
                 return
         await super().async_log_success_event(kwargs, response_obj, start_time, end_time)
 
