@@ -7,7 +7,7 @@ import asyncio
 import os
 import sys
 from contextlib import asynccontextmanager
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -2774,7 +2774,10 @@ async def test_anonymize_text_uses_correct_positions_with_parse_pii():
 
     masked_entity_count = {}
     request_data = {"metadata": {}}
-    with patch.object(guardrail, "_get_session_iterator", mock_iterator):
+    anonymizer_call = AsyncMock(return_value=anonymizer_response)
+    with patch.object(guardrail, "_get_session_iterator", mock_iterator), patch.object(
+        guardrail, "_post_presidio_anonymize", anonymizer_call
+    ):
         result = await guardrail.anonymize_text(
             text=original_text,
             analyze_results=analyze_results,
@@ -2798,6 +2801,11 @@ async def test_anonymize_text_uses_correct_positions_with_parse_pii():
     # Tokens must be numbered in left-to-right order of appearance:
     # PERSON (pos 11) → _1, EMAIL_ADDRESS (pos 35) → _2, PHONE_NUMBER (pos 59) → _3
     assert pii_tokens.get("<PERSON_1>") == "John Smith"
+
+    # Нумерованные плейсхолдеры строятся локально, поэтому анонимайзер в этой ветке
+    # не нужен вовсе. Без этой проверки возврат лишнего round-trip прошёл бы молча:
+    # мок выше просто перестал бы использоваться, а тест остался бы зелёным.
+    anonymizer_call.assert_not_awaited()
     assert pii_tokens.get("<EMAIL_ADDRESS_2>") == "john@example.com"
     assert pii_tokens.get("<PHONE_NUMBER_3>") == "555-867-5309"
 
