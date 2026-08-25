@@ -107,3 +107,28 @@ async def test_missing_rulebook_behaves_as_unavailable(tmp_path):
     masker = TelemetryMasker(rulebook_path=str(tmp_path / "nope.yaml"), entities=[])
     with pytest.raises(TelemetryMaskingUnavailable):
         await masker.mask({"content": "что угодно"})
+
+
+def test_dropped_span_counter_increments():
+    """Потеря спана обязана быть видна метрикой, а не только строкой в логе."""
+    from prometheus_client import REGISTRY
+
+    from litellm.integrations.telemetry_masking import record_dropped_span
+
+    def value():
+        return REGISTRY.get_sample_value(
+            "litellm_telemetry_spans_dropped_total", {"reason": "masking_unavailable"}
+        ) or 0.0
+
+    before = value()
+    record_dropped_span("masking_unavailable")
+    assert value() == before + 1
+
+
+def test_dropped_span_counter_never_raises(monkeypatch):
+    """Метрика не может быть причиной отказа логирующего колбэка."""
+    import litellm.integrations.telemetry_masking as tm
+
+    monkeypatch.setattr(tm, "_dropped_spans_counter", None, raising=False)
+    monkeypatch.setattr(tm, "_dropped_spans_counter_ready", True, raising=False)
+    tm.record_dropped_span("masking_unavailable")  # без счётчика — просто no-op

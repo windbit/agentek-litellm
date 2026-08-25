@@ -171,6 +171,38 @@ class TelemetryMasker:
         return "".join(out)
 
 
+_dropped_spans_counter = None
+_dropped_spans_counter_ready = False
+
+
+def record_dropped_span(reason: str) -> None:
+    """Считает спаны, выброшенные из-за недоступного слоя детекции.
+
+    Потеря телеметрии тихая по замыслу: ход не прерывается, спан просто не уходит.
+    Без счётчика заметить это можно только глазами в логе, поэтому факт потери
+    выносится в метрику — по ней и настраивается алерт.
+
+    Prometheus в litellm опционален, и метрика не должна быть причиной отказа
+    логирующего колбэка: не собралась — молча живём дальше.
+    """
+    global _dropped_spans_counter, _dropped_spans_counter_ready
+    if not _dropped_spans_counter_ready:
+        _dropped_spans_counter_ready = True
+        try:
+            from prometheus_client import Counter
+
+            _dropped_spans_counter = Counter(
+                "litellm_telemetry_spans_dropped_total",
+                "Spans dropped because telemetry masking could not run",
+                ["reason"],
+            )
+        except Exception as err:  # noqa: BLE001 — метрика не стоит отказа колбэка
+            verbose_logger.debug("telemetry masking: no drop counter (%s)", err)
+            _dropped_spans_counter = None
+    if _dropped_spans_counter is not None:
+        _dropped_spans_counter.labels(reason=reason).inc()
+
+
 _masker: Optional[TelemetryMasker] = None
 
 
