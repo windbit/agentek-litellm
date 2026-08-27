@@ -3437,3 +3437,89 @@ def test_person_requirement_is_opt_in():
         pii_entities_config={PiiEntityType.CREDIT_CARD: PiiAction.MASK},
     )
     assert guardrail.pii_entities_config
+
+
+@pytest.mark.asyncio
+async def test_streaming_upstream_error_is_not_swallowed(presidio_guardrail):
+    """Отказ апстрима посреди стрима обязан дойти до клиента.
+
+    Хук ловил любое исключение и отдавал накопленные чанки. Если провайдер падал
+    до первого чанка, наружу уходил пустой SSE без finish_reason — по нему нельзя
+    отличить перегрузку провайдера от поломки, и клиент видел молчание.
+    """
+
+    class Boom(Exception):
+        pass
+
+    async def failing_stream():
+        raise Boom("Our servers are currently overloaded")
+        yield  # pragma: no cover — генератор
+
+    collected = []
+    with pytest.raises(Boom):
+        async for chunk in presidio_guardrail._stream_pii_unmasking(
+            response=failing_stream(), request_data={"metadata": {}}
+        ):
+            collected.append(chunk)
+
+    assert collected == [], "до падения апстрима чанков не было — отдавать нечего"
+
+
+@pytest.mark.asyncio
+async def test_streaming_error_after_chunks_keeps_them(presidio_guardrail):
+    """Успевшие прийти чанки не теряются: сначала отдаём их, потом пробрасываем ошибку."""
+    from litellm.types.utils import ModelResponseStream
+
+    class Boom(Exception):
+        pass
+
+    good = ModelResponseStream(
+        id="1", object="chat.completion.chunk", created=1, model="m",
+        choices=[{"index": 0, "delta": {"content": "привет"}}],
+    )
+
+    async def stream_then_fail():
+        yield good
+        raise Boom("upstream died")
+
+    collected = []
+    with pytest.raises(Boom):
+        async for chunk in presidio_guardrail._stream_pii_unmasking(
+            response=stream_then_fail(), request_data={"metadata": {}}
+        ):
+            collected.append(chunk)
+
+    assert collected == [good]
+
+
+@pytest.mark.asyncio
+async def test_unexpected_masking_failure_is_not_hidden(presidio_guardrail, monkeypatch):
+    """Собственный сбой обязан всплыть, а не притвориться деградацией.
+
+    Перехват здесь узкий намеренно: ожидаемая ошибка сборки чанков отдаёт ответ
+    с плейсхолдерами, а всё остальное — наш баг. Пока перехват был широким, такой
+    баг выглядел снаружи как «маскирование чуть подтекло», и найти его было нечем.
+    """
+    from litellm.types.utils import ModelResponseStream
+
+    class OurBug(Exception):
+        pass
+
+    async def failing_process(**kwargs):
+        raise OurBug("что-то сломалось в маскировании")
+
+    monkeypatch.setattr(presidio_guardrail, "_process_response_for_pii", failing_process)
+
+    chunk = ModelResponseStream(
+        id="1", object="chat.completion.chunk", created=1, model="m",
+        choices=[{"index": 0, "delta": {"content": "ответ"}, "finish_reason": "stop"}],
+    )
+
+    async def stream():
+        yield chunk
+
+    with pytest.raises(OurBug):
+        async for _ in presidio_guardrail._stream_pii_unmasking(
+            response=stream(), request_data={"metadata": {}, "messages": []}
+        ):
+            pass

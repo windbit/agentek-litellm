@@ -1418,6 +1418,14 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
                 )
                 return
 
+        except Exception as e:
+            # Апстрим оборвался: см. комментарий в ветке unmask — молчание хуже ошибки.
+            verbose_proxy_logger.error(f"Upstream stream failed: {str(e)}")
+            for chunk in all_chunks:
+                yield chunk
+            raise
+
+        try:
             assembled_model_response = stream_chunk_builder(
                 chunks=all_chunks, messages=request_data.get("messages")
             )
@@ -1438,7 +1446,11 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
             )
             yield mock_response_stream
 
-        except Exception as e:
+        except (litellm.APIError, IndexError, ValueError) as e:
+            # Сборка спотыкается на вырожденных чанках (пустой `choices`) — они не несут
+            # текста, поэтому пропустить их безопасно. Список типов узкий намеренно:
+            # здесь маскируется ответ модели, и накопленные чанки сырые, так что
+            # неожиданный сбой обязан всплыть, а не тихо выпустить их наружу.
             verbose_proxy_logger.error(f"Error masking streaming PII output: {str(e)}")
             for chunk in all_chunks:
                 yield chunk
@@ -1551,12 +1563,24 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
                     saw_non_chat_chunk = True
                     yield chunk
 
-            if saw_non_chat_chunk:
-                return
+        except Exception as e:
+            # Апстрим оборвался посреди стрима. Гасить это нельзя: наружу уйдёт пустой SSE
+            # без finish_reason, и клиент не отличит перегрузку провайдера от поломки.
+            # Отдаём накопленное и пробрасываем ошибку дальше.
+            verbose_proxy_logger.error(f"Upstream stream failed: {str(e)}")
+            for chunk in remaining_chunks:
+                yield chunk
+            raise
 
-            if not remaining_chunks:
-                return
+        if saw_non_chat_chunk:
+            return
 
+        if not remaining_chunks:
+            return
+
+        # Сборка и снятие маски — уже наша работа. Здесь отказ восстановим: отдаём чанки
+        # как есть, с плейсхолдерами вместо значений, но ход пользователя не рушим.
+        try:
             assembled_model_response = stream_chunk_builder(
                 chunks=remaining_chunks, messages=request_data.get("messages")
             )
@@ -1581,7 +1605,11 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
             )
             yield mock_response_stream
 
-        except Exception as e:
+        except (litellm.APIError, IndexError, ValueError) as e:
+            # Сборка чанков спотыкается на пустом `choices` и подобных формах — это ожидаемо.
+            # Запасной путь безопасен: в чанках стоят плейсхолдеры, а не исходные значения,
+            # поэтому пользователь получает ответ, пусть и с `<PERSON_1>` внутри.
+            # Всё остальное — наша ошибка, и она должна быть видна, а не притворяться деградацией.
             verbose_proxy_logger.error(f"Error in PII streaming processing: {str(e)}")
             for chunk in remaining_chunks:
                 yield chunk
