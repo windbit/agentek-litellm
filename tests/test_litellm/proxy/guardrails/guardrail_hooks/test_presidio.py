@@ -3490,3 +3490,36 @@ async def test_streaming_error_after_chunks_keeps_them(presidio_guardrail):
             collected.append(chunk)
 
     assert collected == [good]
+
+
+@pytest.mark.asyncio
+async def test_unexpected_masking_failure_is_not_hidden(presidio_guardrail, monkeypatch):
+    """Собственный сбой обязан всплыть, а не притвориться деградацией.
+
+    Перехват здесь узкий намеренно: ожидаемая ошибка сборки чанков отдаёт ответ
+    с плейсхолдерами, а всё остальное — наш баг. Пока перехват был широким, такой
+    баг выглядел снаружи как «маскирование чуть подтекло», и найти его было нечем.
+    """
+    from litellm.types.utils import ModelResponseStream
+
+    class OurBug(Exception):
+        pass
+
+    async def failing_process(**kwargs):
+        raise OurBug("что-то сломалось в маскировании")
+
+    monkeypatch.setattr(presidio_guardrail, "_process_response_for_pii", failing_process)
+
+    chunk = ModelResponseStream(
+        id="1", object="chat.completion.chunk", created=1, model="m",
+        choices=[{"index": 0, "delta": {"content": "ответ"}, "finish_reason": "stop"}],
+    )
+
+    async def stream():
+        yield chunk
+
+    with pytest.raises(OurBug):
+        async for _ in presidio_guardrail._stream_pii_unmasking(
+            response=stream(), request_data={"metadata": {}, "messages": []}
+        ):
+            pass

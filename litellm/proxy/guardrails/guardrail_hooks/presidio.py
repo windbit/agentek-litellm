@@ -1446,7 +1446,11 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
             )
             yield mock_response_stream
 
-        except Exception as e:
+        except (litellm.APIError, IndexError, ValueError) as e:
+            # Сборка спотыкается на вырожденных чанках (пустой `choices`) — они не несут
+            # текста, поэтому пропустить их безопасно. Список типов узкий намеренно:
+            # здесь маскируется ответ модели, и накопленные чанки сырые, так что
+            # неожиданный сбой обязан всплыть, а не тихо выпустить их наружу.
             verbose_proxy_logger.error(f"Error masking streaming PII output: {str(e)}")
             for chunk in all_chunks:
                 yield chunk
@@ -1601,7 +1605,11 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
             )
             yield mock_response_stream
 
-        except Exception as e:
+        except (litellm.APIError, IndexError, ValueError) as e:
+            # Сборка чанков спотыкается на пустом `choices` и подобных формах — это ожидаемо.
+            # Запасной путь безопасен: в чанках стоят плейсхолдеры, а не исходные значения,
+            # поэтому пользователь получает ответ, пусть и с `<PERSON_1>` внутри.
+            # Всё остальное — наша ошибка, и она должна быть видна, а не притворяться деградацией.
             verbose_proxy_logger.error(f"Error in PII streaming processing: {str(e)}")
             for chunk in remaining_chunks:
                 yield chunk
