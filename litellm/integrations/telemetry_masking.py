@@ -10,6 +10,7 @@
 замаскированный трейс выглядит обработанным и тем опаснее.
 """
 
+import asyncio
 import os
 import re
 from typing import Any, Dict, List, Optional, Sequence
@@ -23,7 +24,38 @@ from litellm.proxy.guardrails.guardrail_hooks.pii_rules import (
 
 DEFAULT_GROUPS = ("personal_data", "names", "secrets")
 DEFAULT_ENTITIES = ("PERSON",)
-ANALYZE_TIMEOUT_SECONDS = 30
+
+
+def _env_number(name: str, default: Any, cast: Any) -> Any:
+    raw = os.getenv(name)
+    if not raw:
+        return default
+    try:
+        return cast(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+# Колбэк логирования не имеет права подвешивать event-loop шлюза. Под спайком нагрузки
+# медленный analyzer превращал каждый вызов маскировки в 30с ожидания, спаны копились и
+# топили loop — liveness шлюза падал, он рестартовал, ход агентов рвался (инцидент #1171).
+# Держим таймаут коротким и ограничиваем число одновременных обращений к анализатору:
+# телеметрия важна, но не ценой доступности шлюза — не уложились, спан дропается, ход цел.
+ANALYZE_TIMEOUT_SECONDS = _env_number("LITELLM_TELEMETRY_ANALYZE_TIMEOUT", 4.0, float)
+ANALYZE_MAX_CONCURRENCY = _env_number("LITELLM_TELEMETRY_MAX_CONCURRENCY", 8, int)
+
+# Семафор привязан к event-loop, поэтому храним по одному на активный loop: в проде loop
+# один и живёт долго, в тестах на каждый прогон свой — общий инстанс тёк бы между loop'ами.
+_semaphores: "Dict[Any, asyncio.Semaphore]" = {}
+
+
+def _analyze_semaphore() -> asyncio.Semaphore:
+    loop = asyncio.get_running_loop()
+    sem = _semaphores.get(loop)
+    if sem is None:
+        sem = asyncio.Semaphore(ANALYZE_MAX_CONCURRENCY)
+        _semaphores[loop] = sem
+    return sem
 
 
 class TelemetryMaskingUnavailable(RuntimeError):
@@ -121,15 +153,16 @@ class TelemetryMasker:
         base = self.analyzer_base or ""
         url = f"{base.rstrip('/')}/analyze"
         payload = {"text": text, "language": self.language, "entities": self.entities}
+        timeout = aiohttp.ClientTimeout(total=ANALYZE_TIMEOUT_SECONDS)
         try:
-            timeout = aiohttp.ClientTimeout(total=ANALYZE_TIMEOUT_SECONDS)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(url, json=payload) as response:
-                    if response.status >= 400:
-                        raise TelemetryMaskingUnavailable(
-                            f"analyzer returned HTTP {response.status}"
-                        )
-                    body = await response.json()
+            async with _analyze_semaphore():
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    async with session.post(url, json=payload) as response:
+                        if response.status >= 400:
+                            raise TelemetryMaskingUnavailable(
+                                f"analyzer returned HTTP {response.status}"
+                            )
+                        body = await response.json()
         except TelemetryMaskingUnavailable:
             raise
         except Exception as err:

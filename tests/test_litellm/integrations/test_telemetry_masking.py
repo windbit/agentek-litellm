@@ -132,3 +132,19 @@ def test_dropped_span_counter_never_raises(monkeypatch):
     monkeypatch.setattr(tm, "_dropped_spans_counter", None, raising=False)
     monkeypatch.setattr(tm, "_dropped_spans_counter_ready", True, raising=False)
     tm.record_dropped_span("masking_unavailable")  # без счётчика — просто no-op
+
+
+def test_analyze_timeout_is_short_by_default():
+    """Регресс-страж: 30с ожидания топили event-loop шлюза и роняли liveness (#1171)."""
+    from litellm.integrations.telemetry_masking import ANALYZE_TIMEOUT_SECONDS
+
+    assert ANALYZE_TIMEOUT_SECONDS <= 10
+
+
+@pytest.mark.asyncio
+async def test_analyze_concurrency_semaphore_is_bounded_and_per_loop():
+    import litellm.integrations.telemetry_masking as tm
+
+    sem = tm._analyze_semaphore()
+    assert sem._value == tm.ANALYZE_MAX_CONCURRENCY
+    assert tm._analyze_semaphore() is sem  # тот же loop — тот же семафор
