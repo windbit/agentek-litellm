@@ -27,8 +27,15 @@ RUN apk add --no-cache \
     npm \
     libsndfile
 
+# uv installs a self-contained managed CPython: the apk python3 in this wolfi base is
+# built against a newer glibc than the pinned image ships (import math → GLIBC_2.44 not
+# found), so it can't be used. Pin 3.13 (project requires <3.14, uv would otherwise grab
+# 3.14) into a path we copy into the runtime stage, so the venv's interpreter is present
+# there — otherwise the litellm console script dangles (exec: litellm: not found).
 ENV UV_PROJECT_ENVIRONMENT=/app/.venv \
     UV_LINK_MODE=copy \
+    UV_PYTHON_PREFERENCE=only-managed \
+    UV_PYTHON_INSTALL_DIR=/app/.python \
     PATH="/app/.venv/bin:${PATH}"
 
 # Copy dependency metadata first for layer caching
@@ -79,6 +86,9 @@ ENV PATH="/app/.venv/bin:${PATH}"
 # ship (manifest-scanning tools attribute everything in it to this image).
 # entrypoint.sh invokes litellm/proxy/prisma_migration.py by source path.
 COPY --from=builder /app/.venv /app/.venv
+# The venv interpreter is the managed CPython under /app/.python (UV_PYTHON_INSTALL_DIR);
+# without it the venv's python symlink dangles → exec: litellm: not found.
+COPY --from=builder /app/.python /app/.python
 COPY --from=builder /app/docker /app/docker
 COPY --from=builder /app/schema.prisma /app/schema.prisma
 COPY --from=builder /app/litellm/proxy/prisma_migration.py /app/litellm/proxy/prisma_migration.py
