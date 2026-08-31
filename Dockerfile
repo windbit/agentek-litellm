@@ -27,8 +27,13 @@ RUN apk add --no-cache \
     npm \
     libsndfile
 
+# UV_PYTHON_DOWNLOADS=never: use the apk python3 (3.13), never a uv-managed CPython.
+# A managed interpreter lands under /root/.local and is NOT copied into the runtime
+# stage (only /app/.venv is), so the venv's console scripts would dangle. It also
+# pins us to <3.14 — uv otherwise now fetches 3.14, which the project rejects.
 ENV UV_PROJECT_ENVIRONMENT=/app/.venv \
     UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never \
     PATH="/app/.venv/bin:${PATH}"
 
 # Copy dependency metadata first for layer caching
@@ -42,7 +47,7 @@ RUN uv sync --frozen --no-install-project --no-install-workspace --no-default-gr
     --extra proxy-runtime \
     --extra extra_proxy \
     --extra semantic-router \
-    --python 3.13
+    --python python3
 
 # Copy full source tree
 COPY . .
@@ -56,7 +61,7 @@ RUN uv sync --frozen --no-default-groups --no-editable \
     --extra proxy-runtime \
     --extra extra_proxy \
     --extra semantic-router \
-    --python 3.13
+    --python python3
 
 RUN prisma generate --schema=./schema.prisma
 
