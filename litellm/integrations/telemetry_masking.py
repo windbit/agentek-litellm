@@ -58,6 +58,26 @@ def _analyze_semaphore() -> asyncio.Semaphore:
     return sem
 
 
+# aiohttp-сессию, как и семафор, держим одну на event-loop. masking зовёт анализатор
+# десятки раз на спан, а прежняя сессия-на-вызов плодила TCP-коннекторы, которые под
+# отменой logging-worker по таймауту не успевали закрыться и текли в память до OOM (#1206).
+# Одна долгоживущая сессия пулит соединения и освобождает их штатно.
+_sessions: "Dict[Any, Any]" = {}
+
+
+def _analyze_session() -> Any:
+    import aiohttp
+
+    loop = asyncio.get_running_loop()
+    session = _sessions.get(loop)
+    if session is None or session.closed:
+        session = aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=ANALYZE_TIMEOUT_SECONDS)
+        )
+        _sessions[loop] = session
+    return session
+
+
 class TelemetryMaskingUnavailable(RuntimeError):
     """Полное маскирование невозможно — спан отправлять нельзя."""
 
@@ -148,21 +168,18 @@ class TelemetryMasker:
         return self._replace(text, spans)
 
     async def _analyze(self, text: str) -> List[Dict[str, Any]]:
-        import aiohttp
-
         base = self.analyzer_base or ""
         url = f"{base.rstrip('/')}/analyze"
         payload = {"text": text, "language": self.language, "entities": self.entities}
-        timeout = aiohttp.ClientTimeout(total=ANALYZE_TIMEOUT_SECONDS)
         try:
             async with _analyze_semaphore():
-                async with aiohttp.ClientSession(timeout=timeout) as session:
-                    async with session.post(url, json=payload) as response:
-                        if response.status >= 400:
-                            raise TelemetryMaskingUnavailable(
-                                f"analyzer returned HTTP {response.status}"
-                            )
-                        body = await response.json()
+                session = _analyze_session()
+                async with session.post(url, json=payload) as response:
+                    if response.status >= 400:
+                        raise TelemetryMaskingUnavailable(
+                            f"analyzer returned HTTP {response.status}"
+                        )
+                    body = await response.json()
         except TelemetryMaskingUnavailable:
             raise
         except Exception as err:

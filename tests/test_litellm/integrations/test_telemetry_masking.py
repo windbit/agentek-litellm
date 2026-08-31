@@ -148,3 +148,18 @@ async def test_analyze_concurrency_semaphore_is_bounded_and_per_loop():
     sem = tm._analyze_semaphore()
     assert sem._value == tm.ANALYZE_MAX_CONCURRENCY
     assert tm._analyze_semaphore() is sem  # тот же loop — тот же семафор
+
+
+@pytest.mark.asyncio
+async def test_analyze_session_is_reused_within_loop():
+    # Регресс-страж (#1206): сессия-на-вызов текла коннекторами под отменой logging-worker.
+    # Одна сессия на loop переиспользуется вместо создания на каждый вызов анализатора.
+    import litellm.integrations.telemetry_masking as tm
+
+    session = tm._analyze_session()
+    try:
+        assert not session.closed
+        assert tm._analyze_session() is session  # тот же loop — та же сессия
+    finally:
+        await session.close()
+        tm._sessions.clear()
