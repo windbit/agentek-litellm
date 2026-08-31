@@ -42,7 +42,7 @@ RUN uv sync --frozen --no-install-project --no-install-workspace --no-default-gr
     --extra proxy-runtime \
     --extra extra_proxy \
     --extra semantic-router \
-    --python 3.13
+    --python python3
 
 # Copy full source tree
 COPY . .
@@ -56,7 +56,7 @@ RUN uv sync --frozen --no-default-groups --no-editable \
     --extra proxy-runtime \
     --extra extra_proxy \
     --extra semantic-router \
-    --python 3.13
+    --python python3
 
 RUN prisma generate --schema=./schema.prisma
 
