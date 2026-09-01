@@ -163,3 +163,21 @@ async def test_analyze_session_is_reused_within_loop():
     finally:
         await session.close()
         tm._sessions.clear()
+
+
+@pytest.mark.asyncio
+async def test_mask_tolerates_concurrent_source_mutation(rulebook):
+    # Регресс (#1206): mask рекурсивно await'ит, уступая loop, а litellm параллельно
+    # мутирует живой блок логирования во время итерации → без снимка items это
+    # "dictionary changed size during iteration". Снимок обязан пережить мутацию.
+    masker = build(rulebook)
+    payload = {"a": "x", "b": "y", "c": "z"}
+    original = masker._mask_text
+
+    async def mutating(text):
+        payload.pop("c", None)  # конкуррентная мутация источника во время await
+        return await original(text)
+
+    masker._mask_text = mutating
+    result = await masker.mask(payload)
+    assert result == {"a": "x", "b": "y", "c": "z"}
