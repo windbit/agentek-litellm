@@ -98,6 +98,81 @@ class TestGigaChatMessageTransformation:
         assert result[0]["function_call"]["arguments"] == {"city": "Moscow"}
         assert "tool_calls" not in result[0]
 
+    def test_parallel_tool_calls_drop_orphaned_function_results(self, config):
+        """Parallel tool_calls collapse to the first; results of dropped calls are removed.
+
+        Without this GigaChat receives two function results but a single function_call and
+        answers HTTP 422 "every assistant function result must have an assistant function
+        call in history".
+        """
+        messages = [
+            {"role": "user", "content": "Weather in Moscow and Berlin?"},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "get_weather",
+                            "arguments": '{"city": "Moscow"}',
+                        },
+                    },
+                    {
+                        "id": "call_2",
+                        "type": "function",
+                        "function": {
+                            "name": "get_weather",
+                            "arguments": '{"city": "Berlin"}',
+                        },
+                    },
+                ],
+            },
+            {"role": "tool", "tool_call_id": "call_1", "content": "Moscow: 15C"},
+            {"role": "tool", "tool_call_id": "call_2", "content": "Berlin: 18C"},
+        ]
+        result = config._transform_messages(messages)
+
+        function_results = [m for m in result if m["role"] == "function"]
+        assert len(function_results) == 1
+        assert function_results[0]["tool_call_id"] == "call_1"
+
+    def test_tool_result_without_matching_call_dropped(self, config):
+        """A tool result whose call was cut by context compaction is dropped, not orphaned."""
+        messages = [
+            {"role": "user", "content": "Hi"},
+            {"role": "tool", "tool_call_id": "call_gone", "content": "stale result"},
+        ]
+        result = config._transform_messages(messages)
+
+        assert all(m["role"] != "function" for m in result)
+
+    def test_single_tool_call_result_preserved(self, config):
+        """The common single tool_call plus its result must pass through unchanged."""
+        messages = [
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "get_weather",
+                            "arguments": '{"city": "Moscow"}',
+                        },
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "call_1", "content": "Moscow: 15C"},
+        ]
+        result = config._transform_messages(messages)
+
+        function_results = [m for m in result if m["role"] == "function"]
+        assert len(function_results) == 1
+        assert function_results[0]["tool_call_id"] == "call_1"
+
     def test_none_content_becomes_empty_string(self, config):
         """None content should become empty string"""
         messages = [{"role": "assistant", "content": None}]

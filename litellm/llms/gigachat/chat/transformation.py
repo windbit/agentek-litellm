@@ -316,11 +316,36 @@ class GigaChatConfig(BaseConfig):
 
         return request_data
 
+    def _drop_orphaned_function_results(
+        self, messages: List[AllMessageValues]
+    ) -> List[AllMessageValues]:
+        """Drop tool results whose originating call is absent from the history.
+
+        GigaChat allows a single function_call per assistant message and rejects any
+        function result that has no matching call in the history (HTTP 422). Parallel
+        tool_calls are collapsed to the first one below, and context compaction can cut
+        an assistant turn entirely; either way the leftover tool results would be
+        orphaned. Keep only results whose call id survives so the sent history stays valid.
+        """
+        kept_tool_call_ids = {
+            call_id
+            for message in messages
+            if isinstance((tool_calls := message.get("tool_calls")), list) and tool_calls
+            if (call_id := tool_calls[0].get("id")) is not None
+        }
+        return [
+            message
+            for message in messages
+            if message.get("role") != "tool"
+            or message.get("tool_call_id") in kept_tool_call_ids
+        ]
+
     def _transform_messages(self, messages: List[AllMessageValues]) -> List[dict]:
         """Transform OpenAI messages to GigaChat format."""
+        filtered_messages = self._drop_orphaned_function_results(messages)
         transformed = []
 
-        for i, msg in enumerate(messages):
+        for i, msg in enumerate(filtered_messages):
             message = dict(msg)
 
             # Remove unsupported fields
