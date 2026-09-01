@@ -51,8 +51,11 @@ class LangfuseOtelLogger(OpenTelemetry):
         masker = get_telemetry_masker()
         if masker.configured:
             try:
-                kwargs = await masker.mask(kwargs)
-                response_obj = await masker.mask(response_obj)
+                # Один кэш дедупа на оба вызова: ответ лежит и в kwargs, и в response_obj,
+                # так что общий кэш анализирует его текст по разу, а не дважды (#1206).
+                mask_cache: dict = {}
+                kwargs = await masker.mask(kwargs, mask_cache)
+                response_obj = await masker.mask(response_obj, mask_cache)
             except TelemetryMaskingUnavailable as err:
                 # Спан наполовину замаскированный хуже отсутствующего: он выглядит обработанным.
                 verbose_logger.warning(

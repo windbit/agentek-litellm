@@ -144,19 +144,35 @@ class TelemetryMasker:
     def configured(self) -> bool:
         return self.enabled and (self._broken or bool(self._engine or self.analyzer_base))
 
-    async def mask(self, value: Any) -> Any:
-        """Рекурсивно маскирует строки в структуре спана, сохраняя её форму."""
+    async def mask(self, value: Any, cache: Optional[Dict[str, str]] = None) -> Any:
+        """Рекурсивно маскирует строки в структуре спана, сохраняя её форму.
+
+        `cache` дедуплицирует маскирование одинаковых строк в пределах одного спана.
+        Payload спана несёт одну и ту же длинную строку многократно (сообщения и ответ
+        лежат разом в top-level, standard_logging_object, original_response и
+        complete_streaming_response), поэтому без дедупа mask() рекурсивно анализирует
+        каждую копию заново — десятки лишних вызовов analyzer и лишних аллокаций на спан.
+        Под живым потоком это и есть остаточный рост RSS до OOM после того, как утечки
+        сессий и dict-changed уже закрыты (#1206). Кэш строится на вызов и передаётся
+        обоим mask() в колбэке, так что общая нагрузка спана анализируется по разу.
+        """
+        if cache is None:
+            cache = {}
         if isinstance(value, str):
-            return await self._mask_text(value)
+            masked = cache.get(value)
+            if masked is None:
+                masked = await self._mask_text(value)
+                cache[value] = masked
+            return masked
         # Снимок контейнера до async-итерации: mask рекурсивно await'ит, уступая loop
         # другим success-колбэкам, а litellm параллельно мутирует живой блок логирования
         # (model_call_details) — итерация по нему на месте падает "dictionary changed size
         # during iteration" и роняет спан (#1206).
         if isinstance(value, dict):
-            return {key: await self.mask(item) for key, item in list(value.items())}
+            return {key: await self.mask(item, cache) for key, item in list(value.items())}
         if isinstance(value, (list, tuple)):
-            masked = [await self.mask(item) for item in list(value)]
-            return type(value)(masked) if isinstance(value, tuple) else masked
+            masked_items = [await self.mask(item, cache) for item in list(value)]
+            return type(value)(masked_items) if isinstance(value, tuple) else masked_items
         return value
 
     async def _mask_text(self, text: str) -> str:
@@ -172,6 +188,16 @@ class TelemetryMasker:
         return self._replace(text, spans)
 
     async def _analyze(self, text: str) -> List[Dict[str, Any]]:
+        # Колбэк логирования litellm оборачивает маскировку в свой wait_for и отменяет её
+        # на полуслове, когда analyzer медленный. Если отмена прилетает во время чтения
+        # ответа, aiohttp не успевает подчистить протокол соединения — ResponseHandler и
+        # StreamReader висят зомби, копятся на каждый оборванный запрос и текут в RSS до OOM
+        # (#1206, остаток после shared-session). shield докручивает сам HTTP-обмен до конца
+        # (собственный ANALYZE_TIMEOUT его всё равно ограничивает), aiohttp освобождает
+        # соединение штатно, а отмена доходит до вызывающего сразу — спан дропается как и был.
+        return await asyncio.shield(self._analyze_request(text))
+
+    async def _analyze_request(self, text: str) -> List[Dict[str, Any]]:
         base = self.analyzer_base or ""
         url = f"{base.rstrip('/')}/analyze"
         payload = {"text": text, "language": self.language, "entities": self.entities}
