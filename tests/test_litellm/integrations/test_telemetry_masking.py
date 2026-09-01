@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from litellm.integrations.telemetry_masking import (
@@ -181,3 +183,80 @@ async def test_mask_tolerates_concurrent_source_mutation(rulebook):
     masker._mask_text = mutating
     result = await masker.mask(payload)
     assert result == {"a": "x", "b": "y", "c": "z"}
+
+
+@pytest.mark.asyncio
+async def test_mask_deduplicates_repeated_strings(rulebook):
+    # Регресс (#1206): одна и та же строка встречается в payload многократно
+    # (сообщения/ответ дублируются в top-level, standard_logging_object,
+    # original_response). Без дедупа каждый дубль анализируется заново — лишние
+    # вызовы analyzer и лишние аллокации, из-за которых RSS полз до OOM. Кэш обязан
+    # свести анализ повтора к одному разу, не меняя результат.
+    masker = build(rulebook)
+    calls = []
+    original = masker._mask_text
+
+    async def counting(text):
+        calls.append(text)
+        return await original(text)
+
+    masker._mask_text = counting
+    secret = "ключ AKIA0123456789ABCDEF в конфиге"
+    payload = {
+        "messages": [{"content": secret}, {"content": secret}],
+        "standard_logging_object": {"messages": secret},
+        "original_response": secret,
+        "n": 7,
+    }
+    masked = await masker.mask(payload)
+    assert calls.count(secret) == 1  # проанализирован один раз, а не четырежды
+    assert "AKIA0123456789ABCDEF" not in masked["original_response"]
+    assert "AKIA0123456789ABCDEF" not in masked["messages"][1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_mask_shared_cache_dedups_across_calls(rulebook):
+    # Ответ лежит и в kwargs, и в response_obj; общий кэш на оба вызова mask()
+    # анализирует его текст по разу (langfuse_otel передаёт один кэш обоим).
+    masker = build(rulebook)
+    calls = []
+    original = masker._mask_text
+
+    async def counting(text):
+        calls.append(text)
+        return await original(text)
+
+    masker._mask_text = counting
+    response = "ИНН 500100732259 в ответе"
+    cache: dict = {}
+    await masker.mask({"response": response}, cache)
+    await masker.mask({"choices": [{"text": response}]}, cache)
+    assert calls.count(response) == 1
+
+
+@pytest.mark.asyncio
+async def test_analyze_request_survives_outer_cancellation(rulebook):
+    # Регресс (#1206): logging-worker litellm оборачивает mask() в wait_for и отменяет её
+    # на полуслове. Без shield запрос к analyzer рвётся в момент чтения ответа и оставляет
+    # зомби-объекты aiohttp (ResponseHandler/StreamReader), которые копятся до OOM. shield
+    # обязан докрутить запрос до конца, несмотря на внешнюю отмену.
+    masker = TelemetryMasker(
+        rulebook_path=rulebook, entities=["PERSON"], analyzer_base="http://analyzer"
+    )
+    started = asyncio.Event()
+    completed = asyncio.Event()
+
+    async def fake_request(text):
+        started.set()
+        await asyncio.sleep(0.05)
+        completed.set()
+        return []
+
+    masker._analyze_request = fake_request
+    task = asyncio.create_task(masker.mask({"m": "Иван Петров"}))
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    # Запрос обязан докрутиться, несмотря на отмену вызывающего.
+    await asyncio.wait_for(completed.wait(), timeout=1)
