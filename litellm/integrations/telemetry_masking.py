@@ -148,10 +148,14 @@ class TelemetryMasker:
         """Рекурсивно маскирует строки в структуре спана, сохраняя её форму."""
         if isinstance(value, str):
             return await self._mask_text(value)
+        # Снимок контейнера до async-итерации: mask рекурсивно await'ит, уступая loop
+        # другим success-колбэкам, а litellm параллельно мутирует живой блок логирования
+        # (model_call_details) — итерация по нему на месте падает "dictionary changed size
+        # during iteration" и роняет спан (#1206).
         if isinstance(value, dict):
-            return {key: await self.mask(item) for key, item in value.items()}
+            return {key: await self.mask(item) for key, item in list(value.items())}
         if isinstance(value, (list, tuple)):
-            masked = [await self.mask(item) for item in value]
+            masked = [await self.mask(item) for item in list(value)]
             return type(value)(masked) if isinstance(value, tuple) else masked
         return value
 
