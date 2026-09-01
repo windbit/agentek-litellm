@@ -1,8 +1,8 @@
 # Base image for building
-ARG LITELLM_BUILD_IMAGE=cgr.dev/chainguard/wolfi-base@sha256:31da6565f35af6401031c1d7aa91dc84ac76c5c48edd17fb90f0ed9e3173c7a9
+ARG LITELLM_BUILD_IMAGE=cgr.dev/chainguard/wolfi-base@sha256:7e62cecd3c5712dba6e52c5260afb8f9d7a23b9bbcdd26ad7508a811e74b766d
 
 # Runtime image
-ARG LITELLM_RUNTIME_IMAGE=cgr.dev/chainguard/wolfi-base@sha256:31da6565f35af6401031c1d7aa91dc84ac76c5c48edd17fb90f0ed9e3173c7a9
+ARG LITELLM_RUNTIME_IMAGE=cgr.dev/chainguard/wolfi-base@sha256:7e62cecd3c5712dba6e52c5260afb8f9d7a23b9bbcdd26ad7508a811e74b766d
 ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.11.7@sha256:240fb85ab0f263ef12f492d8476aa3a2e4e1e333f7d67fbdd923d00a506a516a
 
 FROM $UV_IMAGE AS uvbin
@@ -27,11 +27,11 @@ RUN apk add --no-cache \
     npm \
     libsndfile
 
-# uv installs a self-contained managed CPython: the apk python3 in this wolfi base is
-# built against a newer glibc than the pinned image ships (import math → GLIBC_2.44 not
-# found), so it can't be used. Pin 3.13 (project requires <3.14, uv would otherwise grab
-# 3.14) into a path we copy into the runtime stage, so the venv's interpreter is present
-# there — otherwise the litellm console script dangles (exec: litellm: not found).
+# uv installs a self-contained managed CPython 3.13 (project requires <3.14; uv would
+# otherwise grab 3.14) into a path we copy into the runtime stage — this decouples the
+# interpreter from wolfi apk/glibc drift, which has repeatedly broken the apk python/node
+# against the pinned base (import math → GLIBC_2.44 not found). Copy /app/.python into
+# runtime or the venv's interpreter symlink dangles (exec: litellm: not found).
 ENV UV_PROJECT_ENVIRONMENT=/app/.venv \
     UV_LINK_MODE=copy \
     UV_PYTHON_PREFERENCE=only-managed \
