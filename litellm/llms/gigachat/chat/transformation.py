@@ -7,14 +7,28 @@ Transforms OpenAI-format requests to GigaChat format and back.
 import json
 import time
 import uuid
-from typing import TYPE_CHECKING, Any, AsyncIterator, Iterator, List, Optional, Union
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    AsyncIterator,
+    Iterator,
+    List,
+    Optional,
+    TypeGuard,
+    Union,
+    cast,
+)
 
 import httpx
 
 from litellm._logging import verbose_logger
 from litellm.llms.base_llm.chat.transformation import BaseConfig, BaseLLMException
 from litellm.secret_managers.main import get_secret_str
-from litellm.types.llms.openai import AllMessageValues
+from litellm.types.llms.openai import (
+    AllMessageValues,
+    ChatCompletionAssistantMessage,
+    ChatCompletionToolMessage,
+)
 from litellm.types.utils import Choices, Message, ModelResponse, Usage
 
 from ..authenticator import get_access_token
@@ -39,6 +53,16 @@ def is_valid_json(value: str) -> bool:
         return False
     else:
         return True
+
+
+def _is_tool_message(message: AllMessageValues) -> TypeGuard[ChatCompletionToolMessage]:
+    return message.get("role") == "tool"
+
+
+def _is_assistant_message(
+    message: AllMessageValues,
+) -> TypeGuard[ChatCompletionAssistantMessage]:
+    return message.get("role") == "assistant"
 
 
 class GigaChatError(BaseLLMException):
@@ -318,9 +342,10 @@ class GigaChatConfig(BaseConfig):
 
     def _transform_messages(self, messages: List[AllMessageValues]) -> List[dict]:
         """Transform OpenAI messages to GigaChat format."""
+        expanded_messages = self._expand_parallel_tool_calls(messages)
         transformed = []
 
-        for i, msg in enumerate(messages):
+        for i, msg in enumerate(expanded_messages):
             message = dict(msg)
 
             # Remove unsupported fields
@@ -387,6 +412,69 @@ class GigaChatConfig(BaseConfig):
             transformed.append(message)
 
         return transformed
+
+    def _expand_parallel_tool_calls(
+        self, messages: List[AllMessageValues]
+    ) -> List[AllMessageValues]:
+        expanded_messages: List[AllMessageValues] = []
+        message_index = 0
+
+        while message_index < len(messages):
+            message = messages[message_index]
+            if not _is_assistant_message(message):
+                expanded_messages.append(message)
+                message_index += 1
+                continue
+            assistant_message = message
+            tool_calls = assistant_message.get("tool_calls")
+            if not tool_calls or len(tool_calls) < 2:
+                expanded_messages.append(message)
+                message_index += 1
+                continue
+
+            following_messages = messages[
+                message_index + 1 : message_index + len(tool_calls) + 1
+            ]
+            tool_results_by_id = {
+                tool_result["tool_call_id"]: tool_result
+                for tool_result in following_messages
+                if _is_tool_message(tool_result)
+            }
+
+            if (
+                len(following_messages) != len(tool_calls)
+                or len(tool_results_by_id) != len(tool_calls)
+                or any(
+                    not _is_tool_message(tool_result)
+                    for tool_result in following_messages
+                )
+                or any(
+                    tool_call.get("id") not in tool_results_by_id
+                    for tool_call in tool_calls
+                )
+            ):
+                expanded_messages.append(message)
+                message_index += 1
+                continue
+
+            expanded_messages.extend(
+                expanded_message
+                for tool_call_index, tool_call in enumerate(tool_calls)
+                for expanded_message in (
+                    cast(
+                        AllMessageValues,
+                        {
+                            **assistant_message,
+                            **({"content": None} if tool_call_index else {}),
+                            "tool_calls": [tool_call],
+                        },
+                    ),
+                    tool_results_by_id[cast(str, tool_call.get("id"))],
+                )
+            )
+            message_index += len(tool_calls) + 1
+
+        return expanded_messages
 
     def transform_response(
         self,
