@@ -61,7 +61,7 @@ class LangfuseOtelLogger(OpenTelemetry):
                 verbose_logger.warning(
                     "Dropping Langfuse span: telemetry masking unavailable (%s)", err
                 )
-                record_dropped_span("masking_unavailable")
+                record_dropped_span(err.reason)
                 return
         await super().async_log_success_event(kwargs, response_obj, start_time, end_time)
 

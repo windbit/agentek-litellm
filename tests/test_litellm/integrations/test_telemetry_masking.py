@@ -3,8 +3,10 @@ import asyncio
 import pytest
 
 from litellm.integrations.telemetry_masking import (
+    MAX_TEXT_CHARS,
     TelemetryMasker,
     TelemetryMaskingUnavailable,
+    TelemetryTextTooLarge,
 )
 
 RULEBOOK = """
@@ -77,28 +79,37 @@ async def test_analyzer_failure_stops_the_span(rulebook, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_oversized_text_drops_span_without_analysis(rulebook, monkeypatch):
-    # Регресс (#1250): один сверхдлинный лист спана (накопленный контекст длинного хода
-    # агента) presidio отклоняет HTTP 500, а синхронный проход правил по нему топит
-    # event-loop колбэка — liveness шлюза падал, он уходил в рестарт-цикл на весь флот.
-    # Строку длиннее порога маскировщик обязан отвергнуть ДЁШЕВО: спан дропается, но ни
-    # движок правил, ни анализатор к ней не притрагиваются.
-    import litellm.integrations.telemetry_masking as tm
+async def test_oversized_text_drops_span_without_analysis():
+    class FailingRuleEngine:
+        def analyze(self, text):
+            raise AssertionError("rule engine must not run")
 
-    monkeypatch.setattr(tm, "MAX_TEXT_CHARS", 1000, raising=False)
+    async def fail_analyze(text):
+        raise AssertionError("analyzer must not run")
+
     masker = TelemetryMasker(
-        rulebook_path=rulebook, entities=["PERSON"], analyzer_base="http://analyzer"
+        entities=["PERSON"],
+        analyzer_base="http://analyzer",
+        rule_engine=FailingRuleEngine(),
+        analyze_request=fail_analyze,
     )
-    analyzed: list = []
+    with pytest.raises(TelemetryTextTooLarge) as error:
+        await masker.mask({"content": "И" * (MAX_TEXT_CHARS + 1)})
+    assert error.value.reason == "text_too_large"
 
-    async def fake_analyze(text):
-        analyzed.append(text)
-        return []
 
-    masker._analyze_request = fake_analyze
-    with pytest.raises(TelemetryMaskingUnavailable):
-        await masker.mask({"content": "И" * 1001})
-    assert analyzed == []  # анализатор не вызван — отказ дешёвый, до сетевого обмена
+@pytest.mark.asyncio
+async def test_oversized_blank_text_drops_span():
+    with pytest.raises(TelemetryTextTooLarge):
+        await TelemetryMasker(entities=[]).mask({"content": " " * (MAX_TEXT_CHARS + 1)})
+
+
+@pytest.mark.asyncio
+async def test_text_at_limit_is_masked():
+    masker = TelemetryMasker(entities=[])
+    text = "И" * MAX_TEXT_CHARS
+
+    assert await masker.mask({"content": text}) == {"content": text}
 
 
 @pytest.mark.asyncio
