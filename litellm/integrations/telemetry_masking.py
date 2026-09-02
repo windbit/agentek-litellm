@@ -12,8 +12,7 @@
 
 import asyncio
 import os
-import re
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Protocol, Sequence
 
 from litellm._logging import verbose_logger
 from litellm.proxy.guardrails.guardrail_hooks.pii_rules import (
@@ -43,6 +42,7 @@ def _env_number(name: str, default: Any, cast: Any) -> Any:
 # телеметрия важна, но не ценой доступности шлюза — не уложились, спан дропается, ход цел.
 ANALYZE_TIMEOUT_SECONDS = _env_number("LITELLM_TELEMETRY_ANALYZE_TIMEOUT", 4.0, float)
 ANALYZE_MAX_CONCURRENCY = _env_number("LITELLM_TELEMETRY_MAX_CONCURRENCY", 8, int)
+MAX_TEXT_CHARS = _env_number("LITELLM_TELEMETRY_MAX_TEXT_CHARS", 200_000, int)
 
 # Семафор привязан к event-loop, поэтому храним по одному на активный loop: в проде loop
 # один и живёт долго, в тестах на каждый прогон свой — общий инстанс тёк бы между loop'ами.
@@ -81,6 +81,16 @@ def _analyze_session() -> Any:
 class TelemetryMaskingUnavailable(RuntimeError):
     """Полное маскирование невозможно — спан отправлять нельзя."""
 
+    reason = "masking_unavailable"
+
+
+class TelemetryTextTooLarge(TelemetryMaskingUnavailable):
+    reason = "text_too_large"
+
+
+class RuleEngine(Protocol):
+    def analyze(self, text: str) -> List[Dict[str, Any]]: ...
+
 
 def _env_flag(name: str, default: bool) -> bool:
     raw = os.getenv(name)
@@ -111,6 +121,8 @@ class TelemetryMasker:
         analyzer_base: Optional[str] = None,
         language: Optional[str] = None,
         entities: Optional[Sequence[str]] = None,
+        rule_engine: Optional[RuleEngine] = None,
+        analyze_request: Optional[Callable[[str], Awaitable[List[Dict[str, Any]]]]] = None,
     ) -> None:
         self.enabled = _env_flag("LITELLM_TELEMETRY_MASKING", True)
         self.rulebook_path = rulebook_path or os.getenv("LITELLM_TELEMETRY_RULEBOOK")
@@ -126,9 +138,10 @@ class TelemetryMasker:
         self.entities = list(entities) if entities else _env_list(
             "LITELLM_TELEMETRY_ENTITIES", DEFAULT_ENTITIES
         )
-        self._engine: Optional[PiiRuleEngine] = None
+        self._engine = rule_engine
+        self._analyze_request_fn = analyze_request
         self._broken = False
-        if self.rulebook_path:
+        if self.rulebook_path and self._engine is None:
             try:
                 self._engine = PiiRuleEngine(
                     load_rulebook(self.rulebook_path), enabled_groups=self.groups
@@ -178,6 +191,10 @@ class TelemetryMasker:
     async def _mask_text(self, text: str) -> str:
         if self._broken:
             raise TelemetryMaskingUnavailable("rulebook unusable")
+        if len(text) > MAX_TEXT_CHARS:
+            raise TelemetryTextTooLarge(
+                f"text length {len(text)} exceeds {MAX_TEXT_CHARS}"
+            )
         if not text.strip():
             return text
         spans: List[Dict[str, Any]] = []
@@ -195,7 +212,8 @@ class TelemetryMasker:
         # (#1206, остаток после shared-session). shield докручивает сам HTTP-обмен до конца
         # (собственный ANALYZE_TIMEOUT его всё равно ограничивает), aiohttp освобождает
         # соединение штатно, а отмена доходит до вызывающего сразу — спан дропается как и был.
-        return await asyncio.shield(self._analyze_request(text))
+        request = self._analyze_request_fn or self._analyze_request
+        return await asyncio.shield(request(text))
 
     async def _analyze_request(self, text: str) -> List[Dict[str, Any]]:
         base = self.analyzer_base or ""

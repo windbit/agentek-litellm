@@ -3,8 +3,10 @@ import asyncio
 import pytest
 
 from litellm.integrations.telemetry_masking import (
+    MAX_TEXT_CHARS,
     TelemetryMasker,
     TelemetryMaskingUnavailable,
+    TelemetryTextTooLarge,
 )
 
 RULEBOOK = """
@@ -74,6 +76,40 @@ async def test_analyzer_failure_stops_the_span(rulebook, monkeypatch):
     )
     with pytest.raises(TelemetryMaskingUnavailable):
         await masker.mask({"content": "Смирнова Анна Сергеевна"})
+
+
+@pytest.mark.asyncio
+async def test_oversized_text_drops_span_without_analysis():
+    class FailingRuleEngine:
+        def analyze(self, text):
+            raise AssertionError("rule engine must not run")
+
+    async def fail_analyze(text):
+        raise AssertionError("analyzer must not run")
+
+    masker = TelemetryMasker(
+        entities=["PERSON"],
+        analyzer_base="http://analyzer",
+        rule_engine=FailingRuleEngine(),
+        analyze_request=fail_analyze,
+    )
+    with pytest.raises(TelemetryTextTooLarge) as error:
+        await masker.mask({"content": "И" * (MAX_TEXT_CHARS + 1)})
+    assert error.value.reason == "text_too_large"
+
+
+@pytest.mark.asyncio
+async def test_oversized_blank_text_drops_span():
+    with pytest.raises(TelemetryTextTooLarge):
+        await TelemetryMasker(entities=[]).mask({"content": " " * (MAX_TEXT_CHARS + 1)})
+
+
+@pytest.mark.asyncio
+async def test_text_at_limit_is_masked():
+    masker = TelemetryMasker(entities=[])
+    text = "И" * MAX_TEXT_CHARS
+
+    assert await masker.mask({"content": text}) == {"content": text}
 
 
 @pytest.mark.asyncio
