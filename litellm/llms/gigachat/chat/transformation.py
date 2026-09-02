@@ -342,10 +342,10 @@ class GigaChatConfig(BaseConfig):
 
     def _transform_messages(self, messages: List[AllMessageValues]) -> List[dict]:
         """Transform OpenAI messages to GigaChat format."""
-        messages = self._expand_parallel_tool_calls(messages)
+        expanded_messages = self._expand_parallel_tool_calls(messages)
         transformed = []
 
-        for i, msg in enumerate(messages):
+        for i, msg in enumerate(expanded_messages):
             message = dict(msg)
 
             # Remove unsupported fields
@@ -459,11 +459,15 @@ class GigaChatConfig(BaseConfig):
 
             expanded_messages.extend(
                 expanded_message
-                for tool_call in tool_calls
+                for tool_call_index, tool_call in enumerate(tool_calls)
                 for expanded_message in (
                     cast(
                         AllMessageValues,
-                        {**assistant_message, "tool_calls": [tool_call]},
+                        {
+                            **assistant_message,
+                            **({"content": None} if tool_call_index else {}),
+                            "tool_calls": [tool_call],
+                        },
                     ),
                     tool_results_by_id[cast(str, tool_call.get("id"))],
                 )

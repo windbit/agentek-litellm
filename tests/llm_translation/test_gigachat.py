@@ -103,7 +103,7 @@ class TestGigaChatMessageTransformation:
             {"role": "user", "content": "Weather in Moscow and Berlin?"},
             {
                 "role": "assistant",
-                "content": None,
+                "content": "Checking both cities.",
                 "tool_calls": [
                     {
                         "id": "call_1",
@@ -137,11 +137,48 @@ class TestGigaChatMessageTransformation:
             "function",
         ]
         assert result[1]["function_call"]["arguments"] == {"city": "Moscow"}
+        assert result[1]["content"] == "Checking both cities."
         assert result[2]["tool_call_id"] == "call_1"
         assert result[2]["content"] == '"Moscow: 15C"'
         assert result[3]["function_call"]["arguments"] == {"city": "Berlin"}
+        assert result[3]["content"] == ""
         assert result[4]["tool_call_id"] == "call_2"
         assert result[4]["content"] == '"Berlin: 18C"'
+
+    def test_parallel_tool_calls_without_all_results_keep_original_history(
+        self, config
+    ):
+        messages = [
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "get_weather",
+                            "arguments": '{"city": "Moscow"}',
+                        },
+                    },
+                    {
+                        "id": "call_2",
+                        "type": "function",
+                        "function": {
+                            "name": "get_weather",
+                            "arguments": '{"city": "Berlin"}',
+                        },
+                    },
+                ],
+            },
+            {"role": "tool", "tool_call_id": "call_1", "content": "Moscow: 15C"},
+        ]
+
+        result = config._transform_messages(messages)
+
+        assert [message["role"] for message in result] == ["assistant", "function"]
+        assert result[0]["function_call"]["arguments"] == {"city": "Moscow"}
+        assert result[1]["tool_call_id"] == "call_1"
 
     def test_none_content_becomes_empty_string(self, config):
         """None content should become empty string"""
