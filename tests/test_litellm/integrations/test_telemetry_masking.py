@@ -77,6 +77,31 @@ async def test_analyzer_failure_stops_the_span(rulebook, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_oversized_text_drops_span_without_analysis(rulebook, monkeypatch):
+    # Регресс (#1250): один сверхдлинный лист спана (накопленный контекст длинного хода
+    # агента) presidio отклоняет HTTP 500, а синхронный проход правил по нему топит
+    # event-loop колбэка — liveness шлюза падал, он уходил в рестарт-цикл на весь флот.
+    # Строку длиннее порога маскировщик обязан отвергнуть ДЁШЕВО: спан дропается, но ни
+    # движок правил, ни анализатор к ней не притрагиваются.
+    import litellm.integrations.telemetry_masking as tm
+
+    monkeypatch.setattr(tm, "MAX_TEXT_CHARS", 1000, raising=False)
+    masker = TelemetryMasker(
+        rulebook_path=rulebook, entities=["PERSON"], analyzer_base="http://analyzer"
+    )
+    analyzed: list = []
+
+    async def fake_analyze(text):
+        analyzed.append(text)
+        return []
+
+    masker._analyze_request = fake_analyze
+    with pytest.raises(TelemetryMaskingUnavailable):
+        await masker.mask({"content": "И" * 1001})
+    assert analyzed == []  # анализатор не вызван — отказ дешёвый, до сетевого обмена
+
+
+@pytest.mark.asyncio
 async def test_masking_is_independent_of_guardrails(rulebook, monkeypatch):
     # Ни одного включённого гардрейла — телеметрия всё равно маскируется.
     monkeypatch.delenv("LITELLM_TELEMETRY_MASKING", raising=False)

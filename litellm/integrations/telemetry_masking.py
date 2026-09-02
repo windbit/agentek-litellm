@@ -44,6 +44,14 @@ def _env_number(name: str, default: Any, cast: Any) -> Any:
 ANALYZE_TIMEOUT_SECONDS = _env_number("LITELLM_TELEMETRY_ANALYZE_TIMEOUT", 4.0, float)
 ANALYZE_MAX_CONCURRENCY = _env_number("LITELLM_TELEMETRY_MAX_CONCURRENCY", 8, int)
 
+# Presidio/spaCy не принимает ввод длиннее nlp.max_length (~1_000_000 символов) и отвечает
+# HTTP 500, а ещё до отказа синхронный проход правил и сериализация payload'а по такой строке
+# держат event-loop колбэка секунды. Единичного сверхдлинного листа спана (накопленный контекст
+# длинного браузерного/кодового хода агента) хватило, чтобы завалить liveness шлюза и загнать
+# его в рестарт-цикл на весь флот (#1250). Строку длиннее порога не маскируем: спан дропается
+# дёшево — как и без анализатора, но не тронув ни движок, ни HTTP, поэтому loop не встаёт.
+MAX_TEXT_CHARS = _env_number("LITELLM_TELEMETRY_MAX_TEXT_CHARS", 200_000, int)
+
 # Семафор привязан к event-loop, поэтому храним по одному на активный loop: в проде loop
 # один и живёт долго, в тестах на каждый прогон свой — общий инстанс тёк бы между loop'ами.
 _semaphores: "Dict[Any, asyncio.Semaphore]" = {}
@@ -180,6 +188,10 @@ class TelemetryMasker:
             raise TelemetryMaskingUnavailable("rulebook unusable")
         if not text.strip():
             return text
+        if len(text) > MAX_TEXT_CHARS:
+            raise TelemetryMaskingUnavailable(
+                f"text length {len(text)} exceeds {MAX_TEXT_CHARS}"
+            )
         spans: List[Dict[str, Any]] = []
         if self._engine is not None:
             spans.extend(self._engine.analyze(text))
