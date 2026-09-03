@@ -12,7 +12,7 @@
 
 import asyncio
 import os
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Protocol, Sequence
+from typing import Any, Awaitable, Callable, Dict, Iterator, List, Optional, Protocol, Sequence, Tuple
 
 from litellm._logging import verbose_logger
 from litellm.proxy.guardrails.guardrail_hooks.pii_rules import (
@@ -43,10 +43,19 @@ def _env_number(name: str, default: Any, cast: Any) -> Any:
 ANALYZE_TIMEOUT_SECONDS = _env_number("LITELLM_TELEMETRY_ANALYZE_TIMEOUT", 4.0, float)
 ANALYZE_MAX_CONCURRENCY = _env_number("LITELLM_TELEMETRY_MAX_CONCURRENCY", 8, int)
 MAX_TEXT_CHARS = _env_number("LITELLM_TELEMETRY_MAX_TEXT_CHARS", 200_000, int)
+MAX_SPAN_TEXT_CHARS = _env_number(
+    "LITELLM_TELEMETRY_MAX_SPAN_TEXT_CHARS", MAX_TEXT_CHARS, int
+)
+MAX_SPAN_TEXTS = _env_number("LITELLM_TELEMETRY_MAX_SPAN_TEXTS", 256, int)
+# ponytail: serializes masking per event loop; raise this cap if telemetry throughput requires it.
+MASKING_MAX_CONCURRENCY = max(
+    1, _env_number("LITELLM_TELEMETRY_MASKING_MAX_CONCURRENCY", 1, int)
+)
 
 # Семафор привязан к event-loop, поэтому храним по одному на активный loop: в проде loop
 # один и живёт долго, в тестах на каждый прогон свой — общий инстанс тёк бы между loop'ами.
 _semaphores: "Dict[Any, asyncio.Semaphore]" = {}
+_masking_semaphores: "Dict[Any, asyncio.Semaphore]" = {}
 
 
 def _analyze_semaphore() -> asyncio.Semaphore:
@@ -55,6 +64,15 @@ def _analyze_semaphore() -> asyncio.Semaphore:
     if sem is None:
         sem = asyncio.Semaphore(ANALYZE_MAX_CONCURRENCY)
         _semaphores[loop] = sem
+    return sem
+
+
+def _masking_semaphore() -> asyncio.Semaphore:
+    loop = asyncio.get_running_loop()
+    sem = _masking_semaphores.get(loop)
+    if sem is None:
+        sem = asyncio.Semaphore(MASKING_MAX_CONCURRENCY)
+        _masking_semaphores[loop] = sem
     return sem
 
 
@@ -88,8 +106,23 @@ class TelemetryTextTooLarge(TelemetryMaskingUnavailable):
     reason = "text_too_large"
 
 
+class TelemetrySpanTooLarge(TelemetryMaskingUnavailable):
+    reason = "span_too_large"
+
+
 class RuleEngine(Protocol):
     def analyze(self, text: str) -> List[Dict[str, Any]]: ...
+
+
+def _iter_texts(value: Any) -> Iterator[str]:
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for item in list(value.values()):
+            yield from _iter_texts(item)
+    elif isinstance(value, (list, tuple)):
+        for item in list(value):
+            yield from _iter_texts(item)
 
 
 def _env_flag(name: str, default: bool) -> bool:
@@ -157,6 +190,31 @@ class TelemetryMasker:
     def configured(self) -> bool:
         return self.enabled and (self._broken or bool(self._engine or self.analyzer_base))
 
+    async def mask_span(self, *values: Any) -> Tuple[Any, ...]:
+        self._assert_span_within_budget(values)
+        cache: Dict[str, str] = {}
+        async with _masking_semaphore():
+            return tuple([await self.mask(value, cache) for value in values])
+
+    @staticmethod
+    def _assert_span_within_budget(values: Sequence[Any]) -> None:
+        unique_texts: set[str] = set()
+        total_chars = 0
+        for value in values:
+            for text in _iter_texts(value):
+                if text in unique_texts:
+                    continue
+                unique_texts.add(text)
+                total_chars += len(text)
+                if len(unique_texts) > MAX_SPAN_TEXTS:
+                    raise TelemetrySpanTooLarge(
+                        f"span has more than {MAX_SPAN_TEXTS} unique text values"
+                    )
+                if total_chars > MAX_SPAN_TEXT_CHARS:
+                    raise TelemetrySpanTooLarge(
+                        f"span text length {total_chars} exceeds {MAX_SPAN_TEXT_CHARS}"
+                    )
+
     async def mask(self, value: Any, cache: Optional[Dict[str, str]] = None) -> Any:
         """Рекурсивно маскирует строки в структуре спана, сохраняя её форму.
 
@@ -166,8 +224,8 @@ class TelemetryMasker:
         complete_streaming_response), поэтому без дедупа mask() рекурсивно анализирует
         каждую копию заново — десятки лишних вызовов analyzer и лишних аллокаций на спан.
         Под живым потоком это и есть остаточный рост RSS до OOM после того, как утечки
-        сессий и dict-changed уже закрыты (#1206). Кэш строится на вызов и передаётся
-        обоим mask() в колбэке, так что общая нагрузка спана анализируется по разу.
+        сессий и dict-changed уже закрыты (#1206). Кэш строит mask_span() и передаёт
+        обоим значениям спана, так что общая нагрузка анализируется по разу.
         """
         if cache is None:
             cache = {}

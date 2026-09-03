@@ -1,4 +1,5 @@
 import asyncio
+from typing import NoReturn
 
 import pytest
 
@@ -6,6 +7,7 @@ from litellm.integrations.telemetry_masking import (
     MAX_TEXT_CHARS,
     TelemetryMasker,
     TelemetryMaskingUnavailable,
+    TelemetrySpanTooLarge,
     TelemetryTextTooLarge,
 )
 
@@ -102,6 +104,75 @@ async def test_oversized_text_drops_span_without_analysis():
 async def test_oversized_blank_text_drops_span():
     with pytest.raises(TelemetryTextTooLarge):
         await TelemetryMasker(entities=[]).mask({"content": " " * (MAX_TEXT_CHARS + 1)})
+
+
+@pytest.mark.asyncio
+async def test_span_budget_drops_many_subthreshold_messages_without_analysis():
+    class FailingRuleEngine:
+        def analyze(self, text: str) -> NoReturn:
+            raise AssertionError("rule engine must not run")
+
+    async def fail_analyze(text: str) -> NoReturn:
+        raise AssertionError("analyzer must not run")
+
+    masker = TelemetryMasker(
+        entities=["PERSON"],
+        analyzer_base="http://analyzer",
+        rule_engine=FailingRuleEngine(),
+        analyze_request=fail_analyze,
+    )
+    chunks = [char * 60_000 for char in "abcd"]
+    kwargs = {"messages": [{"content": chunk} for chunk in chunks]}
+
+    with pytest.raises(TelemetrySpanTooLarge) as error:
+        await masker.mask_span(kwargs, {"response": chunks[0]})
+    assert error.value.reason == "span_too_large"
+
+
+@pytest.mark.asyncio
+async def test_span_budget_drops_too_many_short_texts_without_analysis(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    import litellm.integrations.telemetry_masking as tm
+
+    class FailingRuleEngine:
+        def analyze(self, text: str) -> NoReturn:
+            raise AssertionError("rule engine must not run")
+
+    monkeypatch.setattr(tm, "MAX_SPAN_TEXTS", 2)
+    masker = TelemetryMasker(entities=[], rule_engine=FailingRuleEngine())
+
+    with pytest.raises(TelemetrySpanTooLarge):
+        await masker.mask_span({"messages": ["a", "b", "c"]})
+
+
+@pytest.mark.asyncio
+async def test_span_masking_serializes_analysis():
+    started = asyncio.Event()
+    release = asyncio.Event()
+    active = 0
+    max_active = 0
+
+    async def analyze(text: str) -> list[dict[str, object]]:
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        started.set()
+        await release.wait()
+        active -= 1
+        return []
+
+    masker = TelemetryMasker(
+        entities=["PERSON"], analyzer_base="http://analyzer", analyze_request=analyze
+    )
+    first = asyncio.create_task(masker.mask_span({"content": "one"}))
+    await started.wait()
+    second = asyncio.create_task(masker.mask_span({"content": "two"}))
+    await asyncio.sleep(0)
+    assert max_active == 1
+
+    release.set()
+    await asyncio.gather(first, second)
 
 
 @pytest.mark.asyncio
@@ -251,9 +322,7 @@ async def test_mask_deduplicates_repeated_strings(rulebook):
 
 
 @pytest.mark.asyncio
-async def test_mask_shared_cache_dedups_across_calls(rulebook):
-    # Ответ лежит и в kwargs, и в response_obj; общий кэш на оба вызова mask()
-    # анализирует его текст по разу (langfuse_otel передаёт один кэш обоим).
+async def test_mask_span_deduplicates_across_values(rulebook):
     masker = build(rulebook)
     calls = []
     original = masker._mask_text
@@ -264,10 +333,12 @@ async def test_mask_shared_cache_dedups_across_calls(rulebook):
 
     masker._mask_text = counting
     response = "ИНН 500100732259 в ответе"
-    cache: dict = {}
-    await masker.mask({"response": response}, cache)
-    await masker.mask({"choices": [{"text": response}]}, cache)
+    kwargs, response_obj = await masker.mask_span(
+        {"response": response}, {"choices": [{"text": response}]}
+    )
     assert calls.count(response) == 1
+    assert "500100732259" not in kwargs["response"]
+    assert "500100732259" not in response_obj["choices"][0]["text"]
 
 
 @pytest.mark.asyncio
