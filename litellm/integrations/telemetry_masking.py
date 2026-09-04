@@ -45,10 +45,6 @@ def _env_number(name: str, default: Any, cast: Any) -> Any:
 ANALYZE_TIMEOUT_SECONDS = _env_number("LITELLM_TELEMETRY_ANALYZE_TIMEOUT", 4.0, float)
 ANALYZE_MAX_CONCURRENCY = _env_number("LITELLM_TELEMETRY_MAX_CONCURRENCY", 8, int)
 MAX_TEXT_CHARS = _env_number("LITELLM_TELEMETRY_MAX_TEXT_CHARS", 200_000, int)
-# Потолок очереди к анализатору. Семафор ограничивает одновременность, но не число ждущих:
-# пока анализатор не поспевает, задачи копятся, каждая держит свой текст, и RSS растёт до
-# лимита контейнера. Ждущих сверх потолка отбрасываем сразу — спан дороже не стоит.
-MAX_WAITING = _env_number("LITELLM_TELEMETRY_MAX_WAITING", 64, int)
 # Разбор одного текста между спанами. Колбэк логирования получает ВСЮ переписку на каждом
 # ходу, поэтому без кэша системный промпт и старые сообщения уезжают в анализатор заново
 # столько раз, сколько было ходов, — стоимость хода растёт вместе с историей.
@@ -57,7 +53,6 @@ SPAN_CACHE_SIZE = _env_number("LITELLM_TELEMETRY_SPAN_CACHE", 5000, int)
 # Семафор привязан к event-loop, поэтому храним по одному на активный loop: в проде loop
 # один и живёт долго, в тестах на каждый прогон свой — общий инстанс тёк бы между loop'ами.
 _semaphores: "Dict[Any, asyncio.Semaphore]" = {}
-_waiting: "Dict[Any, int]" = {}
 
 
 def _analyze_semaphore() -> asyncio.Semaphore:
@@ -245,10 +240,6 @@ class TelemetryMasker:
         base = self.analyzer_base or ""
         url = f"{base.rstrip('/')}/analyze"
         payload = {"text": text, "language": self.language, "entities": self.entities}
-        loop = asyncio.get_running_loop()
-        if _waiting.get(loop, 0) >= MAX_WAITING:
-            raise TelemetryMaskingUnavailable("analyzer backlog is full")
-        _waiting[loop] = _waiting.get(loop, 0) + 1
         try:
             async with _analyze_semaphore():
                 session = _analyze_session()
@@ -265,8 +256,6 @@ class TelemetryMasker:
             raise TelemetryMaskingUnavailable(
                 f"analyzer unreachable: {type(err).__name__}"
             ) from err
-        finally:
-            _waiting[loop] = _waiting.get(loop, 1) - 1
         if not isinstance(body, list):
             raise TelemetryMaskingUnavailable("analyzer returned an unexpected shape")
         return [item for item in body if isinstance(item, dict)]

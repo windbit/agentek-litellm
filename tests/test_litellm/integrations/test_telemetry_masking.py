@@ -339,16 +339,3 @@ async def test_cache_key_separates_entity_sets(rulebook):
 
     assert len(calls) == 2  # разный состав сущностей — разный ключ, общий кэш не применим
 
-
-@pytest.mark.asyncio
-async def test_backlog_full_drops_span_instead_of_queueing(rulebook, monkeypatch):
-    # Предохранитель: пока анализатор не поспевает, ждущие задачи держат свои тексты и
-    # растят RSS до OOM. Сверх потолка спан отбрасывается, ход при этом цел.
-    from litellm.integrations import telemetry_masking as tm
-
-    monkeypatch.setattr(tm, "MAX_WAITING", 0)
-    masker = TelemetryMasker(
-        rulebook_path=rulebook, entities=["PERSON"], analyzer_base="http://analyzer",
-    )
-    with pytest.raises(TelemetryMaskingUnavailable):
-        await masker._analyze_request("Иванов Иван Иванович")
