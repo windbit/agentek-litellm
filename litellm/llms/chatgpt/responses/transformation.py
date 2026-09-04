@@ -114,6 +114,16 @@ class ChatGPTResponsesAPIConfig(OpenAIResponsesAPIConfig):
             include.append("reasoning.encrypted_content")
         request["include"] = include
 
+        # Codex (ChatGPT-subscription) responses accept reasoning.mode "standard"
+        # only; "pro" needs a ChatGPT Pro entitlement these accounts lack, so the
+        # backend rejects it with "reasoning.mode is not supported with this model".
+        # Clients pin it unconditionally — opencode's gpt-5.6 "pro" model variant
+        # bakes reasoning.mode=pro into the request body — so clamp it down here to
+        # keep reasoning on without failing the call. Refs windbit/issues#1265.
+        reasoning = request.get("reasoning")
+        if isinstance(reasoning, dict) and reasoning.get("mode") == "pro":
+            request["reasoning"] = {**reasoning, "mode": "standard"}
+
         allowed_keys = {
             "model",
             "input",

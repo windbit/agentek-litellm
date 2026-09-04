@@ -210,6 +210,32 @@ class TestChatGPTResponsesAPITransformation:
             "function": {"name": "hello"},
         }
 
+    def test_chatgpt_clamps_reasoning_mode_pro_to_standard(self):
+        # ChatGPT-subscription codex rejects reasoning.mode=pro (no Pro entitlement);
+        # clients pin it unconditionally, so it must be clamped. Refs windbit/issues#1265.
+        config = ChatGPTResponsesAPIConfig()
+        request = config.transform_responses_api_request(
+            model="chatgpt/gpt-5.6-terra",
+            input="hi",
+            response_api_optional_request_params={
+                "reasoning": {"mode": "pro", "summary": "auto"}
+            },
+            litellm_params=GenericLiteLLMParams(),
+            headers={},
+        )
+        assert request["reasoning"] == {"mode": "standard", "summary": "auto"}
+
+    def test_chatgpt_preserves_supported_reasoning_mode(self):
+        config = ChatGPTResponsesAPIConfig()
+        request = config.transform_responses_api_request(
+            model="chatgpt/gpt-5.6-terra",
+            input="hi",
+            response_api_optional_request_params={"reasoning": {"mode": "standard"}},
+            litellm_params=GenericLiteLLMParams(),
+            headers={},
+        )
+        assert request["reasoning"] == {"mode": "standard"}
+
     @pytest.mark.parametrize(
         ("model_name", "response_model"),
         [
