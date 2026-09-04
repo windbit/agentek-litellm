@@ -45,9 +45,8 @@ def _env_number(name: str, default: Any, cast: Any) -> Any:
 ANALYZE_TIMEOUT_SECONDS = _env_number("LITELLM_TELEMETRY_ANALYZE_TIMEOUT", 4.0, float)
 ANALYZE_MAX_CONCURRENCY = _env_number("LITELLM_TELEMETRY_MAX_CONCURRENCY", 8, int)
 MAX_TEXT_CHARS = _env_number("LITELLM_TELEMETRY_MAX_TEXT_CHARS", 200_000, int)
-# Разбор одного текста между спанами. Колбэк логирования получает ВСЮ переписку на каждом
-# ходу, поэтому без кэша системный промпт и старые сообщения уезжают в анализатор заново
-# столько раз, сколько было ходов, — стоимость хода растёт вместе с историей.
+# Колбэк получает всю переписку на каждом ходу: без кэша старые сообщения уходят
+# в анализатор заново столько раз, сколько было ходов.
 SPAN_CACHE_SIZE = _env_number("LITELLM_TELEMETRY_SPAN_CACHE", 5000, int)
 
 # Семафор привязан к event-loop, поэтому храним по одному на активный loop: в проде loop
