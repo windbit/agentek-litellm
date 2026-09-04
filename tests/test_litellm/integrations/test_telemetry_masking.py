@@ -296,3 +296,43 @@ async def test_analyze_request_survives_outer_cancellation(rulebook):
         await task
     # Запрос обязан докрутиться, несмотря на отмену вызывающего.
     await asyncio.wait_for(completed.wait(), timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_analysis_is_cached_between_spans(rulebook):
+    # Каждый ход несёт всю историю: без кэша между спанами она разбирается заново.
+    calls = []
+
+    async def counting_analyze(text):
+        calls.append(text)
+        return []
+
+    masker = TelemetryMasker(
+        rulebook_path=rulebook, entities=["PERSON"], analyzer_base="http://analyzer",
+        analyze_request=counting_analyze,
+    )
+    history = "Договорились с Ивановым Иваном Ивановичем по заявке 42."
+    for turn in range(5):
+        await masker.mask({"messages": [{"content": history}, {"content": f"ход {turn}"}]})
+
+    assert calls.count(history) == 1
+
+
+@pytest.mark.asyncio
+async def test_cache_key_separates_entity_sets(rulebook):
+    calls = []
+
+    async def counting_analyze(text):
+        calls.append(text)
+        return []
+
+    text = "Иванов Иван Иванович"
+    for entities in (["PERSON"], ["PERSON", "EMAIL_ADDRESS"]):
+        masker = TelemetryMasker(
+            rulebook_path=rulebook, entities=entities, analyzer_base="http://analyzer",
+            analyze_request=counting_analyze,
+        )
+        await masker.mask({"messages": [{"content": text}]})
+
+    assert len(calls) == 2  # разный состав сущностей — разный ключ, общий кэш не применим
+

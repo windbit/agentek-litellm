@@ -11,6 +11,8 @@
 """
 
 import asyncio
+import hashlib
+from collections import OrderedDict
 import os
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Protocol, Sequence
 
@@ -43,6 +45,9 @@ def _env_number(name: str, default: Any, cast: Any) -> Any:
 ANALYZE_TIMEOUT_SECONDS = _env_number("LITELLM_TELEMETRY_ANALYZE_TIMEOUT", 4.0, float)
 ANALYZE_MAX_CONCURRENCY = _env_number("LITELLM_TELEMETRY_MAX_CONCURRENCY", 8, int)
 MAX_TEXT_CHARS = _env_number("LITELLM_TELEMETRY_MAX_TEXT_CHARS", 200_000, int)
+# Колбэк получает всю переписку на каждом ходу: без кэша старые сообщения уходят
+# в анализатор заново столько раз, сколько было ходов.
+SPAN_CACHE_SIZE = _env_number("LITELLM_TELEMETRY_SPAN_CACHE", 5000, int)
 
 # Семафор привязан к event-loop, поэтому храним по одному на активный loop: в проде loop
 # один и живёт долго, в тестах на каждый прогон свой — общий инстанс тёк бы между loop'ами.
@@ -140,6 +145,7 @@ class TelemetryMasker:
         )
         self._engine = rule_engine
         self._analyze_request_fn = analyze_request
+        self._span_cache: "OrderedDict[str, List[Dict[str, Any]]]" = OrderedDict()
         self._broken = False
         if self.rulebook_path and self._engine is None:
             try:
@@ -213,7 +219,21 @@ class TelemetryMasker:
         # (собственный ANALYZE_TIMEOUT его всё равно ограничивает), aiohttp освобождает
         # соединение штатно, а отмена доходит до вызывающего сразу — спан дропается как и был.
         request = self._analyze_request_fn or self._analyze_request
-        return await asyncio.shield(request(text))
+        key = self._span_cache_key(text)
+        cached = self._span_cache.get(key)
+        if cached is not None:
+            self._span_cache.move_to_end(key)
+            return list(cached)
+        spans = await asyncio.shield(request(text))
+        self._span_cache[key] = list(spans)
+        while len(self._span_cache) > SPAN_CACHE_SIZE:
+            self._span_cache.popitem(last=False)
+        return list(spans)
+
+    def _span_cache_key(self, text: str) -> str:
+        # Язык и состав сущностей — часть ключа: с другим набором тот же текст разбирается иначе.
+        head = f"{self.language}|{','.join(sorted(self.entities))}|".encode()
+        return hashlib.sha256(head + text.encode()).hexdigest()
 
     async def _analyze_request(self, text: str) -> List[Dict[str, Any]]:
         base = self.analyzer_base or ""
