@@ -296,3 +296,59 @@ async def test_analyze_request_survives_outer_cancellation(rulebook):
         await task
     # Запрос обязан докрутиться, несмотря на отмену вызывающего.
     await asyncio.wait_for(completed.wait(), timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_analysis_is_cached_between_spans(rulebook):
+    # Колбэк логирования получает всю переписку на каждом ходу, поэтому без кэша между
+    # спанами системный промпт и старые сообщения разбираются заново столько раз, сколько
+    # было ходов: стоимость хода растёт вместе с историей, а телеметрийный анализатор
+    # уходит в потолок при копеечном трафике.
+    calls = []
+
+    async def counting_analyze(text):
+        calls.append(text)
+        return []
+
+    masker = TelemetryMasker(
+        rulebook_path=rulebook, entities=["PERSON"], analyzer_base="http://analyzer",
+        analyze_request=counting_analyze,
+    )
+    history = "Договорились с Ивановым Иваном Ивановичем по заявке 42."
+    for turn in range(5):
+        await masker.mask({"messages": [{"content": history}, {"content": f"ход {turn}"}]})
+
+    assert calls.count(history) == 1
+
+
+@pytest.mark.asyncio
+async def test_cache_key_separates_entity_sets(rulebook):
+    calls = []
+
+    async def counting_analyze(text):
+        calls.append(text)
+        return []
+
+    text = "Иванов Иван Иванович"
+    for entities in (["PERSON"], ["PERSON", "EMAIL_ADDRESS"]):
+        masker = TelemetryMasker(
+            rulebook_path=rulebook, entities=entities, analyzer_base="http://analyzer",
+            analyze_request=counting_analyze,
+        )
+        await masker.mask({"messages": [{"content": text}]})
+
+    assert len(calls) == 2  # разный состав сущностей — разный ключ, общий кэш не применим
+
+
+@pytest.mark.asyncio
+async def test_backlog_full_drops_span_instead_of_queueing(rulebook, monkeypatch):
+    # Предохранитель: пока анализатор не поспевает, ждущие задачи держат свои тексты и
+    # растят RSS до OOM. Сверх потолка спан отбрасывается, ход при этом цел.
+    from litellm.integrations import telemetry_masking as tm
+
+    monkeypatch.setattr(tm, "MAX_WAITING", 0)
+    masker = TelemetryMasker(
+        rulebook_path=rulebook, entities=["PERSON"], analyzer_base="http://analyzer",
+    )
+    with pytest.raises(TelemetryMaskingUnavailable):
+        await masker._analyze_request("Иванов Иван Иванович")
