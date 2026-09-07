@@ -212,7 +212,7 @@ async def test_mask_tolerates_concurrent_source_mutation(rulebook):
     payload = {"a": "x", "b": "y", "c": "z"}
     original = masker._mask_text
 
-    async def mutating(text):
+    async def mutating(text, analyze=True):
         payload.pop("c", None)  # конкуррентная мутация источника во время await
         return await original(text)
 
@@ -232,9 +232,9 @@ async def test_mask_deduplicates_repeated_strings(rulebook):
     calls = []
     original = masker._mask_text
 
-    async def counting(text):
+    async def counting(text, analyze=True):
         calls.append(text)
-        return await original(text)
+        return await original(text, analyze)
 
     masker._mask_text = counting
     secret = "ключ AKIA0123456789ABCDEF в конфиге"
@@ -258,9 +258,9 @@ async def test_mask_shared_cache_dedups_across_calls(rulebook):
     calls = []
     original = masker._mask_text
 
-    async def counting(text):
+    async def counting(text, analyze=True):
         calls.append(text)
-        return await original(text)
+        return await original(text, analyze)
 
     masker._mask_text = counting
     response = "ИНН 500100732259 в ответе"
@@ -289,7 +289,7 @@ async def test_analyze_request_survives_outer_cancellation(rulebook):
         return []
 
     masker._analyze_request = fake_request
-    task = asyncio.create_task(masker.mask({"m": "Иван Петров"}))
+    task = asyncio.create_task(masker.mask({"content": "Иван Петров"}))
     await started.wait()
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -336,3 +336,78 @@ async def test_cache_key_separates_entity_sets(rulebook):
 
     assert len(calls) == 2  # разный состав сущностей — разный ключ, общий кэш не применим
 
+
+
+@pytest.mark.asyncio
+async def test_analyzer_sees_only_conversation_text(rulebook):
+    calls = []
+
+    async def counting_analyze(text):
+        calls.append(text)
+        return []
+
+    masker = TelemetryMasker(
+        rulebook_path=rulebook, entities=["PERSON"], analyzer_base="http://analyzer",
+        analyze_request=counting_analyze,
+    )
+    await masker.mask(
+        {
+            "model": "openai/mock",
+            "litellm_call_id": "dc89fe9f-dd1a-404b-a23f-ffb53a07a421",
+            "optional_params": {"supported": ["frequency_penalty", "logit_bias"]},
+            "messages": [{"content": "Позвони Ивану завтра"}],
+        }
+    )
+
+    assert calls == ["Позвони Ивану завтра"]
+
+
+@pytest.mark.asyncio
+async def test_rules_still_run_outside_conversation(rulebook):
+    async def fail_if_called(text):
+        raise AssertionError(f"анализатор не должен звучать вне переписки: {text!r}")
+
+    masker = TelemetryMasker(
+        rulebook_path=rulebook, entities=["PERSON"], analyzer_base="http://analyzer",
+        analyze_request=fail_if_called,
+    )
+    masked = await masker.mask({"litellm_params": {"api_key": "AKIA0123456789ABCDEF"}})
+
+    assert masked["litellm_params"]["api_key"] == "<API_KEY_1>"
+
+
+@pytest.mark.asyncio
+async def test_response_obj_is_marked_as_conversation(rulebook):
+    calls = []
+
+    async def counting_analyze(text):
+        calls.append(text)
+        return []
+
+    masker = TelemetryMasker(
+        rulebook_path=rulebook, entities=["PERSON"], analyzer_base="http://analyzer",
+        analyze_request=counting_analyze,
+    )
+    await masker.mask("Ответ для Ивана", content=True)
+
+    assert calls == ["Ответ для Ивана"]
+
+
+@pytest.mark.asyncio
+async def test_same_text_outside_conversation_does_not_poison_cache(rulebook):
+    calls = []
+
+    async def counting_analyze(text):
+        calls.append(text)
+        return [{"start": 0, "end": 4, "entity_type": "PERSON", "score": 0.9}]
+
+    masker = TelemetryMasker(
+        rulebook_path=rulebook, entities=["PERSON"], analyzer_base="http://analyzer",
+        analyze_request=counting_analyze,
+    )
+    shared: dict = {}
+    text = "Иван договорился о встрече"
+    await masker.mask({"metadata": {"note": text}}, shared)
+    masked = await masker.mask({"messages": [{"content": text}]}, shared)
+
+    assert masked["messages"][0]["content"].startswith("<PERSON_1>")
