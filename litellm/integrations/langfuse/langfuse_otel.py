@@ -55,7 +55,8 @@ class LangfuseOtelLogger(OpenTelemetry):
                 # так что общий кэш анализирует его текст по разу, а не дважды (#1206).
                 mask_cache: dict = {}
                 kwargs = await masker.mask(kwargs, mask_cache)
-                response_obj = await masker.mask(response_obj, mask_cache)
+                # response_obj — ответ модели целиком, без обёртки с ключом: помечаем перепиской явно.
+                response_obj = await masker.mask(response_obj, mask_cache, content=True)
             except TelemetryMaskingUnavailable as err:
                 # Спан наполовину замаскированный хуже отсутствующего: он выглядит обработанным.
                 verbose_logger.warning(

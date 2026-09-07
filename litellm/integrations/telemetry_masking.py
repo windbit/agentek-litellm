@@ -25,6 +25,24 @@ from litellm.proxy.guardrails.guardrail_hooks.pii_rules import (
 
 DEFAULT_GROUPS = ("personal_data", "names", "secrets")
 DEFAULT_ENTITIES = ("PERSON",)
+# Ключи payload'а спана, под которыми лежит переписка. Языковой слой ходит по сети и ищет
+# только имена в свободном тексте, а он бывает лишь здесь: остальное — идентификаторы,
+# заголовки и имена параметров вызова, и на них анализатор тратится впустую.
+CONTENT_KEYS = frozenset({
+    "arguments",
+    "choices",
+    "complete_streaming_response",
+    "completion",
+    "content",
+    "error_str",
+    "input",
+    "messages",
+    "original_response",
+    "output",
+    "prompt",
+    "response",
+    "text",
+})
 
 
 def _env_number(name: str, default: Any, cast: Any) -> Any:
@@ -114,9 +132,10 @@ def _env_list(name: str, default: Sequence[str]) -> List[str]:
 class TelemetryMasker:
     """Два слоя над строками спана: детерминированные правила и языковой анализ.
 
-    Языковой слой обязателен: правила берут только канонические ФИО, а обращение по имени,
-    редкие и иностранные имена держатся на анализаторе. Поэтому его недоступность —
-    не повод отправить спан «как получилось».
+    Правила идут по всему payload'у, языковой анализ — только по переписке (`CONTENT_KEYS`).
+    Языковой слой обязателен там, где он применяется: правила берут только канонические ФИО,
+    а обращение по имени, редкие и иностранные имена держатся на анализаторе. Поэтому его
+    недоступность — не повод отправить спан «как получилось».
     """
 
     def __init__(
@@ -163,7 +182,12 @@ class TelemetryMasker:
     def configured(self) -> bool:
         return self.enabled and (self._broken or bool(self._engine or self.analyzer_base))
 
-    async def mask(self, value: Any, cache: Optional[Dict[str, str]] = None) -> Any:
+    async def mask(
+        self,
+        value: Any,
+        cache: Optional[Dict[Any, str]] = None,
+        content: bool = False,
+    ) -> Any:
         """Рекурсивно маскирует строки в структуре спана, сохраняя её форму.
 
         `cache` дедуплицирует маскирование одинаковых строк в пределах одного спана.
@@ -174,27 +198,37 @@ class TelemetryMasker:
         Под живым потоком это и есть остаточный рост RSS до OOM после того, как утечки
         сессий и dict-changed уже закрыты (#1206). Кэш строится на вызов и передаётся
         обоим mask() в колбэке, так что общая нагрузка спана анализируется по разу.
+
+        `content` помечает поддерево как переписку: под ним работает языковой слой, а ниже
+        флаг наследуется. Значение, приходящее без обёртки с ключом из `CONTENT_KEYS`
+        (ответ модели в колбэке), вызывающий помечает сам.
         """
         if cache is None:
             cache = {}
         if isinstance(value, str):
-            masked = cache.get(value)
+            # Режим — часть ключа: одна и та же строка вне переписки маскируется слабее,
+            # и без этого её результат подменил бы разбор той же строки внутри переписки.
+            key = (content, value)
+            masked = cache.get(key)
             if masked is None:
-                masked = await self._mask_text(value)
-                cache[value] = masked
+                masked = await self._mask_text(value, analyze=content)
+                cache[key] = masked
             return masked
         # Снимок контейнера до async-итерации: mask рекурсивно await'ит, уступая loop
         # другим success-колбэкам, а litellm параллельно мутирует живой блок логирования
         # (model_call_details) — итерация по нему на месте падает "dictionary changed size
         # during iteration" и роняет спан (#1206).
         if isinstance(value, dict):
-            return {key: await self.mask(item, cache) for key, item in list(value.items())}
+            return {
+                key: await self.mask(item, cache, content or key in CONTENT_KEYS)
+                for key, item in list(value.items())
+            }
         if isinstance(value, (list, tuple)):
-            masked_items = [await self.mask(item, cache) for item in list(value)]
+            masked_items = [await self.mask(item, cache, content) for item in list(value)]
             return type(value)(masked_items) if isinstance(value, tuple) else masked_items
         return value
 
-    async def _mask_text(self, text: str) -> str:
+    async def _mask_text(self, text: str, analyze: bool = True) -> str:
         if self._broken:
             raise TelemetryMaskingUnavailable("rulebook unusable")
         if len(text) > MAX_TEXT_CHARS:
@@ -206,7 +240,7 @@ class TelemetryMasker:
         spans: List[Dict[str, Any]] = []
         if self._engine is not None:
             spans.extend(self._engine.analyze(text))
-        if self.entities and self.analyzer_base:
+        if analyze and self.entities and self.analyzer_base:
             spans.extend(await self._analyze(text))
         return self._replace(text, spans)
 
