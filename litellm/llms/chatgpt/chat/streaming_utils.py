@@ -21,7 +21,7 @@ class ChatGPTToolCallNormalizer:
     """
 
     def __init__(self, stream: Any):
-        self._stream = stream
+        self.wrapped_stream = stream
         self._seen_ids: Dict[str, int] = {}  # tool_call_id -> assigned_index
         self._next_index: int = 0
         self._last_id: Optional[str] = (
@@ -29,7 +29,7 @@ class ChatGPTToolCallNormalizer:
         )
 
     def __getattr__(self, name: str) -> Any:
-        return getattr(self._stream, name)
+        return getattr(self.wrapped_stream, name)
 
     def __iter__(self):
         return self
@@ -39,14 +39,14 @@ class ChatGPTToolCallNormalizer:
 
     def __next__(self):
         while True:
-            chunk = next(self._stream)
+            chunk = next(self.wrapped_stream)
             result = self._normalize(chunk)
             if result is not None:
                 return result
 
     async def __anext__(self):
         while True:
-            chunk = await self._stream.__anext__()
+            chunk = await self.wrapped_stream.__anext__()
             result = self._normalize(chunk)
             if result is not None:
                 return result

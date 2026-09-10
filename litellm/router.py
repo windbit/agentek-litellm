@@ -59,6 +59,8 @@ from litellm.constants import (
     DEFAULT_HEALTH_CHECK_INTERVAL,
     DEFAULT_HEALTH_CHECK_STALENESS_MULTIPLIER,
     DEFAULT_MAX_LRU_CACHE_SIZE,
+    STREAM_FIRST_CHUNK_RETRY_BASE_DELAY_SECONDS,
+    STREAM_FIRST_CHUNK_RETRY_MAX_DELAY_SECONDS,
 )
 from litellm.integrations.custom_logger import CustomLogger
 from litellm.litellm_core_utils.asyncify import run_async_function
@@ -211,6 +213,7 @@ if TYPE_CHECKING:
     from litellm.responses.streaming_iterator import (
         BaseResponsesAPIStreamingIterator,
     )
+    from litellm.exceptions import MidStreamFallbackError
     from litellm.types.llms.base import BaseLiteLLMOpenAIResponseObject
     from litellm.types.llms.openai import (
         ResponseAPIUsage,
@@ -1951,7 +1954,7 @@ class Router:
 
             # Wrap streaming responses so MidStreamFallbackError (raised
             # during iteration) triggers the Router's fallback chain.
-            if isinstance(response, CustomStreamWrapper):
+            if self._is_completion_stream(response):
                 return self._completion_streaming_iterator(
                     model_response=response,
                     messages=messages,
@@ -2232,6 +2235,7 @@ class Router:
                         # the original messages — adding a continuation prompt
                         # would waste tokens and confuse the model.
                         initial_kwargs["messages"] = messages
+                        self._set_failed_stream_deployment_id(e, model_response)
                     else:
                         initial_kwargs["messages"] = messages + [
                             {
@@ -2247,18 +2251,31 @@ class Router:
                     self._update_kwargs_before_fallbacks(
                         model=model_group, kwargs=initial_kwargs
                     )
-                    fallback_response = (
-                        await self.async_function_with_fallbacks_common_utils(
-                            e=e,
-                            disable_fallbacks=False,
-                            fallbacks=fallbacks,
-                            context_window_fallbacks=context_window_fallbacks,
-                            content_policy_fallbacks=content_policy_fallbacks,
-                            model_group=model_group,
-                            args=(),
-                            kwargs=initial_kwargs,
+                    try:
+                        fallback_response = (
+                            await self.async_function_with_fallbacks_common_utils(
+                                e=e,
+                                disable_fallbacks=False,
+                                fallbacks=fallbacks,
+                                context_window_fallbacks=context_window_fallbacks,
+                                content_policy_fallbacks=content_policy_fallbacks,
+                                model_group=model_group,
+                                args=(),
+                                kwargs=initial_kwargs,
+                            )
                         )
-                    )
+                    except (
+                        openai.APIError,
+                        RouterRateLimitError,
+                        RouterRateLimitErrorBasic,
+                    ):
+                        if not self._can_retry_stream_before_first_chunk(
+                            e, initial_kwargs
+                        ):
+                            raise
+                        fallback_response = await self._retry_stream_before_first_chunk(
+                            initial_kwargs
+                        )
 
                     # If fallback returns a streaming response, iterate over it
                     if hasattr(fallback_response, "__aiter__"):
@@ -2658,7 +2675,7 @@ class Router:
                         # No content generated before the error — retry with the
                         # original input. Adding a continuation prompt would
                         # waste tokens and confuse the model.
-                        pass
+                        self._set_failed_stream_deployment_id(e, source_iterator)
                     else:
                         initial_kwargs["input"] = (
                             Router._build_responses_continuation_input(
@@ -3030,7 +3047,7 @@ class Router:
                 parent_otel_span=parent_otel_span,
             )
 
-            if isinstance(response, CustomStreamWrapper):
+            if self._is_completion_stream(response):
                 return await self._acompletion_streaming_iterator(
                     model_response=response,
                     messages=messages,
@@ -3126,6 +3143,73 @@ class Router:
                 exception.failed_deployment_id = deployment_id  # type: ignore[attr-defined]
             except Exception:
                 pass
+
+    @staticmethod
+    def _is_completion_stream(response: Any) -> bool:
+        """
+        A provider's `post_stream_processing` may hand back its own wrapper
+        around the CustomStreamWrapper (ChatGPT normalizes tool-call chunks
+        this way). Such a stream still needs the mid-stream fallback wrapper;
+        matching on CustomStreamWrapper alone silently skips it.
+        """
+        return isinstance(response, CustomStreamWrapper) or isinstance(
+            getattr(response, "wrapped_stream", None), CustomStreamWrapper
+        )
+
+    def _can_retry_stream_before_first_chunk(
+        self, error: "MidStreamFallbackError", kwargs: dict
+    ) -> bool:
+        if not (error.is_pre_first_chunk or not error.generated_content):
+            return False
+        metadata = (
+            kwargs.get(self._get_metadata_variable_name_from_kwargs(kwargs)) or {}
+        )
+        attempt = metadata.get("_stream_first_chunk_retry", 0)
+        return attempt < kwargs.get("num_retries", self.num_retries)
+
+    async def _retry_stream_before_first_chunk(self, kwargs: dict) -> Any:
+        """
+        Every deployment of the group failed the stream before its first chunk
+        (e.g. the upstream shedding load). Nothing reached the client yet, so
+        re-run the whole request after a backoff, with the failover exclusions
+        reset: the overload is a property of the moment, not of the deployment.
+        The attempt counter travels in metadata, bounding the nested wrappers.
+        """
+        metadata_name = self._get_metadata_variable_name_from_kwargs(kwargs)
+        metadata = kwargs.get(metadata_name) or {}
+        attempt = metadata.get("_stream_first_chunk_retry", 0) + 1
+        delay = min(
+            STREAM_FIRST_CHUNK_RETRY_BASE_DELAY_SECONDS * 2 ** (attempt - 1),
+            STREAM_FIRST_CHUNK_RETRY_MAX_DELAY_SECONDS,
+        )
+        verbose_router_logger.info(
+            f"Stream failed before its first chunk on every deployment of {kwargs.get('model')!r}; retry {attempt} in {delay}s"
+        )
+        await asyncio.sleep(delay)
+        retry_kwargs = {
+            **kwargs,
+            metadata_name: {
+                **metadata,
+                "_stream_first_chunk_retry": attempt,
+                "_failover_excluded_ids": [],
+            },
+        }
+        return await self.async_function_with_fallbacks(**retry_kwargs)
+
+    def _set_failed_stream_deployment_id(
+        self, exception: Exception, stream: Any
+    ) -> None:
+        """
+        A stream that fails before its first chunk raises while the caller is
+        already iterating, outside the per-deployment call that stamps
+        `failed_deployment_id`. Stamp it from the stream so weighted-routing
+        failover re-picks another deployment instead of the one that just failed.
+        """
+        deployment_id = getattr(stream, "_hidden_params", {}).get("model_id")
+        if deployment_id:
+            self._set_failed_deployment_id_on_exception(
+                exception, {"model_info": {"id": deployment_id}}
+            )
 
     def _update_kwargs_with_default_litellm_params(
         self, kwargs: dict, metadata_variable_name: Optional[str] = "metadata"
