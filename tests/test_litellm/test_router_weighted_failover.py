@@ -16,7 +16,6 @@ import pytest
 from litellm import Router
 from litellm.utils import _get_excluded_filtered_deployments
 
-
 # ---------------------------------------------------------------------------
 # Unit tests for _get_excluded_filtered_deployments
 # ---------------------------------------------------------------------------
@@ -769,3 +768,321 @@ async def test_failover_falls_through_to_external_fallback_when_remaining_in_coo
         )
 
     assert response._hidden_params["model_id"] == "fallback"
+
+
+# ---------------------------------------------------------------------------
+# Streaming: capacity shed before the first chunk
+#
+# chatgpt.com/backend-api/codex answers HTTP 200 and then fails the stream with
+# server_is_overloaded before any output. The error surfaces while the router is
+# iterating the stream, so the failover must still know which deployment failed.
+# ---------------------------------------------------------------------------
+
+import asyncio
+import json
+import time
+
+import httpx
+import respx
+
+import litellm
+from litellm.llms.chatgpt import codex_identity
+from litellm.types.utils import CredentialItem
+
+_SICK_BASE = "https://sick-account.example.com"
+_HEALTHY_BASE = "https://healthy-account.example.com"
+
+
+def _sse(*events: dict) -> str:
+    return (
+        "".join(f"data: {json.dumps(event)}\n\n" for event in events)
+        + "data: [DONE]\n\n"
+    )
+
+
+def _overloaded_stream() -> str:
+    return _sse(
+        {
+            "type": "response.created",
+            "response": {"id": "resp_sick", "status": "in_progress"},
+        },
+        {
+            "type": "response.failed",
+            "response": {
+                "id": "resp_sick",
+                "status": "failed",
+                "error": {
+                    "code": "server_is_overloaded",
+                    "message": "Our servers are currently overloaded. Please try again later.",
+                },
+            },
+        },
+    )
+
+
+def _answer_stream(text: str) -> str:
+    return _sse(
+        {
+            "type": "response.created",
+            "response": {"id": "resp_ok", "status": "in_progress"},
+        },
+        {
+            "type": "response.output_text.delta",
+            "item_id": "msg_1",
+            "output_index": 0,
+            "content_index": 0,
+            "delta": text,
+        },
+        {
+            "type": "response.completed",
+            "response": {
+                "id": "resp_ok",
+                "object": "response",
+                "created_at": 1700000000,
+                "status": "completed",
+                "model": "gpt-5.6-sol",
+                "output": [
+                    {
+                        "type": "message",
+                        "id": "msg_1",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": text}],
+                    }
+                ],
+            },
+        },
+    )
+
+
+def _partial_then_failed_stream(text: str) -> str:
+    return _sse(
+        {
+            "type": "response.created",
+            "response": {"id": "resp_sick", "status": "in_progress"},
+        },
+        {
+            "type": "response.output_text.delta",
+            "item_id": "msg_1",
+            "output_index": 0,
+            "content_index": 0,
+            "delta": text,
+        },
+        {
+            "type": "response.failed",
+            "response": {
+                "id": "resp_sick",
+                "status": "failed",
+                "error": {
+                    "code": "server_is_overloaded",
+                    "message": "Our servers are currently overloaded.",
+                },
+            },
+        },
+    )
+
+
+@pytest.fixture
+def two_chatgpt_accounts(tmp_path, monkeypatch):
+    monkeypatch.setenv("CHATGPT_TOKEN_DIR", str(tmp_path))
+    # respx intercepts the httpx transport; the default aiohttp one would go to the network.
+    monkeypatch.setattr(litellm, "disable_aiohttp_transport", True)
+    monkeypatch.setattr(
+        codex_identity,
+        "_codex_version",
+        codex_identity.CodexVersion(
+            fetch_latest=lambda: codex_identity.CODEX_VERSION_FALLBACK,
+            run_in_background=lambda task: None,
+        ),
+    )
+    litellm.in_memory_llm_clients_cache.flush_cache()
+    original = litellm.credential_list
+    credentials = []
+    for name, base in (("acct_sick", _SICK_BASE), ("acct_healthy", _HEALTHY_BASE)):
+        auth_file = tmp_path / f"{name}.json"
+        auth_file.write_text(
+            json.dumps(
+                {
+                    "access_token": f"tok-{name}",
+                    "account_id": name,
+                    "expires_at": time.time() + 3600,
+                }
+            )
+        )
+        credentials.append(
+            CredentialItem(
+                credential_name=name,
+                credential_info={},
+                credential_values={
+                    "chatgpt_auth_file": str(auth_file),
+                    "chatgpt_api_base": base,
+                },
+            )
+        )
+    litellm.credential_list = credentials
+    yield
+    litellm.credential_list = original
+
+
+def _single_account_router(num_retries: int) -> Router:
+    return Router(
+        model_list=[
+            {
+                "model_name": "gpt-5.6-sol",
+                "litellm_params": {
+                    "model": "chatgpt/gpt-5.6-sol",
+                    "litellm_credential_name": "acct_healthy",
+                },
+                "model_info": {"id": "healthy"},
+            },
+        ],
+        routing_strategy="simple-shuffle",
+        num_retries=num_retries,
+        enable_weighted_failover=True,
+    )
+
+
+def _chatgpt_router(enable_weighted_failover: bool) -> Router:
+    # The sick account has all the weight, so it is always picked first.
+    return Router(
+        model_list=[
+            {
+                "model_name": "gpt-5.6-sol",
+                "litellm_params": {
+                    "model": "chatgpt/gpt-5.6-sol",
+                    "litellm_credential_name": "acct_sick",
+                    "weight": 1,
+                },
+                "model_info": {"id": "sick"},
+            },
+            {
+                "model_name": "gpt-5.6-sol",
+                "litellm_params": {
+                    "model": "chatgpt/gpt-5.6-sol",
+                    "litellm_credential_name": "acct_healthy",
+                    "weight": 0,
+                },
+                "model_info": {"id": "healthy"},
+            },
+        ],
+        routing_strategy="simple-shuffle",
+        num_retries=0,
+        enable_weighted_failover=enable_weighted_failover,
+    )
+
+
+def _sse_response(body: str) -> httpx.Response:
+    return httpx.Response(200, headers={"content-type": "text/event-stream"}, text=body)
+
+
+async def _collect_text(stream) -> str:
+    parts = []
+    async for chunk in stream:
+        if chunk is not None and chunk.choices and chunk.choices[0].delta.content:
+            parts.append(chunk.choices[0].delta.content)
+    return "".join(parts)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_stream_overloaded_before_first_chunk_fails_over_to_other_deployment(
+    two_chatgpt_accounts,
+):
+    sick = respx.post(f"{_SICK_BASE}/responses").mock(
+        return_value=_sse_response(_overloaded_stream())
+    )
+    healthy = respx.post(f"{_HEALTHY_BASE}/responses").mock(
+        return_value=_sse_response(_answer_stream("pong"))
+    )
+    router = _chatgpt_router(enable_weighted_failover=True)
+
+    stream = await router.acompletion(
+        model="gpt-5.6-sol", messages=[{"role": "user", "content": "ping"}], stream=True
+    )
+
+    assert await _collect_text(stream) == "pong"
+    assert sick.call_count == 1
+    assert healthy.call_count == 1
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_stream_overloaded_before_first_chunk_with_failover_disabled_surfaces_error(
+    two_chatgpt_accounts,
+):
+    respx.post(f"{_SICK_BASE}/responses").mock(
+        return_value=_sse_response(_overloaded_stream())
+    )
+    healthy = respx.post(f"{_HEALTHY_BASE}/responses").mock(
+        return_value=_sse_response(_answer_stream("pong"))
+    )
+    router = _chatgpt_router(enable_weighted_failover=False)
+
+    stream = await router.acompletion(
+        model="gpt-5.6-sol", messages=[{"role": "user", "content": "ping"}], stream=True
+    )
+
+    with pytest.raises(litellm.exceptions.MidStreamFallbackError):
+        await _collect_text(stream)
+    assert healthy.call_count == 0
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_stream_failing_after_output_is_not_replayed_on_other_deployment(
+    two_chatgpt_accounts,
+):
+    # Replaying on another account after text reached the client would duplicate the answer.
+    respx.post(f"{_SICK_BASE}/responses").mock(
+        return_value=_sse_response(_partial_then_failed_stream("po"))
+    )
+    healthy = respx.post(f"{_HEALTHY_BASE}/responses").mock(
+        return_value=_sse_response(_answer_stream("pong"))
+    )
+    router = _chatgpt_router(enable_weighted_failover=True)
+
+    stream = await router.acompletion(
+        model="gpt-5.6-sol", messages=[{"role": "user", "content": "ping"}], stream=True
+    )
+
+    with pytest.raises(litellm.exceptions.MidStreamFallbackError):
+        await _collect_text(stream)
+    assert healthy.call_count == 0
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_stream_overloaded_on_every_deployment_is_retried_after_backoff(
+    two_chatgpt_accounts,
+):
+    account = respx.post(f"{_HEALTHY_BASE}/responses").mock(
+        side_effect=[
+            _sse_response(_overloaded_stream()),
+            _sse_response(_answer_stream("pong")),
+        ]
+    )
+    router = _single_account_router(num_retries=1)
+
+    stream = await router.acompletion(
+        model="gpt-5.6-sol", messages=[{"role": "user", "content": "ping"}], stream=True
+    )
+
+    assert await _collect_text(stream) == "pong"
+    assert account.call_count == 2
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_stream_overload_retries_stop_at_the_retry_budget(two_chatgpt_accounts):
+    account = respx.post(f"{_HEALTHY_BASE}/responses").mock(
+        side_effect=lambda request: _sse_response(_overloaded_stream())
+    )
+    router = _single_account_router(num_retries=2)
+
+    stream = await router.acompletion(
+        model="gpt-5.6-sol", messages=[{"role": "user", "content": "ping"}], stream=True
+    )
+
+    # A lost attempt counter would retry forever; fail fast instead of hanging the suite.
+    with pytest.raises(litellm.exceptions.MidStreamFallbackError):
+        await asyncio.wait_for(_collect_text(stream), timeout=10)
+    assert account.call_count == 3
