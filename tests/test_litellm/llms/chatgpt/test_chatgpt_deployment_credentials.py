@@ -281,7 +281,7 @@ class TestMergeChatGPTRequestHeaders:
         credential_headers = {
             "Authorization": "Bearer real-token",
             "ChatGPT-Account-Id": "acct-real",
-            "originator": "codex_cli_rs",
+            "originator": "codex-tui",
         }
         user_headers = {
             "Authorization": "Bearer attacker",
@@ -292,8 +292,7 @@ class TestMergeChatGPTRequestHeaders:
         merged = merge_chatgpt_request_headers(credential_headers, user_headers)
         assert merged["Authorization"] == "Bearer real-token"
         assert merged["ChatGPT-Account-Id"] == "acct-real"
-        # non-auth user headers are still honored
-        assert merged["originator"] == "custom-origin"
+        assert merged["originator"] == "codex-tui"
         assert merged["x-trace"] == "abc"
 
     def test_user_headers_cannot_override_credential_auth_case_insensitively(self):

@@ -19,6 +19,7 @@ from litellm.llms.openai.common_utils import OpenAIError
 from litellm.types.router import GenericLiteLLMParams
 from litellm.types.utils import LlmProviders
 from litellm.utils import ProviderConfigManager
+from litellm.llms.chatgpt.codex_identity import CODEX_ORIGINATOR, codex_identity_headers
 from litellm.llms.chatgpt.responses.transformation import ChatGPTResponsesAPIConfig
 
 
@@ -82,7 +83,7 @@ class TestChatGPTResponsesAPITransformation:
 
         assert headers["Authorization"] == "Bearer access-123"
         assert headers["ChatGPT-Account-Id"] == "acct-123"
-        assert headers["originator"] == "custom-origin"
+        assert headers["originator"] == CODEX_ORIGINATOR
         assert headers["content-type"] == "application/json"
         assert headers["accept"] == "text/event-stream"
         assert headers["session_id"] == "session-123"
@@ -115,7 +116,7 @@ class TestChatGPTResponsesAPITransformation:
         assert headers["ChatGPT-Account-Id"] == "acct-a"
         assert "authorization" not in headers
         assert "CHATGPT-ACCOUNT-ID" not in headers
-        assert headers["originator"] == "custom-origin"
+        assert headers["originator"] == CODEX_ORIGINATOR
 
     def test_validate_environment_missing_credential_raises(self):
         from litellm.exceptions import AuthenticationError
@@ -158,6 +159,27 @@ class TestChatGPTResponsesAPITransformation:
         assert request["stream"] is True
         assert "reasoning.encrypted_content" in request["include"]
         assert request["instructions"].startswith("You are Codex, based on GPT-5.")
+
+    def test_transform_request_reasserts_codex_identity_over_extra_headers(self):
+        """The HTTP handler applies extra_headers after validate_environment, so the
+        request transform is where the Codex identity has to win."""
+        config = ChatGPTResponsesAPIConfig()
+        headers = {
+            "User-Agent": "OpenAI/Python 2.0.0",
+            "ORIGINATOR": "custom-origin",
+            "Version": "0.1.0",
+            "x-trace": "abc",
+        }
+
+        config.transform_responses_api_request(
+            model="chatgpt/gpt-5.4",
+            input="hi",
+            response_api_optional_request_params={},
+            litellm_params=GenericLiteLLMParams(),
+            headers=headers,
+        )
+
+        assert headers == {**codex_identity_headers(), "x-trace": "abc"}
 
     @pytest.mark.parametrize(
         "model_name",

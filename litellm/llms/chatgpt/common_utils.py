@@ -3,13 +3,14 @@ Constants and helpers for ChatGPT subscription OAuth.
 """
 
 import os
-import platform
 from typing import Any, Optional, Union
 from uuid import uuid4
 
 import httpx
 
 from litellm.llms.base_llm.chat.transformation import BaseLLMException
+
+from .codex_identity import codex_identity_headers, is_codex_identity_header
 
 # OAuth + API constants (derived from openai/codex)
 CHATGPT_AUTH_BASE = "https://auth.openai.com"
@@ -23,8 +24,6 @@ CHATGPT_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 CHATGPT_CREDENTIAL_REFRESH_LEAD_SECONDS = 10 * 60
 CHATGPT_CREDENTIAL_REFRESH_INTERVAL_SECONDS = 5 * 60
 
-DEFAULT_ORIGINATOR = "codex_cli_rs"
-DEFAULT_USER_AGENT = "codex_cli_rs/0.0.0 (Unknown 0; unknown) unknown"
 CHATGPT_DEFAULT_INSTRUCTIONS = """You are Codex, based on GPT-5. You are running as a coding agent in the Codex CLI on a user's computer.
 
 ## General
@@ -140,113 +139,16 @@ class RefreshAccessTokenError(ChatGPTAuthError):
     pass
 
 
-def _safe_header_value(value: str) -> str:
-    if not value:
-        return ""
-    return "".join(ch if 32 <= ord(ch) <= 126 else "_" for ch in value)
-
-
-def _sanitize_user_agent_token(value: str) -> str:
-    if not value:
-        return ""
-    return "".join(ch if (ch.isalnum() or ch in "-_./") else "_" for ch in value)
-
-
-def _terminal_user_agent() -> str:
-    term_program = os.getenv("TERM_PROGRAM")
-    if term_program:
-        version = os.getenv("TERM_PROGRAM_VERSION")
-        token = f"{term_program}/{version}" if version else term_program
-        return _sanitize_user_agent_token(token) or "unknown"
-
-    wezterm_version = os.getenv("WEZTERM_VERSION")
-    if wezterm_version is not None:
-        token = f"WezTerm/{wezterm_version}" if wezterm_version else "WezTerm"
-        return _sanitize_user_agent_token(token) or "WezTerm"
-
-    if (
-        os.getenv("ITERM_SESSION_ID")
-        or os.getenv("ITERM_PROFILE")
-        or os.getenv("ITERM_PROFILE_NAME")
-    ):
-        return "iTerm.app"
-
-    if os.getenv("TERM_SESSION_ID"):
-        return "Apple_Terminal"
-
-    if os.getenv("KITTY_WINDOW_ID") or "kitty" in (os.getenv("TERM") or ""):
-        return "kitty"
-
-    if os.getenv("ALACRITTY_SOCKET") or os.getenv("TERM") == "alacritty":
-        return "Alacritty"
-
-    konsole_version = os.getenv("KONSOLE_VERSION")
-    if konsole_version is not None:
-        token = f"Konsole/{konsole_version}" if konsole_version else "Konsole"
-        return _sanitize_user_agent_token(token) or "Konsole"
-
-    if os.getenv("GNOME_TERMINAL_SCREEN"):
-        return "gnome-terminal"
-
-    vte_version = os.getenv("VTE_VERSION")
-    if vte_version is not None:
-        token = f"VTE/{vte_version}" if vte_version else "VTE"
-        return _sanitize_user_agent_token(token) or "VTE"
-
-    if os.getenv("WT_SESSION"):
-        return "WindowsTerminal"
-
-    term = os.getenv("TERM")
-    if term:
-        return _sanitize_user_agent_token(term) or "unknown"
-
-    return "unknown"
-
-
-def _get_litellm_version() -> str:
-    try:
-        from importlib.metadata import version
-
-        return version("litellm")
-    except Exception:
-        return "0.0.0"
-
-
-def get_chatgpt_originator() -> str:
-    originator = os.getenv("CHATGPT_ORIGINATOR") or DEFAULT_ORIGINATOR
-    return _safe_header_value(originator) or DEFAULT_ORIGINATOR
-
-
-def get_chatgpt_user_agent(originator: str) -> str:
-    override = os.getenv("CHATGPT_USER_AGENT")
-    if override:
-        return _safe_header_value(override) or DEFAULT_USER_AGENT
-    version = _get_litellm_version()
-    os_type = platform.system() or "Unknown"
-    os_version = platform.release() or "0"
-    arch = platform.machine() or "unknown"
-    terminal_ua = _terminal_user_agent()
-    suffix = os.getenv("CHATGPT_USER_AGENT_SUFFIX", "").strip()
-    suffix = f" ({suffix})" if suffix else ""
-    candidate = (
-        f"{originator}/{version} ({os_type} {os_version}; {arch}) {terminal_ua}{suffix}"
-    )
-    return _safe_header_value(candidate) or DEFAULT_USER_AGENT
-
-
 def get_chatgpt_default_headers(
     access_token: str,
     account_id: Optional[str],
     session_id: Optional[str] = None,
 ) -> dict:
-    originator = get_chatgpt_originator()
-    user_agent = get_chatgpt_user_agent(originator)
     headers = {
         "Authorization": f"Bearer {access_token}",
         "content-type": "application/json",
         "accept": "text/event-stream",
-        "originator": originator,
-        "user-agent": user_agent,
+        **codex_identity_headers(),
     }
     if session_id:
         headers["session_id"] = session_id
@@ -380,9 +282,12 @@ def merge_chatgpt_request_headers(
     credential_headers: dict, user_headers: Optional[dict]
 ) -> dict:
     """Merge user headers over credential headers, but never let user-supplied
-    values override the credential-derived Authorization / ChatGPT-Account-Id."""
+    values override the credential-derived Authorization / ChatGPT-Account-Id
+    or the Codex client identity."""
     merged = dict(credential_headers)
     for key, value in (user_headers or {}).items():
-        if not _is_chatgpt_credential_header(str(key)):
+        if not _is_chatgpt_credential_header(str(key)) and not is_codex_identity_header(
+            str(key)
+        ):
             merged[key] = value
     return merged
