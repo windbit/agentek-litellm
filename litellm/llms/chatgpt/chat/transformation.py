@@ -80,7 +80,6 @@ class ChatGPTConfig(OpenAIConfig):
         default_headers = get_chatgpt_default_headers(
             access_token, account_id, session_id
         )
-        # User-supplied headers may not override credential-derived auth headers.
         return merge_chatgpt_request_headers(default_headers, validated_headers)
 
     def post_stream_processing(self, stream: Any) -> Any:

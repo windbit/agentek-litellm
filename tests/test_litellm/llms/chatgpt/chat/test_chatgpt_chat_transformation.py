@@ -6,12 +6,13 @@ Source: litellm/llms/chatgpt/chat/transformation.py
 
 import json
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from litellm.exceptions import AuthenticationError
 from litellm.llms.chatgpt.chat.transformation import ChatGPTConfig
+from litellm.llms.chatgpt.codex_identity import CODEX_ORIGINATOR
 
 
 class TestChatGPTChatValidateEnvironment:
@@ -44,8 +45,7 @@ class TestChatGPTChatValidateEnvironment:
         assert headers["ChatGPT-Account-Id"] == "acct-a"
         assert "authorization" not in headers
         assert "CHATGPT-ACCOUNT-ID" not in headers
-        # Non-auth user headers preserved.
-        assert headers["originator"] == "custom-origin"
+        assert headers["originator"] == CODEX_ORIGINATOR
 
     def test_missing_credential_raises_auth_error(self):
         config = ChatGPTConfig()

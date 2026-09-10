@@ -31,6 +31,7 @@ from ..common_utils import (
     remove_chatgpt_credential_header_variants,
     resolve_chatgpt_deployment_credential,
 )
+from ..codex_identity import apply_codex_identity_headers
 
 
 class ChatGPTResponsesAPIConfig(OpenAIResponsesAPIConfig):
@@ -80,7 +81,6 @@ class ChatGPTResponsesAPIConfig(OpenAIResponsesAPIConfig):
         default_headers = get_chatgpt_default_headers(
             access_token, account_id, session_id
         )
-        # User-supplied headers may not override credential-derived auth headers.
         return merge_chatgpt_request_headers(default_headers, headers)
 
     def transform_responses_api_request(
@@ -130,11 +130,12 @@ class ChatGPTResponsesAPIConfig(OpenAIResponsesAPIConfig):
 
         # The shared HTTP handler re-applies user-supplied extra_headers AFTER
         # validate_environment, which would let a request override the
-        # credential's Authorization / ChatGPT-Account-Id. This transform hook is
-        # the last point with access to the outbound `headers` dict before the
-        # request is sent, so re-assert the per-deployment credential here.
+        # credential's Authorization / ChatGPT-Account-Id or the Codex identity.
+        # This transform hook is the last point with access to the outbound
+        # `headers` dict before the request is sent, so re-assert both here.
         if chatgpt_credential_requested(litellm_params):
             self._reassert_credential_headers(headers, model, litellm_params)
+        apply_codex_identity_headers(headers)
 
         return {k: v for k, v in request.items() if k in allowed_keys}
 
