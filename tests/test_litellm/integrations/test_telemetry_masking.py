@@ -3,6 +3,7 @@ import asyncio
 import pytest
 
 from litellm.integrations.telemetry_masking import (
+    CYCLE_PLACEHOLDER,
     MAX_TEXT_CHARS,
     TelemetryMasker,
     TelemetryMaskingUnavailable,
@@ -219,6 +220,32 @@ async def test_mask_tolerates_concurrent_source_mutation(rulebook):
     masker._mask_text = mutating
     result = await masker.mask(payload)
     assert result == {"a": "x", "b": "y", "c": "z"}
+
+
+@pytest.mark.asyncio
+async def test_cyclic_payload_is_masked(rulebook):
+    # Так выглядит блок логирования после ретрая роутера в прокси: запись о неудачной попытке
+    # держит тело запроса, а его metadata — тот же словарь, что ссылается на список попыток.
+    metadata = {"user_api_key_alias": "ИНН 500100732259"}
+    previous_models = [{"proxy_server_request": {"body": {"metadata": metadata}}}]
+    metadata["previous_models"] = previous_models
+    payload = {"litellm_params": {"metadata": metadata}}
+
+    masked = await build(rulebook).mask(payload)
+
+    masked_metadata = masked["litellm_params"]["metadata"]
+    assert masked_metadata["user_api_key_alias"] == "ИНН <RU_INN_1>"
+    failed_request = masked_metadata["previous_models"][0]["proxy_server_request"]
+    assert failed_request["body"]["metadata"] == CYCLE_PLACEHOLDER
+
+
+@pytest.mark.asyncio
+async def test_repeated_reference_is_masked_in_every_place(rulebook):
+    # Один объект под двумя ключами — не цикл: маскируется в обоих местах.
+    shared = {"content": "ИНН 500100732259"}
+    masked = await build(rulebook).mask({"input": shared, "output": [shared]})
+    assert masked["input"] == {"content": "ИНН <RU_INN_1>"}
+    assert masked["output"] == [{"content": "ИНН <RU_INN_1>"}]
 
 
 @pytest.mark.asyncio
