@@ -14,7 +14,17 @@ import asyncio
 import hashlib
 from collections import OrderedDict
 import os
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Protocol, Sequence
+from typing import (
+    Any,
+    Awaitable,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Protocol,
+    Sequence,
+    Set,
+)
 
 from litellm._logging import verbose_logger
 from litellm.proxy.guardrails.guardrail_hooks.pii_rules import (
@@ -43,6 +53,7 @@ CONTENT_KEYS = frozenset({
     "response",
     "text",
 })
+CYCLE_PLACEHOLDER = "<cycle>"
 
 
 def _env_number(name: str, default: Any, cast: Any) -> Any:
@@ -202,9 +213,22 @@ class TelemetryMasker:
         `content` помечает поддерево как переписку: под ним работает языковой слой, а ниже
         флаг наследуется. Значение, приходящее без обёртки с ключом из `CONTENT_KEYS`
         (ответ модели в колбэке), вызывающий помечает сам.
+
+        Ссылка на контейнер, внутри которого обход уже находится, заменяется на
+        `CYCLE_PLACEHOLDER`: после ретрая роутера metadata блока логирования ссылается
+        сама на себя через `previous_models`.
         """
         if cache is None:
             cache = {}
+        return await self._mask_node(value, cache, content, set())
+
+    async def _mask_node(
+        self,
+        value: Any,
+        cache: Dict[Any, str],
+        content: bool,
+        ancestors: Set[int],
+    ) -> Any:
         if isinstance(value, str):
             # Режим — часть ключа: одна и та же строка вне переписки маскируется слабее,
             # и без этого её результат подменил бы разбор той же строки внутри переписки.
@@ -214,19 +238,30 @@ class TelemetryMasker:
                 masked = await self._mask_text(value, analyze=content)
                 cache[key] = masked
             return masked
-        # Снимок контейнера до async-итерации: mask рекурсивно await'ит, уступая loop
-        # другим success-колбэкам, а litellm параллельно мутирует живой блок логирования
-        # (model_call_details) — итерация по нему на месте падает "dictionary changed size
-        # during iteration" и роняет спан (#1206).
-        if isinstance(value, dict):
-            return {
-                key: await self.mask(item, cache, content or key in CONTENT_KEYS)
-                for key, item in list(value.items())
-            }
-        if isinstance(value, (list, tuple)):
-            masked_items = [await self.mask(item, cache, content) for item in list(value)]
+        if not isinstance(value, (dict, list, tuple)):
+            return value
+        if id(value) in ancestors:
+            return CYCLE_PLACEHOLDER
+        ancestors.add(id(value))
+        try:
+            # Снимок контейнера до async-итерации: mask рекурсивно await'ит, уступая loop
+            # другим success-колбэкам, а litellm параллельно мутирует живой блок логирования
+            # (model_call_details) — итерация по нему на месте падает "dictionary changed size
+            # during iteration" и роняет спан (#1206).
+            if isinstance(value, dict):
+                return {
+                    key: await self._mask_node(
+                        item, cache, content or key in CONTENT_KEYS, ancestors
+                    )
+                    for key, item in list(value.items())
+                }
+            masked_items = [
+                await self._mask_node(item, cache, content, ancestors)
+                for item in list(value)
+            ]
             return type(value)(masked_items) if isinstance(value, tuple) else masked_items
-        return value
+        finally:
+            ancestors.discard(id(value))
 
     async def _mask_text(self, text: str, analyze: bool = True) -> str:
         if self._broken:
