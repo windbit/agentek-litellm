@@ -438,3 +438,226 @@ async def test_same_text_outside_conversation_does_not_poison_cache(rulebook):
     masked = await masker.mask({"messages": [{"content": text}]}, shared)
 
     assert masked["messages"][0]["content"].startswith("<PERSON_1>")
+
+
+class _SlowAnalyzerSession:
+    """Сессия aiohttp, чей /analyze отвечает только по сигналу: медленный analyzer на пике."""
+
+    def __init__(self):
+        self.release = asyncio.Event()
+        self.live = 0
+        self.peak = 0
+        self.calls = 0
+
+    def post(self, url, json):
+        session = self
+
+        class _Response:
+            status = 200
+
+            async def json(self):
+                return []
+
+            async def __aenter__(self):
+                session.calls += 1
+                session.live += 1
+                session.peak = max(session.peak, session.live)
+                try:
+                    await session.release.wait()
+                finally:
+                    session.live -= 1
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+        return _Response()
+
+
+@pytest.fixture
+def slow_analyzer(monkeypatch):
+    import litellm.integrations.telemetry_masking as tm
+
+    session = _SlowAnalyzerSession()
+    monkeypatch.setattr(tm, "_analyze_session", lambda: session)
+    tm._budgets.clear()
+    yield session
+    tm._budgets.clear()
+
+
+def analyzer_masker(rulebook):
+    return TelemetryMasker(
+        rulebook_path=rulebook, entities=["PERSON"], analyzer_base="http://analyzer"
+    )
+
+
+def other_tasks():
+    return [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+
+
+@pytest.mark.asyncio
+async def test_cancelled_spans_do_not_pile_up_behind_analyzer(
+    rulebook, slow_analyzer, monkeypatch
+):
+    # Регресс (#1388): отменённые спаны оставляли задачи с текстом ждать слот анализатора без срока.
+    import litellm.integrations.telemetry_masking as tm
+
+    monkeypatch.setattr(tm, "ANALYZE_MAX_CONCURRENCY", 2)
+    masker = analyzer_masker(rulebook)
+    spans = [
+        asyncio.create_task(masker.mask({"content": f"Иван Петров {i}"})) for i in range(50)
+    ]
+    await asyncio.sleep(0.05)
+    for span in spans:
+        span.cancel()
+    await asyncio.gather(*spans, return_exceptions=True)
+    await asyncio.sleep(0)
+
+    assert slow_analyzer.peak == 2
+    assert len(other_tasks()) <= 2
+    slow_analyzer.release.set()
+    await asyncio.gather(*other_tasks(), return_exceptions=True)
+    assert tm._loop_budget().exchanges == 0
+
+
+@pytest.mark.asyncio
+async def test_orphaned_exchange_result_is_cached(rulebook, slow_analyzer):
+    masker = analyzer_masker(rulebook)
+    span = asyncio.create_task(masker.mask({"content": "Иван Петров"}))
+    await asyncio.sleep(0.01)
+    span.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await span
+    slow_analyzer.release.set()
+    await asyncio.gather(*other_tasks(), return_exceptions=True)
+
+    await masker.mask({"content": "Иван Петров"})
+    assert slow_analyzer.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_concurrent_spans_share_one_analyzer_exchange(rulebook, slow_analyzer):
+    masker = analyzer_masker(rulebook)
+    spans = [
+        asyncio.create_task(masker.mask({"content": "Иван Петров"})) for _ in range(5)
+    ]
+    await asyncio.sleep(0.01)
+    slow_analyzer.release.set()
+    await asyncio.gather(*spans)
+    assert slow_analyzer.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_span_over_inflight_limit_is_dropped_immediately(
+    rulebook, slow_analyzer, monkeypatch
+):
+    import litellm.integrations.telemetry_masking as tm
+
+    monkeypatch.setattr(tm, "MAX_INFLIGHT_SPANS", 3)
+    masker = analyzer_masker(rulebook)
+    busy = [
+        asyncio.create_task(masker.mask_span({"content": f"Иван {i}"}, None))
+        for i in range(3)
+    ]
+    await asyncio.sleep(0.01)
+    with pytest.raises(tm.TelemetryMaskingOverloaded):
+        await masker.mask_span({"content": "Пётр"}, None)
+    slow_analyzer.release.set()
+    await asyncio.gather(*busy)
+    assert tm._loop_budget().spans == 0
+
+
+@pytest.mark.asyncio
+async def test_span_over_chars_budget_is_dropped(rulebook, slow_analyzer, monkeypatch):
+    import litellm.integrations.telemetry_masking as tm
+
+    monkeypatch.setattr(tm, "MAX_INFLIGHT_CHARS", 1000)
+    masker = analyzer_masker(rulebook)
+    busy = asyncio.create_task(masker.mask_span({"content": "Иван " * 100}, None))
+    await asyncio.sleep(0.01)
+    with pytest.raises(tm.TelemetryMaskingOverloaded):
+        await masker.mask_span({"content": "Пётр " * 200}, None)
+    slow_analyzer.release.set()
+    await busy
+    assert tm._loop_budget().chars == 0
+
+
+@pytest.mark.asyncio
+async def test_span_deadline_covers_waiting_for_analyzer_slot(
+    rulebook, slow_analyzer, monkeypatch
+):
+    import litellm.integrations.telemetry_masking as tm
+
+    monkeypatch.setattr(tm, "MASK_DEADLINE_SECONDS", 0.05)
+    budget = tm._loop_budget()
+    for _ in range(tm.ANALYZE_MAX_CONCURRENCY):
+        await budget.sem.acquire()
+    try:
+        with pytest.raises(tm.TelemetryMaskingDeadline):
+            await analyzer_masker(rulebook).mask_span({"content": "Иван Петров"}, None)
+        assert slow_analyzer.calls == 0
+        assert budget.spans == 0
+    finally:
+        for _ in range(tm.ANALYZE_MAX_CONCURRENCY):
+            budget.sem.release()
+
+
+def test_span_deadline_is_shorter_than_logging_worker_timeout():
+    from litellm.constants import LOGGING_WORKER_MAX_TIME_PER_COROUTINE
+    from litellm.integrations.telemetry_masking import MASK_DEADLINE_SECONDS
+
+    assert MASK_DEADLINE_SECONDS < LOGGING_WORKER_MAX_TIME_PER_COROUTINE
+
+
+@pytest.mark.asyncio
+async def test_mask_span_masks_payload_and_response(rulebook):
+    kwargs, response = await build(rulebook).mask_span(
+        {"messages": [{"content": "ИНН 500100732259"}]}, {"text": "ИНН 500100732259"}
+    )
+    assert "500100732259" not in kwargs["messages"][0]["content"]
+    assert "500100732259" not in response["text"]
+
+
+@pytest.mark.asyncio
+async def test_memory_stays_bounded_under_analyzer_overload(
+    rulebook, slow_analyzer, monkeypatch
+):
+    # Нагрузка #1388 в миниатюре: поток крупных спанов через настоящий LoggingWorker при
+    # зависшем анализаторе. Память маскировки не должна расти вместе с числом спанов.
+    import tracemalloc
+
+    import litellm.integrations.telemetry_masking as tm
+    from litellm.litellm_core_utils.logging_worker import LoggingWorker
+
+    monkeypatch.setattr(tm, "MASK_DEADLINE_SECONDS", 0.2)
+    masker = analyzer_masker(rulebook)
+    dropped = []
+    span_chars = 50_000
+    spans = 1000
+
+    async def callback(i):
+        payload = {"content": f"{i} " + "Иван Петров " * (span_chars // 12)}
+        try:
+            await masker.mask_span(payload, None)
+        except tm.TelemetryMaskingUnavailable as err:
+            dropped.append(err.reason)
+
+    worker = LoggingWorker(timeout=0.5, max_queue_size=spans * 2, concurrency=100)
+    tracemalloc.start()
+    try:
+        worker.start()
+        for i in range(spans):
+            worker.enqueue(callback(i))
+        await asyncio.wait_for(worker.flush(), timeout=30)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+        await worker.stop()
+        slow_analyzer.release.set()
+        await asyncio.gather(*other_tasks(), return_exceptions=True)
+
+    all_spans_bytes = spans * span_chars * 2
+    assert len(dropped) == spans
+    assert set(dropped) <= {"overloaded", "deadline"}
+    assert peak < all_spans_bytes / 10
+    assert tm._loop_budget().spans == 0
