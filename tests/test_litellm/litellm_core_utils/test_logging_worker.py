@@ -413,3 +413,42 @@ class TestLoggingWorker:
         assert worker2._bound_loop is not None
 
         await worker2.stop()
+
+
+@pytest.mark.asyncio
+async def test_backlog_metrics_track_global_worker():
+    # Очередь и отложенные повторы держат payload колбэков: их объём обязан быть виден в метриках (#1388).
+    from prometheus_client import REGISTRY
+
+    from litellm.litellm_core_utils.logging_worker import GLOBAL_LOGGING_WORKER
+
+    for name in (
+        "litellm_logging_worker_queue_size",
+        "litellm_logging_worker_running_tasks",
+        "litellm_logging_worker_pending_retries",
+    ):
+        assert REGISTRY.get_sample_value(name) is not None
+
+    GLOBAL_LOGGING_WORKER._pending_retries += 1
+    try:
+        assert REGISTRY.get_sample_value("litellm_logging_worker_pending_retries") >= 1
+    finally:
+        GLOBAL_LOGGING_WORKER._pending_retries -= 1
+
+
+@pytest.mark.asyncio
+async def test_pending_retries_return_to_zero_after_retry():
+    worker = LoggingWorker(max_queue_size=1, concurrency=1)
+    worker._ensure_queue()
+
+    async def noop():
+        return None
+
+    worker._queue.put_nowait({"coroutine": noop(), "context": contextvars.copy_context()})
+    blocked = {"coroutine": noop(), "context": contextvars.copy_context()}
+    worker._schedule_delayed_enqueue_retry(blocked)
+    assert worker._pending_retries == 1
+    worker._queue.get_nowait()["coroutine"].close()
+    await asyncio.sleep(worker._calculate_retry_delay() + 0.1)
+    assert worker._pending_retries == 0
+    worker._queue.get_nowait()["coroutine"].close()

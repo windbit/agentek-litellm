@@ -11,8 +11,10 @@
 """
 
 import asyncio
+import functools
 import hashlib
 from collections import OrderedDict
+from dataclasses import dataclass, field
 import os
 from typing import (
     Any,
@@ -27,6 +29,7 @@ from typing import (
 )
 
 from litellm._logging import verbose_logger
+from litellm.constants import LOGGING_WORKER_MAX_TIME_PER_COROUTINE
 from litellm.proxy.guardrails.guardrail_hooks.pii_rules import (
     PiiRuleEngine,
     RulebookError,
@@ -78,20 +81,40 @@ MAX_TEXT_CHARS = _env_number("LITELLM_TELEMETRY_MAX_TEXT_CHARS", 200_000, int)
 # в анализатор заново столько раз, сколько было ходов.
 SPAN_CACHE_SIZE = _env_number("LITELLM_TELEMETRY_SPAN_CACHE", 5000, int)
 MAX_INFLIGHT_SPANS = _env_number("LITELLM_TELEMETRY_MAX_INFLIGHT_SPANS", 32, int)
-MASK_DEADLINE_SECONDS = _env_number("LITELLM_TELEMETRY_MASK_DEADLINE", 15.0, float)
+MAX_INFLIGHT_CHARS = _env_number("LITELLM_TELEMETRY_MAX_INFLIGHT_CHARS", 16_000_000, int)
+# Дедлайн спана обязан истекать раньше таймаута LoggingWorker: иначе спан снимает внешняя
+# отмена, и дроп не попадает в счётчик со своей причиной.
+MASK_DEADLINE_SECONDS = min(
+    _env_number("LITELLM_TELEMETRY_MASK_DEADLINE", 15.0, float),
+    LOGGING_WORKER_MAX_TIME_PER_COROUTINE * 0.75,
+)
 
-# Семафор привязан к event-loop, поэтому храним по одному на активный loop: в проде loop
-# один и живёт долго, в тестах на каждый прогон свой — общий инстанс тёк бы между loop'ами.
-_semaphores: "Dict[Any, asyncio.Semaphore]" = {}
+
+@dataclass
+class _LoopBudget:
+    sem: asyncio.Semaphore
+    spans: int = 0
+    chars: int = 0
+    exchanges: int = 0
+    pending: "Dict[str, asyncio.Future]" = field(default_factory=dict)
+
+
+# Семафор и счётчики привязаны к event-loop, поэтому храним по одному набору на активный loop:
+# в проде loop один и живёт долго, в тестах на каждый прогон свой.
+_budgets: "Dict[Any, _LoopBudget]" = {}
+
+
+def _loop_budget() -> _LoopBudget:
+    loop = asyncio.get_running_loop()
+    budget = _budgets.get(loop)
+    if budget is None:
+        budget = _LoopBudget(sem=asyncio.Semaphore(ANALYZE_MAX_CONCURRENCY))
+        _budgets[loop] = budget
+    return budget
 
 
 def _analyze_semaphore() -> asyncio.Semaphore:
-    loop = asyncio.get_running_loop()
-    sem = _semaphores.get(loop)
-    if sem is None:
-        sem = asyncio.Semaphore(ANALYZE_MAX_CONCURRENCY)
-        _semaphores[loop] = sem
-    return sem
+    return _loop_budget().sem
 
 
 # aiohttp-сессию, как и семафор, держим одну на event-loop. masking зовёт анализатор
@@ -186,7 +209,6 @@ class TelemetryMasker:
         self._engine = rule_engine
         self._analyze_request_fn = analyze_request
         self._span_cache: "OrderedDict[str, List[Dict[str, Any]]]" = OrderedDict()
-        self._inflight_spans = 0
         self._broken = False
         if self.rulebook_path and self._engine is None:
             try:
@@ -205,12 +227,22 @@ class TelemetryMasker:
         return self.enabled and (self._broken or bool(self._engine or self.analyzer_base))
 
     async def mask_span(self, kwargs: Any, response_obj: Any) -> "tuple[Any, Any]":
-        if self._inflight_spans >= MAX_INFLIGHT_SPANS:
+        """Маскирует payload и ответ спана в пределах бюджета процесса.
+
+        Кидает `TelemetryMaskingOverloaded`, если бюджет по спанам или символам занят,
+        и `TelemetryMaskingDeadline`, если спан не уложился в дедлайн.
+        """
+        budget = _loop_budget()
+        size = _payload_chars(kwargs) + _payload_chars(response_obj)
+        if budget.spans >= MAX_INFLIGHT_SPANS or (
+            budget.spans and budget.chars + size > MAX_INFLIGHT_CHARS
+        ):
             raise TelemetryMaskingOverloaded(
-                f"{self._inflight_spans} spans already masking"
+                f"{budget.spans} spans / {budget.chars} chars already masking"
             )
-        self._inflight_spans += 1
-        _set_inflight("span", self._inflight_spans)
+        budget.spans += 1
+        budget.chars += size
+        _publish_budget(budget)
         try:
             return await asyncio.wait_for(
                 self._mask_span(kwargs, response_obj), MASK_DEADLINE_SECONDS
@@ -220,8 +252,9 @@ class TelemetryMasker:
                 f"span masking exceeded {MASK_DEADLINE_SECONDS}s"
             ) from err
         finally:
-            self._inflight_spans -= 1
-            _set_inflight("span", self._inflight_spans)
+            budget.spans -= 1
+            budget.chars -= size
+            _publish_budget(budget)
 
     async def _mask_span(self, kwargs: Any, response_obj: Any) -> "tuple[Any, Any]":
         cache: Dict[Any, str] = {}
@@ -329,17 +362,42 @@ class TelemetryMasker:
         if cached is not None:
             self._span_cache.move_to_end(key)
             return list(cached)
-        # Слот берётся до shield: ожидание слота отменяемо, осиротевших обменов не больше семафора.
-        sem = _analyze_semaphore()
-        await sem.acquire()
-        exchange = asyncio.ensure_future(request(text))
-        _set_inflight("analyze", ANALYZE_MAX_CONCURRENCY - sem._value)
-        exchange.add_done_callback(lambda done: _finish_exchange(done, sem))
+        budget = _loop_budget()
+        exchange = budget.pending.get(key)
+        if exchange is None:
+            # Слот берётся до shield: ожидание слота отменяемо, осиротевших обменов не больше семафора.
+            await budget.sem.acquire()
+            cached = self._span_cache.get(key)
+            exchange = budget.pending.get(key)
+            if cached is not None or exchange is not None:
+                budget.sem.release()
+                if cached is not None:
+                    return list(cached)
+            else:
+                exchange = asyncio.ensure_future(request(text))
+                budget.pending[key] = exchange
+                budget.exchanges += 1
+                _publish_budget(budget)
+                exchange.add_done_callback(
+                    functools.partial(self._finish_exchange, budget, key)
+                )
         spans = await asyncio.shield(exchange)
-        self._span_cache[key] = list(spans)
+        return list(spans)
+
+    def _finish_exchange(
+        self, budget: _LoopBudget, key: str, exchange: "asyncio.Future[Any]"
+    ) -> None:
+        # Результат кэшируется здесь, а не у вызывающего: он мог уйти по отмене,
+        # и без этого следующий ход той же переписки заново грузил бы анализатор.
+        budget.sem.release()
+        budget.exchanges -= 1
+        budget.pending.pop(key, None)
+        _publish_budget(budget)
+        if exchange.cancelled() or exchange.exception() is not None:
+            return
+        self._span_cache[key] = list(exchange.result())
         while len(self._span_cache) > SPAN_CACHE_SIZE:
             self._span_cache.popitem(last=False)
-        return list(spans)
 
     def _span_cache_key(self, text: str) -> str:
         # Язык и состав сущностей — часть ключа: с другим набором тот же текст разбирается иначе.
@@ -431,11 +489,24 @@ def record_dropped_span(reason: str) -> None:
         _dropped_spans_counter.labels(reason=reason).inc()
 
 
-def _finish_exchange(exchange: "asyncio.Future[Any]", sem: asyncio.Semaphore) -> None:
-    sem.release()
-    _set_inflight("analyze", ANALYZE_MAX_CONCURRENCY - sem._value)
-    if not exchange.cancelled():
-        exchange.exception()  # иначе «exception was never retrieved» на осиротевший обмен
+def _payload_chars(value: Any) -> int:
+    total = 0
+    stack = [value]
+    seen: Set[int] = set()
+    while stack:
+        item = stack.pop()
+        if isinstance(item, str):
+            total += len(item)
+        elif isinstance(item, (dict, list, tuple)) and id(item) not in seen:
+            seen.add(id(item))
+            stack.extend(item.values() if isinstance(item, dict) else item)
+    return total
+
+
+def _publish_budget(budget: _LoopBudget) -> None:
+    _set_inflight("span", budget.spans)
+    _set_inflight("chars", budget.chars)
+    _set_inflight("analyze", budget.exchanges)
 
 
 _inflight_gauge = None
@@ -451,7 +522,7 @@ def _set_inflight(stage: str, value: int) -> None:
 
             _inflight_gauge = Gauge(
                 "litellm_telemetry_masking_inflight",
-                "Telemetry masking work in progress: spans being masked, analyzer exchanges",
+                "Telemetry masking work in progress: spans, their chars, analyzer exchanges",
                 ["stage"],
             )
         except Exception as err:  # noqa: BLE001 — метрика не стоит отказа колбэка

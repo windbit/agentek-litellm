@@ -55,6 +55,7 @@ class LoggingWorker:
         self._bound_loop: Optional[asyncio.AbstractEventLoop] = None
         self._last_aggressive_clear_time: float = 0.0
         self._aggressive_clear_in_progress: bool = False
+        self._pending_retries = 0
 
         # Register cleanup handler to flush remaining events on exit
         atexit.register(self._flush_on_exit)
@@ -236,6 +237,7 @@ class LoggingWorker:
 
             # Schedule the retry as a background task
             asyncio.create_task(self._retry_enqueue_task(task, delay))
+            self._pending_retries += 1
         except RuntimeError:
             # No event loop, drop the task as we can't schedule a retry
             pass
@@ -245,17 +247,20 @@ class LoggingWorker:
         Retry enqueueing the task after delay, preserving original context.
         This is called as a background task from _schedule_delayed_enqueue_retry.
         """
-        await asyncio.sleep(delay)
-
-        # Try to enqueue the task directly, preserving its original context
-        if self._queue is None:
-            return
-
         try:
-            self._queue.put_nowait(task)
-        except asyncio.QueueFull:
-            # Still full - handle it appropriately (clear or retry again)
-            self._handle_queue_full(task)
+            await asyncio.sleep(delay)
+
+            # Try to enqueue the task directly, preserving its original context
+            if self._queue is None:
+                return
+
+            try:
+                self._queue.put_nowait(task)
+            except asyncio.QueueFull:
+                # Still full - handle it appropriately (clear or retry again)
+                self._handle_queue_full(task)
+        finally:
+            self._pending_retries -= 1
 
     def _extract_tasks_from_queue(self) -> list[LoggingTask]:
         """
@@ -542,5 +547,27 @@ class LoggingWorker:
             loop.close()
 
 
+def _register_backlog_metrics(worker: LoggingWorker) -> None:
+    """Каждая задача воркера держит payload колбэка: объём отложенной работы — это память процесса."""
+    try:
+        from prometheus_client import Gauge
+    except ImportError:
+        return
+    try:
+        Gauge(
+            "litellm_logging_worker_queue_size", "Logging tasks waiting in the queue"
+        ).set_function(lambda: worker._queue.qsize() if worker._queue else 0)
+        Gauge(
+            "litellm_logging_worker_running_tasks", "Logging tasks being executed"
+        ).set_function(lambda: len(worker._running_tasks))
+        Gauge(
+            "litellm_logging_worker_pending_retries",
+            "Logging tasks waiting to re-enter a full queue",
+        ).set_function(lambda: worker._pending_retries)
+    except ValueError as err:  # повторный импорт модуля: метрики уже зарегистрированы
+        verbose_logger.debug("LoggingWorker metrics already registered: %s", err)
+
+
 # Global instance for backward compatibility
 GLOBAL_LOGGING_WORKER = LoggingWorker()
+_register_backlog_metrics(GLOBAL_LOGGING_WORKER)
