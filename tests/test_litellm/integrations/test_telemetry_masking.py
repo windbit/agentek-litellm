@@ -442,9 +442,7 @@ async def test_same_text_outside_conversation_does_not_poison_cache(rulebook):
 
 @pytest.mark.asyncio
 async def test_cancelled_spans_do_not_pile_up_behind_analyzer(rulebook, monkeypatch):
-    # Регресс (#1388): захват семафора жил внутри shield, и каждый отменённый LoggingWorker'ом
-    # спан оставлял задачу с текстом переписки ждать слот анализатора без срока. Под медленным
-    # analyzer такие задачи копились до лимита памяти шлюза. Живых обменов — не больше семафора.
+    # Регресс (#1388): отменённые спаны копились в очереди к анализатору до лимита памяти шлюза.
     import litellm.integrations.telemetry_masking as tm
 
     monkeypatch.setattr(tm, "ANALYZE_MAX_CONCURRENCY", 2)
