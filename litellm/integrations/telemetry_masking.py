@@ -77,6 +77,13 @@ MAX_TEXT_CHARS = _env_number("LITELLM_TELEMETRY_MAX_TEXT_CHARS", 200_000, int)
 # Колбэк получает всю переписку на каждом ходу: без кэша старые сообщения уходят
 # в анализатор заново столько раз, сколько было ходов.
 SPAN_CACHE_SIZE = _env_number("LITELLM_TELEMETRY_SPAN_CACHE", 5000, int)
+# Предел работы маскировки на весь процесс: спанов в разборе не больше MAX_INFLIGHT_SPANS,
+# на спан целиком (включая ожидание слота анализатора) — MASK_DEADLINE_SECONDS.
+# Лишний спан дропается сразу, а не ждёт: под перегрузкой analyzer очередь ожидающих
+# держала payload переписки в памяти шлюза и довела его до краша на лимите 4Gi (#1388).
+# Дедлайн короче таймаута LoggingWorker, чтобы спан уходил в drop со своей причиной.
+MAX_INFLIGHT_SPANS = _env_number("LITELLM_TELEMETRY_MAX_INFLIGHT_SPANS", 32, int)
+MASK_DEADLINE_SECONDS = _env_number("LITELLM_TELEMETRY_MASK_DEADLINE", 15.0, float)
 
 # Семафор привязан к event-loop, поэтому храним по одному на активный loop: в проде loop
 # один и живёт долго, в тестах на каждый прогон свой — общий инстанс тёк бы между loop'ами.
@@ -120,6 +127,14 @@ class TelemetryMaskingUnavailable(RuntimeError):
 
 class TelemetryTextTooLarge(TelemetryMaskingUnavailable):
     reason = "text_too_large"
+
+
+class TelemetryMaskingOverloaded(TelemetryMaskingUnavailable):
+    reason = "overloaded"
+
+
+class TelemetryMaskingDeadline(TelemetryMaskingUnavailable):
+    reason = "deadline"
 
 
 class RuleEngine(Protocol):
@@ -176,6 +191,7 @@ class TelemetryMasker:
         self._engine = rule_engine
         self._analyze_request_fn = analyze_request
         self._span_cache: "OrderedDict[str, List[Dict[str, Any]]]" = OrderedDict()
+        self._inflight_spans = 0
         self._broken = False
         if self.rulebook_path and self._engine is None:
             try:
@@ -192,6 +208,40 @@ class TelemetryMasker:
     @property
     def configured(self) -> bool:
         return self.enabled and (self._broken or bool(self._engine or self.analyzer_base))
+
+    async def mask_span(self, kwargs: Any, response_obj: Any) -> "tuple[Any, Any]":
+        """Маскирует payload и ответ одного спана в пределах процессного лимита.
+
+        Точка входа колбэка логирования. Кидает `TelemetryMaskingOverloaded`, если в разборе
+        уже `MAX_INFLIGHT_SPANS` спанов, и `TelemetryMaskingDeadline`, если спан не уложился
+        в `MASK_DEADLINE_SECONDS`; в обоих случаях спан отправлять нельзя.
+        """
+        if self._inflight_spans >= MAX_INFLIGHT_SPANS:
+            raise TelemetryMaskingOverloaded(
+                f"{self._inflight_spans} spans already masking"
+            )
+        self._inflight_spans += 1
+        _set_inflight("span", self._inflight_spans)
+        try:
+            return await asyncio.wait_for(
+                self._mask_span(kwargs, response_obj), MASK_DEADLINE_SECONDS
+            )
+        except asyncio.TimeoutError as err:
+            raise TelemetryMaskingDeadline(
+                f"span masking exceeded {MASK_DEADLINE_SECONDS}s"
+            ) from err
+        finally:
+            self._inflight_spans -= 1
+            _set_inflight("span", self._inflight_spans)
+
+    async def _mask_span(self, kwargs: Any, response_obj: Any) -> "tuple[Any, Any]":
+        # Один кэш дедупа на оба вызова: ответ лежит и в kwargs, и в response_obj,
+        # так что общий кэш анализирует его текст по разу, а не дважды (#1206).
+        cache: Dict[Any, str] = {}
+        masked_kwargs = await self.mask(kwargs, cache)
+        # response_obj — ответ модели целиком, без обёртки с ключом: помечаем перепиской явно.
+        masked_response = await self.mask(response_obj, cache, content=True)
+        return masked_kwargs, masked_response
 
     async def mask(
         self,
@@ -287,13 +337,21 @@ class TelemetryMasker:
         # (#1206, остаток после shared-session). shield докручивает сам HTTP-обмен до конца
         # (собственный ANALYZE_TIMEOUT его всё равно ограничивает), aiohttp освобождает
         # соединение штатно, а отмена доходит до вызывающего сразу — спан дропается как и был.
+        # Слот семафора берётся ДО shield и отдаётся по завершении обмена: ожидание слота
+        # отменяемо, поэтому отменённый спан не оставляет задачу в очереди к анализатору,
+        # а осиротевших обменов не больше ANALYZE_MAX_CONCURRENCY (#1388).
         request = self._analyze_request_fn or self._analyze_request
         key = self._span_cache_key(text)
         cached = self._span_cache.get(key)
         if cached is not None:
             self._span_cache.move_to_end(key)
             return list(cached)
-        spans = await asyncio.shield(request(text))
+        sem = _analyze_semaphore()
+        await sem.acquire()
+        exchange = asyncio.ensure_future(request(text))
+        _set_inflight("analyze", ANALYZE_MAX_CONCURRENCY - sem._value)
+        exchange.add_done_callback(lambda done: _finish_exchange(done, sem))
+        spans = await asyncio.shield(exchange)
         self._span_cache[key] = list(spans)
         while len(self._span_cache) > SPAN_CACHE_SIZE:
             self._span_cache.popitem(last=False)
@@ -309,14 +367,13 @@ class TelemetryMasker:
         url = f"{base.rstrip('/')}/analyze"
         payload = {"text": text, "language": self.language, "entities": self.entities}
         try:
-            async with _analyze_semaphore():
-                session = _analyze_session()
-                async with session.post(url, json=payload) as response:
-                    if response.status >= 400:
-                        raise TelemetryMaskingUnavailable(
-                            f"analyzer returned HTTP {response.status}"
-                        )
-                    body = await response.json()
+            session = _analyze_session()
+            async with session.post(url, json=payload) as response:
+                if response.status >= 400:
+                    raise TelemetryMaskingUnavailable(
+                        f"analyzer returned HTTP {response.status}"
+                    )
+                body = await response.json()
         except TelemetryMaskingUnavailable:
             raise
         except Exception as err:
@@ -388,6 +445,43 @@ def record_dropped_span(reason: str) -> None:
             _dropped_spans_counter = None
     if _dropped_spans_counter is not None:
         _dropped_spans_counter.labels(reason=reason).inc()
+
+
+def _finish_exchange(exchange: "asyncio.Future[Any]", sem: asyncio.Semaphore) -> None:
+    sem.release()
+    _set_inflight("analyze", ANALYZE_MAX_CONCURRENCY - sem._value)
+    # Вызывающий мог уйти по отмене — забираем исключение, иначе asyncio пишет в лог
+    # «exception was never retrieved» на каждый осиротевший обмен.
+    if not exchange.cancelled():
+        exchange.exception()
+
+
+_inflight_gauge = None
+_inflight_gauge_ready = False
+
+
+def _set_inflight(stage: str, value: int) -> None:
+    """Публикует объём работы маскировки: спаны в разборе и обмены с анализатором.
+
+    Рост до лимита — ранний сигнал перегрузки analyzer, до того как спаны начнут
+    дропаться. Как и счётчик дропов, метрика не может ронять колбэк.
+    """
+    global _inflight_gauge, _inflight_gauge_ready
+    if not _inflight_gauge_ready:
+        _inflight_gauge_ready = True
+        try:
+            from prometheus_client import Gauge
+
+            _inflight_gauge = Gauge(
+                "litellm_telemetry_masking_inflight",
+                "Telemetry masking work in progress: spans being masked, analyzer exchanges",
+                ["stage"],
+            )
+        except Exception as err:  # noqa: BLE001 — метрика не стоит отказа колбэка
+            verbose_logger.debug("telemetry masking: no inflight gauge (%s)", err)
+            _inflight_gauge = None
+    if _inflight_gauge is not None:
+        _inflight_gauge.labels(stage=stage).set(value)
 
 
 _masker: Optional[TelemetryMasker] = None
