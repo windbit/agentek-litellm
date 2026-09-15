@@ -1266,6 +1266,31 @@ def test_reset_budget_windows_handles_string_budget_limits(monkeypatch):
     prisma_client.db.litellm_verificationtoken.update.assert_awaited_once()
 
 
+def test_reset_budget_windows_resets_expired_window_with_non_utc_offset(monkeypatch):
+    """With litellm_settings.timezone = Europe/Moscow reset_at is stored as
+    `...T00:00:00+03:00`; it expires at 21:00 UTC, not at 00:00 UTC."""
+    now = datetime.utcnow()
+    msk = timezone(timedelta(hours=3))
+    expired = (now - timedelta(minutes=5)).replace(tzinfo=timezone.utc).astimezone(msk)
+
+    team_rows = [
+        {
+            "team_id": "team-msk",
+            "budget_limits": [{"budget_duration": "1d", "reset_at": expired.isoformat()}],
+        }
+    ]
+    job, prisma_client, spend_counter_cache = _make_reset_budget_windows_job(
+        monkeypatch, key_rows=[], team_rows=team_rows
+    )
+
+    asyncio.run(job.reset_budget_windows())
+
+    prisma_client.db.litellm_teamtable.update.assert_awaited_once()
+    spend_counter_cache.in_memory_cache.set_cache.assert_any_call(
+        key="spend:team:team-msk:window:1d", value=0.0
+    )
+
+
 def test_reset_budget_windows_skips_row_with_empty_budget_limits(monkeypatch):
     """A row whose `budget_limits` comes back as an empty/falsy payload
     (shouldn't happen given the WHERE filter, but we guard anyway) must not
