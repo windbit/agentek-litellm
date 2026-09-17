@@ -4520,3 +4520,27 @@ async def test_cached_spans_do_not_wait_for_an_analyzer_slot():
                 ),
                 timeout=0.2,
             )
+
+
+@pytest.mark.asyncio
+async def test_slow_analyzer_fails_the_guardrail_instead_of_hanging():
+    """Зависший анализатор держал ход до дефолтных 300с aiohttp, чтобы в конце всё равно отказать."""
+    from litellm.proxy.guardrails.guardrail_hooks import presidio as presidio_module
+
+    guardrail = _http_presidio()
+    session = _FakeAnalyzerSession(delay=30)
+
+    with patch.object(
+        presidio_module, "PRESIDIO_ANALYZE_TIMEOUT_SECONDS", 0.05
+    ), patch.object(
+        guardrail, "_get_session_iterator", _fake_analyzer_session_iterator(session)
+    ):
+        with pytest.raises(Exception, match="Presidio PII analysis failed"):
+            await asyncio.wait_for(
+                guardrail.analyze_text(
+                    text="текст", presidio_config=None, request_data={}
+                ),
+                timeout=5,
+            )
+
+    assert session.timeouts[0].total == 0.05

@@ -83,6 +83,11 @@ _STREAM_UNMASK_CLAIM = "_presidio_stream_unmask_claimed"
 # Ёмкость считается как реплики × воркеры и разная по окружениям, поэтому берётся из env;
 # дефолт консервативный, чтобы подойти и коробке с одним слабым анализатором.
 PRESIDIO_ANALYZE_MAX_CONCURRENCY = get_env_int("PRESIDIO_ANALYZE_MAX_CONCURRENCY", 4)
+# Свой таймаут на разбор: дефолт aiohttp — 300с, и зависший анализатор держал ход дольше пяти минут,
+# чтобы в конце всё равно отказать. Держим заметно ниже gunicornTimeout анализатора (120с):
+# ждать дольше, чем живёт обрабатывающий воркер, бессмысленно.
+PRESIDIO_ANALYZE_TIMEOUT_SECONDS = get_env_int("PRESIDIO_ANALYZE_TIMEOUT", 30)
+
 # Семафор привязан к event-loop, поэтому держим по одному на каждый: в проде loop один и живёт
 # долго, в тестах на каждый прогон свой. Один семафор на процесс, а не на запрос: лимит должен
 # резать суммарный залп от всех ходов сразу.
@@ -525,6 +530,9 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
                         analyze_url,
                         json=analyze_payload,
                         headers={"Accept": "application/json"},
+                        timeout=aiohttp.ClientTimeout(
+                            total=PRESIDIO_ANALYZE_TIMEOUT_SECONDS
+                        ),
                     ) as response:
                         # Validate HTTP status
                         if response.status >= 400:
@@ -617,6 +625,7 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
                 anonymize_url,
                 json=anonymize_payload,
                 headers={"Accept": "application/json"},
+                timeout=aiohttp.ClientTimeout(total=PRESIDIO_ANALYZE_TIMEOUT_SECONDS),
             ) as response:
                 if response.status >= 400:
                     error_body = await response.text()
