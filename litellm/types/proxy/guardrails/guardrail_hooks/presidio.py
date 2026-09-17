@@ -19,3 +19,6 @@ class PresidioAnalyzeResponseItem(TypedDict, total=False):
     score: Optional[float]
     analysis_explanation: Optional[Dict[str, Any]]
     recognition_metadata: Optional[Dict[str, Any]]
+    # Найденное значение. Заполняется, когда спан нашли в раскодированном тексте, а start/end
+    # переведены в координаты исходной строки: подстрока по ним — запись \uXXXX, а не значение.
+    value: Optional[str]

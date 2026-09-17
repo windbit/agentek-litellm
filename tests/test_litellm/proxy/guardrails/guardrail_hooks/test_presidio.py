@@ -4544,3 +4544,236 @@ async def test_slow_analyzer_fails_the_guardrail_instead_of_hanging():
             )
 
     assert session.timeouts[0].total == 0.05
+
+
+# ---------------------------------------------------------------------------
+# windbit/issues#1447: ПДн в экранированном виде (`\uXXXX`)
+# ---------------------------------------------------------------------------
+
+ESCAPED_NAME = "Степан Колосов"
+
+
+def _masking_presidio() -> _OPTIONAL_PresidioPIIMasking:
+    return _OPTIONAL_PresidioPIIMasking(
+        mock_testing=True,
+        output_parse_pii=True,
+        guardrail_name="pii",
+        default_on=True,
+        pii_entities_config={PiiEntityType.PERSON: PiiAction.MASK},
+    )
+
+
+def _analyzer_finding(*names):
+    """Анализатор видит только тот текст, который ему дали: имена ищем в нём, а не в оригинале."""
+
+    async def analyze(text, presidio_config, request_data):
+        spans = []
+        for name in names:
+            start = text.find(name)
+            while start >= 0:
+                spans.append(
+                    {
+                        "start": start,
+                        "end": start + len(name),
+                        "entity_type": "PERSON",
+                        "score": 0.9,
+                    }
+                )
+                start = text.find(name, start + len(name))
+        return spans
+
+    return analyze
+
+
+async def _mask(guardrail, text, request_data=None, names=(ESCAPED_NAME,)):
+    with patch.object(
+        guardrail, "_analyze_with_analyzer", side_effect=_analyzer_finding(*names)
+    ):
+        return await guardrail.check_pii(
+            text=text,
+            output_parse_pii=True,
+            presidio_config=None,
+            request_data=request_data if request_data is not None else {},
+        )
+
+
+@pytest.mark.asyncio
+async def test_escaped_tool_output_is_masked_on_the_responses_request_path():
+    """Кейс issue: вывод тула, собранный json.dumps без ensure_ascii, уходил провайдеру открытым."""
+    from litellm.proxy.guardrails.guardrail_hooks.unified_guardrail.unified_guardrail import (
+        UnifiedLLMGuardrails,
+    )
+
+    guardrail = _masking_presidio()
+    data = {
+        "model": "gpt-5",
+        "input": [
+            {"role": "user", "content": "Кто владелец?"},
+            {
+                "type": "function_call_output",
+                "call_id": "c1",
+                "output": json.dumps({"name": ESCAPED_NAME}),
+            },
+        ],
+        "guardrail_to_apply": guardrail,
+    }
+    assert ESCAPED_NAME not in data["input"][1]["output"]
+
+    with patch.object(
+        guardrail, "_analyze_with_analyzer", side_effect=_analyzer_finding(ESCAPED_NAME)
+    ):
+        data = await UnifiedLLMGuardrails().async_pre_call_hook(
+            user_api_key_dict=UserAPIKeyAuth(api_key="k"),
+            cache=MagicMock(),
+            data=data,
+            call_type="aresponses",
+        )
+
+    assert json.loads(data["input"][1]["output"]) == {"name": "<PERSON_1>"}
+    assert data["metadata"]["pii_tokens"] == {"<PERSON_1>": ESCAPED_NAME}
+
+
+@pytest.mark.asyncio
+async def test_escaped_tool_output_is_masked_on_the_chat_request_path():
+    from litellm.llms.openai.chat.guardrail_translation.handler import (
+        OpenAIChatCompletionsHandler,
+    )
+
+    guardrail = _masking_presidio()
+    data = {
+        "model": "gpt-5",
+        "messages": [
+            {"role": "user", "content": "Кто владелец?"},
+            {
+                "role": "tool",
+                "tool_call_id": "c1",
+                "content": json.dumps({"owner": ESCAPED_NAME}),
+            },
+        ],
+    }
+
+    with patch.object(
+        guardrail, "_analyze_with_analyzer", side_effect=_analyzer_finding(ESCAPED_NAME)
+    ):
+        data = await OpenAIChatCompletionsHandler().process_input_messages(
+            data, guardrail
+        )
+
+    assert json.loads(data["messages"][1]["content"]) == {"owner": "<PERSON_1>"}
+
+
+@pytest.mark.asyncio
+async def test_escaped_name_keeps_the_rest_of_the_source_string_untouched():
+    guardrail = _masking_presidio()
+    source = json.dumps({"name": ESCAPED_NAME, "role": "владелец"}, ensure_ascii=True)
+
+    masked = await _mask(guardrail, source)
+
+    assert json.loads(masked) == {"name": "<PERSON_1>", "role": "владелец"}
+    assert masked == source.replace(
+        json.dumps(ESCAPED_NAME)[1:-1], "<PERSON_1>"
+    ), "заменяется только найденный отрезок исходной строки"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "",
+        "Владелец: ",
+        json.dumps("😀")[1:-1] + " ",
+        "путь C:\\\\Users ",
+        "\\\\u0421 ",
+    ],
+)
+async def test_escaped_name_is_found_after_any_prefix(prefix):
+    """Суррогатная пара и экранированный обратный слеш не должны смещать спаны."""
+    guardrail = _masking_presidio()
+    source = prefix + json.dumps(ESCAPED_NAME)[1:-1]
+
+    masked = await _mask(guardrail, source)
+
+    assert masked == prefix + "<PERSON_1>"
+
+
+@pytest.mark.asyncio
+async def test_span_that_starts_in_plain_text_and_ends_escaped():
+    guardrail = _masking_presidio()
+    source = "Степан " + json.dumps("Колосов")[1:-1]
+
+    masked = await _mask(guardrail, source)
+
+    assert masked == "<PERSON_1>"
+
+
+@pytest.mark.asyncio
+async def test_adjacent_escaped_spans_get_their_own_tokens():
+    guardrail = _masking_presidio()
+    second_name = "Анна Смирнова"
+    source = json.dumps(f"{ESCAPED_NAME}, {second_name}")[1:-1]
+    request_data = {}
+
+    masked = await _mask(
+        guardrail, source, request_data, names=(ESCAPED_NAME, second_name)
+    )
+
+    assert masked == "<PERSON_1>, <PERSON_2>"
+    assert request_data["metadata"]["pii_tokens"] == {
+        "<PERSON_1>": ESCAPED_NAME,
+        "<PERSON_2>": second_name,
+    }
+
+
+@pytest.mark.asyncio
+async def test_text_without_escapes_goes_to_the_analyzer_as_is():
+    from litellm.proxy.guardrails.guardrail_hooks.json_escaped_text import (
+        decode_json_escapes,
+    )
+
+    guardrail = _masking_presidio()
+    plain = f"Владелец — {ESCAPED_NAME}"
+    analyzed = []
+
+    async def capture(text, presidio_config, request_data):
+        analyzed.append(text)
+        return []
+
+    with patch.object(guardrail, "_analyze_with_analyzer", side_effect=capture):
+        await guardrail.analyze_text(text=plain, presidio_config=None, request_data={})
+
+    assert decode_json_escapes(plain) is None
+    assert analyzed[0] is plain
+
+
+@pytest.mark.parametrize(
+    "source, decoded",
+    [
+        (
+            '{"name": "\\u0421\\u0442\\u0435\\u043f\\u0430\\u043d"}',
+            '{"name": "Степан"}',
+        ),
+        ("\\ud83d\\ude00 \\u0410", "😀 А"),
+        ("\\\\u0421", "\\u0421"),
+        ("\\u0421\\u04", "С\\u04"),
+        ("\\ud83d\\u0410", "\\ud83dА"),
+        ('\\"\\n\\t\\u0410', '"\n\tА'),
+        ("\\uZZZZ\\u0410", "\\uZZZZА"),
+    ],
+)
+def test_decode_json_escapes_positions(source, decoded):
+    from litellm.proxy.guardrails.guardrail_hooks.json_escaped_text import (
+        decode_json_escapes,
+    )
+
+    result = decode_json_escapes(source)
+
+    assert result is not None
+    assert result.text == decoded
+    assert result.source_offset(len(decoded)) == len(source)
+    offsets = [result.source_offset(index) for index in range(len(decoded) + 1)]
+    assert offsets == sorted(offsets), "карта позиций монотонна"
+    for index, char in enumerate(decoded):
+        start, end = result.source_span(index, index + 1)
+        assert start < end <= len(source)
+        # Символ либо лежит в исходной строке как есть, либо записан эскейпом на своём отрезке.
+        assert source[start:end] == char or source[start:end].startswith("\\")

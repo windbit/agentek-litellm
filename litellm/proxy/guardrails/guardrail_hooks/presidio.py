@@ -53,6 +53,10 @@ from litellm.types.guardrails import (
     PiiEntityType,
     PresidioPerRequestConfig,
 )
+from litellm.proxy.guardrails.guardrail_hooks.json_escaped_text import (
+    DecodedText,
+    decode_json_escapes,
+)
 from litellm.proxy.guardrails.guardrail_hooks.pii_rules import (
     PiiRuleEngine,
     RulebookError,
@@ -417,19 +421,43 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
                 self._span_cache.move_to_end(cache_key)
                 return list(cached)
 
-        rule_spans = self._analyze_with_rules(text)
+        # Кириллица, экранированная как \uXXXX (json.dumps без ensure_ascii), для анализатора и
+        # правил выглядит текстом без букв, и ПДн в ней остаются незамеченными. Разбираем
+        # раскодированный текст, а спаны возвращаем в координатах исходной строки:
+        # маска встаёт в неё, и ни формат, ни остальной текст не меняются.
+        decoded = decode_json_escapes(text)
+        analysis_text = decoded.text if decoded is not None else text
+
+        rule_spans = self._analyze_with_rules(analysis_text)
         nlp_results = await self._analyze_with_analyzer(
-            text=text, presidio_config=presidio_config, request_data=request_data
+            text=analysis_text,
+            presidio_config=presidio_config,
+            request_data=request_data,
         )
         # dict — это ответ мока или разобранная ошибка анализатора; такой ответ не смешиваем и не кэшируем.
         if isinstance(nlp_results, dict):
             return nlp_results
         merged = list(nlp_results) + rule_spans
+        if decoded is not None:
+            merged = [self._span_in_source_text(span, decoded) for span in merged]
         if cache_key is not None:
             self._span_cache[cache_key] = list(merged)
             while len(self._span_cache) > self._span_cache_limit:
                 self._span_cache.popitem(last=False)
         return merged
+
+    @staticmethod
+    def _span_in_source_text(
+        span: PresidioAnalyzeResponseItem, decoded: DecodedText
+    ) -> PresidioAnalyzeResponseItem:
+        """Спан раскодированного текста — в координаты исходной строки, со значением как его увидел анализатор."""
+        start, end = decoded.source_span(span["start"], span["end"])
+        return {
+            **span,
+            "start": start,
+            "end": end,
+            "value": decoded.text[span["start"] : span["end"]],
+        }
 
     def _span_cache_key(
         self,
@@ -719,7 +747,9 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
         replacements = {}
         for ar in sorted_forward:
             prefix = f"<{ar['entity_type']}"
-            key = (prefix, text[ar["start"] : ar["end"]])
+            # У спана из экранированного текста значение своё: в исходной строке на его месте
+            # лежит запись \uXXXX, а восстанавливать в ответе надо имя, а не её.
+            key = (prefix, ar.get("value") or text[ar["start"] : ar["end"]])
             token = token_by_value.get(key)
             if token is None:
                 token = f"{prefix}_{len(pii_tokens) + 1}>"
