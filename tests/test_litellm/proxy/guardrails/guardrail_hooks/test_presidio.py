@@ -3571,3 +3571,41 @@ async def test_numbered_tokens_do_not_collide_across_messages():
         guardrail._unmask_pii_text(masked_user, data["metadata"]["pii_tokens"])
         == user_text
     )
+
+
+@pytest.mark.asyncio
+async def test_numbered_tokens_follow_message_order_under_gather():
+    """Token numbers follow message order even when the first message's analysis finishes last."""
+    guardrail = _OPTIONAL_PresidioPIIMasking(
+        mock_testing=True,
+        output_parse_pii=True,
+        pii_entities_config={PiiEntityType.PERSON: PiiAction.MASK},
+    )
+    first = "Автор Дарьи Волченко"
+    second = "Пилот. Дашборд готов."
+    spans = {
+        first: (6, len(first), 0.05),
+        second: (7, 14, 0.0),
+    }
+
+    async def fake_analyze(text, presidio_config, request_data):
+        start, end, delay = spans[text]
+        await asyncio.sleep(delay)
+        return [{"start": start, "end": end, "entity_type": "PERSON", "score": 0.85}]
+
+    data = {"metadata": {}}
+    with patch.object(guardrail, "analyze_text", side_effect=fake_analyze):
+        masked = await asyncio.gather(
+            *(
+                guardrail.check_pii(
+                    text=t,
+                    output_parse_pii=True,
+                    presidio_config=None,
+                    request_data=data,
+                )
+                for t in (first, second)
+            )
+        )
+
+    assert masked == ["Автор <PERSON_1>", "Пилот. <PERSON_2> готов."]
+    assert guardrail._numbering_turns == {}

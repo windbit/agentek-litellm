@@ -161,6 +161,9 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
         # Loop-bound session cache for background threads
         self._loop_sessions: Dict[asyncio.AbstractEventLoop, aiohttp.ClientSession] = {}
 
+        # Хвост очереди нумерации токенов на запрос (ключ — id(request_data)).
+        self._numbering_turns: Dict[int, asyncio.Future] = {}
+
         # Имена нельзя оставить на усмотрение конфигурации: правила берут ФИО только в
         # канонических формах, всё остальное — редкие и иностранные имена, фамилия без имени,
         # обращение по имени — держится на языковом слое. Гардрейл, настроенный без PERSON,
@@ -853,6 +856,28 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
                         guardrail_name=self.guardrail_name,
                     )
 
+    def _claim_numbering_turn(
+        self, request_data: dict
+    ) -> Tuple[Optional[asyncio.Future], asyncio.Future]:
+        """
+        Встать в очередь нумерации токенов запроса; вызывать до первого await.
+
+        Сообщения анализируются параллельно, но номера раздаются в порядке вызова
+        check_pii (gather стартует задачи по порядку) — иначе промпт модели зависит
+        от того, чей анализ вернулся первым, и не попадает в prompt cache.
+        """
+        key = id(request_data)
+        previous = self._numbering_turns.get(key)
+        own = asyncio.get_running_loop().create_future()
+        self._numbering_turns[key] = own
+        return previous, own
+
+    def _release_numbering_turn(self, request_data: dict, own: asyncio.Future) -> None:
+        if not own.done():
+            own.set_result(None)
+        if self._numbering_turns.get(id(request_data)) is own:
+            del self._numbering_turns[id(request_data)]
+
     async def check_pii(
         self,
         text: str,
@@ -868,6 +893,7 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
         status: GuardrailStatus = "success"
         masked_entity_count: Dict[str, int] = {}
         exception_str: str = ""
+        previous_turn, own_turn = self._claim_numbering_turn(request_data)
         try:
             if self.mock_redacted_text is not None:
                 redacted_text = self.mock_redacted_text
@@ -898,6 +924,9 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
                     analyze_results=analyze_results
                 )
 
+                if previous_turn is not None:
+                    await previous_turn
+
                 # Then anonymize the text using the analysis results
                 anonymized_text = await self.anonymize_text(
                     text=text,
@@ -913,6 +942,7 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
             exception_str = str(e)
             raise e
         finally:
+            self._release_numbering_turn(request_data, own_turn)
             ####################################################
             # Create Guardrail Trace for logging on Langfuse, Datadog, etc.
             ####################################################
