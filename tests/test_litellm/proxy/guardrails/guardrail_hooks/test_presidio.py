@@ -7,7 +7,7 @@ import asyncio
 import json
 import os
 import sys
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -4376,3 +4376,147 @@ async def test_chat_request_masks_tool_call_arguments_in_history():
     tool_call = data["messages"][1]["tool_calls"][0]
     assert json.loads(tool_call["function"]["arguments"]) == {"query": RESPONSES_TOKEN}
     assert data["messages"][0]["content"] == f"Найди {RESPONSES_TOKEN}"
+
+
+# ---------------------------------------------------------------------------
+# I#738: потолок одновременных разборов и таймаут анализатора
+# ---------------------------------------------------------------------------
+
+
+class _FakeAnalyzerResponse:
+    status = 200
+    content_type = "application/json"
+    headers = {"Content-Type": "application/json"}
+
+    async def json(self):
+        return []
+
+    async def text(self):
+        return "[]"
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+
+class _FakeAnalyzerCall:
+    """Вызов анализатора: считает одновременные разборы и уважает переданный ClientTimeout."""
+
+    def __init__(self, session, timeout):
+        self.session = session
+        self.timeout = timeout
+
+    async def __aenter__(self):
+        self.session.timeouts.append(self.timeout)
+        self.session.in_flight += 1
+        self.session.peak_in_flight = max(
+            self.session.peak_in_flight, self.session.in_flight
+        )
+        try:
+            await asyncio.wait_for(
+                asyncio.sleep(self.session.delay),
+                self.timeout.total if self.timeout else None,
+            )
+        finally:
+            self.session.in_flight -= 1
+        return _FakeAnalyzerResponse()
+
+    async def __aexit__(self, *args):
+        return False
+
+
+class _FakeAnalyzerSession:
+    def __init__(self, delay=0.0):
+        self.delay = delay
+        self.in_flight = 0
+        self.peak_in_flight = 0
+        self.timeouts = []
+
+    def post(self, url, json=None, headers=None, timeout=None):
+        return _FakeAnalyzerCall(self, timeout)
+
+
+def _fake_analyzer_session_iterator(session):
+    @asynccontextmanager
+    async def iterator():
+        yield session
+
+    return iterator
+
+
+@contextmanager
+def _analyzer_concurrency_limit(limit):
+    from litellm.proxy.guardrails.guardrail_hooks import presidio as presidio_module
+
+    with patch.object(presidio_module, "PRESIDIO_ANALYZE_MAX_CONCURRENCY", limit):
+        presidio_module._analyze_slots.clear()
+        try:
+            yield
+        finally:
+            presidio_module._analyze_slots.clear()
+
+
+def _http_presidio() -> _OPTIONAL_PresidioPIIMasking:
+    return _OPTIONAL_PresidioPIIMasking(
+        presidio_analyzer_api_base="http://mock-presidio:5002/",
+        presidio_anonymizer_api_base="http://mock-presidio:5001/",
+        output_parse_pii=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_analyzer_calls_stay_within_the_configured_limit():
+    """Потолок общий на процесс: два десятка параллельных ходов не должны собираться в залп."""
+    guardrail = _http_presidio()
+    session = _FakeAnalyzerSession(delay=0.02)
+
+    with _analyzer_concurrency_limit(2), patch.object(
+        guardrail, "_get_session_iterator", _fake_analyzer_session_iterator(session)
+    ):
+        await asyncio.gather(
+            *(
+                guardrail.analyze_text(
+                    text=f"текст {n}", presidio_config=None, request_data={}
+                )
+                for n in range(8)
+            )
+        )
+
+    assert session.peak_in_flight == 2
+
+
+@pytest.mark.asyncio
+async def test_cached_spans_do_not_wait_for_an_analyzer_slot():
+    """Кэш-хит не занимает слот: иначе повтор истории на каждом шаге стоит в общей очереди."""
+    from litellm.proxy.guardrails.guardrail_hooks import presidio as presidio_module
+
+    guardrail = _http_presidio()
+    session = _FakeAnalyzerSession()
+    cached_text = "этот текст уже разбирали"
+
+    with _analyzer_concurrency_limit(1), patch.object(
+        guardrail, "_get_session_iterator", _fake_analyzer_session_iterator(session)
+    ):
+        await guardrail.analyze_text(
+            text=cached_text, presidio_config=None, request_data={}
+        )
+        await presidio_module._analyze_slot().acquire()
+
+        assert (
+            await asyncio.wait_for(
+                guardrail.analyze_text(
+                    text=cached_text, presidio_config=None, request_data={}
+                ),
+                timeout=1,
+            )
+            == []
+        )
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(
+                guardrail.analyze_text(
+                    text="новый текст", presidio_config=None, request_data={}
+                ),
+                timeout=0.2,
+            )

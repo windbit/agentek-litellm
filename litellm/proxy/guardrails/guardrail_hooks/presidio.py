@@ -33,6 +33,7 @@ import aiohttp
 import litellm
 from litellm import get_secret
 from litellm._logging import verbose_proxy_logger
+from litellm.litellm_core_utils.env_utils import get_env_int
 from litellm.types.utils import GenericGuardrailAPIInputs
 
 if TYPE_CHECKING:
@@ -75,6 +76,26 @@ from litellm.utils import (
 
 # Хук стрима зарегистрирован дважды (pre+post и post-only), и прокси вкладывает их друг в друга.
 _STREAM_UNMASK_CLAIM = "_presidio_stream_unmask_claimed"
+
+# Анализатор — общий на окружение ресурс, а ход шлёт всю свою историю одним gather: без потолка
+# два десятка параллельных ходов дают залп в сотню разборов, анализатор проседает до 15с на запрос
+# и промахивается мимо своей liveness-пробы (timeoutSeconds: 10) — это инцидент I#738 с его рестартами.
+# Ёмкость считается как реплики × воркеры и разная по окружениям, поэтому берётся из env;
+# дефолт консервативный, чтобы подойти и коробке с одним слабым анализатором.
+PRESIDIO_ANALYZE_MAX_CONCURRENCY = get_env_int("PRESIDIO_ANALYZE_MAX_CONCURRENCY", 4)
+# Семафор привязан к event-loop, поэтому держим по одному на каждый: в проде loop один и живёт
+# долго, в тестах на каждый прогон свой. Один семафор на процесс, а не на запрос: лимит должен
+# резать суммарный залп от всех ходов сразу.
+_analyze_slots: Dict[Any, asyncio.Semaphore] = {}
+
+
+def _analyze_slot() -> asyncio.Semaphore:
+    loop = asyncio.get_running_loop()
+    slot = _analyze_slots.get(loop)
+    if slot is None:
+        slot = asyncio.Semaphore(PRESIDIO_ANALYZE_MAX_CONCURRENCY)
+        _analyze_slots[loop] = slot
+    return slot
 
 
 class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
@@ -497,32 +518,37 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
                     )
                     return []
 
-                async with session.post(
-                    analyze_url,
-                    json=analyze_payload,
-                    headers={"Accept": "application/json"},
-                ) as response:
-                    # Validate HTTP status
-                    if response.status >= 400:
-                        error_body = await response.text()
-                        return _fail_on_invalid_response(
-                            f"HTTP {response.status} from Presidio analyzer: {error_body[:200]}"
-                        )
+                # Слот держим только на время обращения к анализатору: разбор ответа и кэш
+                # своей очереди не занимают.
+                async with _analyze_slot():
+                    async with session.post(
+                        analyze_url,
+                        json=analyze_payload,
+                        headers={"Accept": "application/json"},
+                    ) as response:
+                        # Validate HTTP status
+                        if response.status >= 400:
+                            error_body = await response.text()
+                            return _fail_on_invalid_response(
+                                f"HTTP {response.status} from Presidio analyzer: {error_body[:200]}"
+                            )
 
-                    # Validate Content-Type is JSON
-                    content_type = getattr(
-                        response,
-                        "content_type",
-                        response.headers.get("Content-Type", ""),
-                    )
-                    if "application/json" not in content_type:
-                        error_body = await response.text()
-                        return _fail_on_invalid_response(
-                            f"expected application/json Content-Type but received '{content_type}'; body: '{error_body[:200]}'"
+                        # Validate Content-Type is JSON
+                        content_type = getattr(
+                            response,
+                            "content_type",
+                            response.headers.get("Content-Type", ""),
                         )
+                        if "application/json" not in content_type:
+                            error_body = await response.text()
+                            return _fail_on_invalid_response(
+                                f"expected application/json Content-Type but received '{content_type}'; body: '{error_body[:200]}'"
+                            )
 
-                    analyze_results = await response.json()
-                    verbose_proxy_logger.debug("analyze_results: %s", analyze_results)
+                        analyze_results = await response.json()
+                        verbose_proxy_logger.debug(
+                            "analyze_results: %s", analyze_results
+                        )
 
                 # Handle error responses from Presidio (e.g., {'error': 'No text provided'})
                 # Presidio may return a dict instead of a list when errors occur
