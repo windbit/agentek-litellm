@@ -4330,3 +4330,49 @@ async def test_span_cache_covers_responses_text_outside_message_content():
         == "Пользователя зовут <PERSON_1>."
     )
     assert second_step["input"][1]["output"] == '{"owner": "<PERSON_1>"}'
+
+
+@pytest.mark.asyncio
+async def test_chat_request_masks_tool_call_arguments_in_history():
+    """Аргументы прошлого вызова тула на /chat/completions уходят провайдеру так же, как текст сообщений."""
+    from litellm.llms.openai.chat.guardrail_translation.handler import (
+        OpenAIChatCompletionsHandler,
+    )
+
+    guardrail = _OPTIONAL_PresidioPIIMasking(
+        mock_testing=True, output_parse_pii=True, guardrail_name="pii"
+    )
+    data = {
+        "model": "gpt-5",
+        "metadata": {},
+        "messages": [
+            {"role": "user", "content": f"Найди {RESPONSES_NAME}"},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "web_search",
+                            "arguments": json.dumps(
+                                {"query": RESPONSES_NAME}, ensure_ascii=False
+                            ),
+                        },
+                    }
+                ],
+            },
+        ],
+    }
+
+    with patch.object(
+        guardrail, "analyze_text", side_effect=_fake_person_analyzer(RESPONSES_NAME)
+    ):
+        data = await OpenAIChatCompletionsHandler().process_input_messages(
+            data, guardrail
+        )
+
+    tool_call = data["messages"][1]["tool_calls"][0]
+    assert json.loads(tool_call["function"]["arguments"]) == {"query": RESPONSES_TOKEN}
+    assert data["messages"][0]["content"] == f"Найди {RESPONSES_TOKEN}"

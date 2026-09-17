@@ -1725,22 +1725,32 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
         if input_type == "response" and self.output_parse_pii:
             return self._restore_response_inputs(inputs, request_data)
 
+        # Аргументы прошлых вызовов тулов в истории /chat/completions уходят провайдеру наравне с текстом.
+        tool_call_functions = [
+            tool_call["function"]
+            for tool_call in inputs.get("tool_calls") or []
+            if tool_call.get("function", {}).get("arguments")
+        ]
         # Параллельно, как в async_pre_call_hook: шаг длится как самый длинный текст, а не их сумма.
         # Номера токенов всё равно раздаются по порядку текстов (см. _claim_numbering_turn).
         request_data = request_data or {}
-        inputs["texts"] = list(
-            await asyncio.gather(
-                *(
-                    self.check_pii(
-                        text=text,
-                        output_parse_pii=self.output_parse_pii,
-                        presidio_config=None,
-                        request_data=request_data,
-                    )
-                    for text in texts
+        masked = await asyncio.gather(
+            *(
+                self.check_pii(
+                    text=text,
+                    output_parse_pii=self.output_parse_pii,
+                    presidio_config=None,
+                    request_data=request_data,
                 )
+                for text in [
+                    *texts,
+                    *(function["arguments"] for function in tool_call_functions),
+                ]
             )
         )
+        inputs["texts"] = masked[: len(texts)]
+        for function, arguments in zip(tool_call_functions, masked[len(texts) :]):
+            function["arguments"] = arguments
         return inputs
 
     def _restore_response_inputs(
