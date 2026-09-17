@@ -3523,3 +3523,51 @@ async def test_unexpected_masking_failure_is_not_hidden(presidio_guardrail, monk
             response=stream(), request_data={"metadata": {}, "messages": []}
         ):
             pass
+
+
+@pytest.mark.asyncio
+async def test_numbered_tokens_do_not_collide_across_messages():
+    """windbit/issues#1439: messages of one request share pii_tokens, so a false-positive PERSON in one message must not overwrite a real name masked in another."""
+    guardrail = _OPTIONAL_PresidioPIIMasking(
+        mock_testing=True,
+        output_parse_pii=True,
+        pii_entities_config={PiiEntityType.PERSON: PiiAction.MASK},
+    )
+    data = {"metadata": {}}
+    tool_text = "Внедрение AI в рабочие процессы Дарьи Волченко"
+    user_text = "Пилот. Дашборд был доработан."
+    repeat_text = "Автор: Дарьи Волченко"
+
+    masked_tool = await guardrail.anonymize_text(
+        tool_text,
+        [{"start": 32, "end": len(tool_text), "entity_type": "PERSON", "score": 0.85}],
+        True,
+        {},
+        data,
+    )
+    masked_user = await guardrail.anonymize_text(
+        user_text,
+        [{"start": 7, "end": 14, "entity_type": "PERSON", "score": 0.85}],
+        True,
+        {},
+        data,
+    )
+    masked_repeat = await guardrail.anonymize_text(
+        repeat_text,
+        [{"start": 7, "end": len(repeat_text), "entity_type": "PERSON", "score": 0.85}],
+        True,
+        {},
+        data,
+    )
+
+    assert masked_tool.endswith("<PERSON_1>")
+    assert masked_user == "Пилот. <PERSON_2> был доработан."
+    assert masked_repeat == "Автор: <PERSON_1>"
+    assert data["metadata"]["pii_tokens"] == {
+        "<PERSON_1>": "Дарьи Волченко",
+        "<PERSON_2>": "Дашборд",
+    }
+    assert (
+        guardrail._unmask_pii_text(masked_user, data["metadata"]["pii_tokens"])
+        == user_text
+    )

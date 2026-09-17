@@ -660,14 +660,27 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
             request_data["metadata"]["pii_tokens"] = {}
         pii_tokens = request_data["metadata"]["pii_tokens"]
 
-        # Assign sequence numbers in forward (left-to-right) order so
-        # that <PERSON_1> is the first entity in the text, etc.
+        # Сообщения запроса маскируются по отдельности, а словарь токенов у запроса один:
+        # нумерация продолжается сквозь запрос, иначе <PERSON_1> из разных сообщений
+        # перетирают друг друга и размаскировка подставляет чужое значение.
+        # Одинаковое значение получает тот же токен — модель видит одну сущность.
         sorted_forward = sorted(
             self._drop_overlapping_results(analyze_results), key=lambda x: x["start"]
         )
-        seq_map = {}
-        for idx, ar in enumerate(sorted_forward, start=1):
-            seq_map[(ar["start"], ar["end"])] = idx
+        token_by_value = {
+            (token.rsplit("_", 1)[0], value): token
+            for token, value in pii_tokens.items()
+        }
+        replacements = {}
+        for ar in sorted_forward:
+            prefix = f"<{ar['entity_type']}"
+            key = (prefix, text[ar["start"] : ar["end"]])
+            token = token_by_value.get(key)
+            if token is None:
+                token = f"{prefix}_{len(pii_tokens) + 1}>"
+                pii_tokens[token] = key[1]
+                token_by_value[key] = token
+            replacements[(ar["start"], ar["end"])] = token
 
         # Apply replacements in reverse order by start position so
         # that replacing later spans first does not shift earlier
@@ -676,13 +689,7 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
             start = ar["start"]
             end = ar["end"]
             entity_type = ar["entity_type"]
-            replacement = f"<{entity_type}>"
-            seq = seq_map[(start, end)]
-            if replacement.endswith(">"):
-                replacement = f"{replacement[:-1]}_{seq}>"
-            else:
-                replacement = f"{replacement}_{seq}"
-            pii_tokens[replacement] = text[start:end]
+            replacement = replacements[(start, end)]
             new_text = new_text[:start] + replacement + new_text[end:]
             masked_entity_count[entity_type] = (
                 masked_entity_count.get(entity_type, 0) + 1
