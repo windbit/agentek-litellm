@@ -38,6 +38,10 @@ from litellm.completion_extras.litellm_responses_transformation.transformation i
     OpenAiResponsesToChatCompletionStreamIterator,
 )
 from litellm.llms.base_llm.guardrail_translation.base_translation import BaseTranslation
+from litellm.llms.base_llm.guardrail_translation.utils import (
+    effective_skip_system_message_for_guardrail,
+    effective_skip_tool_message_for_guardrail,
+)
 from litellm.responses.litellm_completion_transformation.transformation import (
     LiteLLMCompletionResponsesConfig,
 )
@@ -57,6 +61,12 @@ if TYPE_CHECKING:
     from litellm.integrations.custom_guardrail import CustomGuardrail
     from litellm.types.llms.openai import ResponseInputParam
     from litellm.types.utils import ResponsesAPIResponse
+
+# Где лежит проверяемый текст: data["instructions"], item["arguments"], part["text"] и т.п.
+_TextSlot = Tuple[Dict[str, Any], str]
+
+_TOOL_CALL_TEXT_FIELDS = {"function_call": "arguments", "custom_tool_call": "input"}
+_TOOL_OUTPUT_TYPES = ("function_call_output", "custom_tool_call_output")
 
 
 class OpenAIResponsesHandler(BaseTranslation):
@@ -100,103 +110,69 @@ class OpenAIResponsesHandler(BaseTranslation):
         Handles both string input and list of message objects.
         """
         input_data: Optional[Union[str, "ResponseInputParam"]] = data.get("input")
-        tools_to_check: List[ChatCompletionToolParam] = []
-        if input_data is None:
+        if input_data is None or not isinstance(input_data, (str, list)):
             return data
 
-        structured_messages = self.get_structured_messages(data)
-
-        # Handle simple string input
-        if isinstance(input_data, str):
-            inputs = GenericGuardrailAPIInputs(texts=[input_data])
-            original_tools: List[Dict[str, Any]] = []
-
-            # Extract and transform tools if present
-            if "tools" in data and data["tools"]:
-                original_tools = list(data["tools"])
-                self._extract_and_transform_tools(data["tools"], tools_to_check)
-                if tools_to_check:
-                    inputs["tools"] = tools_to_check
-            if structured_messages:
-                inputs["structured_messages"] = structured_messages  # type: ignore
-            # Include model information if available
-            model = data.get("model")
-            if model:
-                inputs["model"] = model
-
-            guardrailed_inputs = await guardrail_to_apply.apply_guardrail(
-                inputs=inputs,
-                request_data=data,
-                input_type="request",
-                logging_obj=litellm_logging_obj,
-            )
-            guardrailed_texts = guardrailed_inputs.get("texts", [])
-            data["input"] = guardrailed_texts[0] if guardrailed_texts else input_data
-            self._apply_guardrailed_tools_to_data(
-                data, original_tools, guardrailed_inputs.get("tools")
-            )
-            verbose_proxy_logger.debug("OpenAI Responses API: Processed string input")
-            return data
-
-        # Handle list input (ResponseInputParam)
-        if not isinstance(input_data, list):
-            return data
-
-        texts_to_check: List[str] = []
+        # Провайдер получает не только content сообщений: instructions, история тулов
+        # и summary рассуждений уходят ему так же открыто.
+        text_slots: List[_TextSlot] = []
         images_to_check: List[str] = []
-        task_mappings: List[Tuple[int, Optional[int]]] = []
-        original_tools_list: List[Dict[str, Any]] = list(data.get("tools") or [])
-
-        # Step 1: Extract all text content, images, and tools
-        for msg_idx, message in enumerate(input_data):
-            self._extract_input_text_and_images(
-                message=message,
-                msg_idx=msg_idx,
-                texts_to_check=texts_to_check,
-                images_to_check=images_to_check,
-                task_mappings=task_mappings,
+        if isinstance(data.get("instructions"), str) and not (
+            effective_skip_system_message_for_guardrail(guardrail_to_apply)
+        ):
+            text_slots.append((data, "instructions"))
+        if isinstance(input_data, str):
+            text_slots.append((data, "input"))
+        else:
+            skip_tool_output = effective_skip_tool_message_for_guardrail(
+                guardrail_to_apply
             )
+            for message in input_data:
+                self._extract_input_text_and_images(
+                    message=message,
+                    text_slots=text_slots,
+                    images_to_check=images_to_check,
+                    skip_tool_output=skip_tool_output,
+                )
 
-        # Extract and transform tools if present
-        if "tools" in data and data["tools"]:
+        if not text_slots:
+            return data
+
+        inputs = GenericGuardrailAPIInputs(
+            texts=[container[key] for container, key in text_slots]
+        )
+        if images_to_check:
+            inputs["images"] = images_to_check
+        original_tools: List[Dict[str, Any]] = list(data.get("tools") or [])
+        tools_to_check: List[ChatCompletionToolParam] = []
+        if original_tools:
             self._extract_and_transform_tools(data["tools"], tools_to_check)
-
-        # Step 2: Apply guardrail to all texts in batch
-        if texts_to_check:
-            inputs = GenericGuardrailAPIInputs(texts=texts_to_check)
-            if images_to_check:
-                inputs["images"] = images_to_check
             if tools_to_check:
                 inputs["tools"] = tools_to_check
-            if structured_messages:
-                inputs["structured_messages"] = structured_messages  # type: ignore
-            # Include model information if available
-            model = data.get("model")
-            if model:
-                inputs["model"] = model
-            guardrailed_inputs = await guardrail_to_apply.apply_guardrail(
-                inputs=inputs,
-                request_data=data,
-                input_type="request",
-                logging_obj=litellm_logging_obj,
-            )
+        structured_messages = self.get_structured_messages(data)
+        if structured_messages:
+            inputs["structured_messages"] = structured_messages  # type: ignore
+        model = data.get("model")
+        if model:
+            inputs["model"] = model
 
-            guardrailed_texts = guardrailed_inputs.get("texts", [])
-            self._apply_guardrailed_tools_to_data(
-                data,
-                original_tools_list,
-                guardrailed_inputs.get("tools"),
-            )
+        guardrailed_inputs = await guardrail_to_apply.apply_guardrail(
+            inputs=inputs,
+            request_data=data,
+            input_type="request",
+            logging_obj=litellm_logging_obj,
+        )
 
-            # Step 3: Map guardrail responses back to original input structure
-            await self._apply_guardrail_responses_to_input(
-                messages=input_data,
-                responses=guardrailed_texts,
-                task_mappings=task_mappings,
-            )
+        self._apply_guardrailed_tools_to_data(
+            data, original_tools, guardrailed_inputs.get("tools")
+        )
+        for (container, key), guardrailed_text in zip(
+            text_slots, guardrailed_inputs.get("texts", [])
+        ):
+            container[key] = guardrailed_text
 
         verbose_proxy_logger.debug(
-            "OpenAI Responses API: Processed input messages: %s", input_data
+            "OpenAI Responses API: Processed input messages: %s", data.get("input")
         )
 
         return data
@@ -286,73 +262,49 @@ class OpenAIResponsesHandler(BaseTranslation):
     def _extract_input_text_and_images(
         self,
         message: Any,  # Can be Dict[str, Any] or ResponseInputParam
-        msg_idx: int,
-        texts_to_check: List[str],
+        text_slots: List[_TextSlot],
         images_to_check: List[str],
-        task_mappings: List[Tuple[int, Optional[int]]],
+        skip_tool_output: bool,
     ) -> None:
         """
-        Extract text content and images from an input message.
+        Extract text locations and images from an input item.
 
         Override this method to customize text/image extraction logic.
         """
-        content = message.get("content", None)
-        if content is None:
+        item_type = message.get("type")
+        if item_type in _TOOL_OUTPUT_TYPES:
+            if not skip_tool_output:
+                self._append_text_slots(message, "output", text_slots)
             return
+        if item_type in _TOOL_CALL_TEXT_FIELDS:
+            self._append_text_slots(
+                message, _TOOL_CALL_TEXT_FIELDS[item_type], text_slots
+            )
+            return
+        self._append_text_slots(message, "summary", text_slots)
+        self._append_text_slots(message, "content", text_slots)
 
-        if isinstance(content, str):
-            # Simple string content
-            texts_to_check.append(content)
-            task_mappings.append((msg_idx, None))
-
-        elif isinstance(content, list):
-            # List content (e.g., multimodal with text and images)
-            for content_idx, content_item in enumerate(content):
-                if isinstance(content_item, dict):
-                    # Extract text
-                    text_str = content_item.get("text", None)
-                    if text_str is not None:
-                        texts_to_check.append(text_str)
-                        task_mappings.append((msg_idx, int(content_idx)))
-
-                    # Extract images
-                    if content_item.get("type") == "image_url":
-                        image_url = content_item.get("image_url", {})
-                        if isinstance(image_url, dict):
-                            url = image_url.get("url")
-                            if url:
-                                images_to_check.append(url)
-
-    async def _apply_guardrail_responses_to_input(
-        self,
-        messages: Any,  # Can be List[Dict[str, Any]] or ResponseInputParam
-        responses: List[str],
-        task_mappings: List[Tuple[int, Optional[int]]],
-    ) -> None:
-        """
-        Apply guardrail responses back to input messages.
-
-        Override this method to customize how responses are applied.
-        """
-        for task_idx, guardrail_response in enumerate(responses):
-            mapping = task_mappings[task_idx]
-            msg_idx = cast(int, mapping[0])
-            content_idx_optional = cast(Optional[int], mapping[1])
-
-            content = messages[msg_idx].get("content", None)
-            if content is None:
+        for content_item in message.get("content") or []:
+            if not isinstance(content_item, dict):
                 continue
+            if content_item.get("type") == "image_url":
+                image_url = content_item.get("image_url", {})
+                if isinstance(image_url, dict) and image_url.get("url"):
+                    images_to_check.append(image_url["url"])
 
-            if isinstance(content, str) and content_idx_optional is None:
-                # Replace string content with guardrail response
-                messages[msg_idx]["content"] = guardrail_response
-
-            elif isinstance(content, list) and content_idx_optional is not None:
-                # Replace specific text item in list content
-                if isinstance(messages[msg_idx]["content"][content_idx_optional], dict):
-                    messages[msg_idx]["content"][content_idx_optional][
-                        "text"
-                    ] = guardrail_response
+    @staticmethod
+    def _append_text_slots(
+        container: Dict[str, Any], key: str, text_slots: List[_TextSlot]
+    ) -> None:
+        value = container.get(key)
+        if isinstance(value, str):
+            text_slots.append((container, key))
+        elif isinstance(value, list):
+            text_slots.extend(
+                (part, "text")
+                for part in value
+                if isinstance(part, dict) and isinstance(part.get("text"), str)
+            )
 
     async def process_output_response(
         self,
@@ -403,8 +355,11 @@ class OpenAIResponsesHandler(BaseTranslation):
             verbose_proxy_logger.debug("OpenAI Responses API: Empty output in response")
             return response
 
+        tool_call_output_indexes: List[int] = []
+
         # Step 1: Extract all text content and tool calls from response output
         for output_idx, output_item in enumerate(response_output):
+            tool_calls_before = len(tool_calls_to_check)
             self._extract_output_text_and_images(
                 output_item=output_item,
                 output_idx=output_idx,
@@ -413,6 +368,8 @@ class OpenAIResponsesHandler(BaseTranslation):
                 task_mappings=task_mappings,
                 tool_calls_to_check=tool_calls_to_check,
             )
+            if len(tool_calls_to_check) > tool_calls_before:
+                tool_call_output_indexes.append(output_idx)
 
         # Step 2: Apply guardrail to all texts in batch
         if texts_to_check or tool_calls_to_check:
@@ -461,12 +418,31 @@ class OpenAIResponsesHandler(BaseTranslation):
                 responses=guardrailed_texts,
                 task_mappings=task_mappings,
             )
+            self._apply_guardrailed_tool_calls_to_output(
+                response_output=response_output,
+                tool_calls=guardrailed_inputs.get("tool_calls") or [],
+                output_indexes=tool_call_output_indexes,
+            )
 
         verbose_proxy_logger.debug(
             "OpenAI Responses API: Processed output response: %s", response
         )
 
         return response
+
+    @staticmethod
+    def _apply_guardrailed_tool_calls_to_output(
+        response_output: List[Any],
+        tool_calls: List[ChatCompletionToolCallChunk],
+        output_indexes: List[int],
+    ) -> None:
+        for output_idx, tool_call in zip(output_indexes, tool_calls):
+            arguments = tool_call["function"]["arguments"]
+            output_item = response_output[output_idx]
+            if isinstance(output_item, dict):
+                output_item["arguments"] = arguments
+            else:
+                output_item.arguments = arguments
 
     async def process_output_streaming_response(
         self,

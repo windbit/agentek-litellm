@@ -4,6 +4,7 @@ Tests PII detection and masking for different message formats
 """
 
 import asyncio
+import json
 import os
 import sys
 from contextlib import asynccontextmanager
@@ -3609,3 +3610,723 @@ async def test_numbered_tokens_follow_message_order_under_gather():
 
     assert masked == ["Автор <PERSON_1>", "Пилот. <PERSON_2> готов."]
     assert guardrail._numbering_turns == {}
+
+
+# ---------------------------------------------------------------------------
+# windbit/issues#1391: восстановление PII на /v1/responses
+# ---------------------------------------------------------------------------
+
+RESPONSES_TOKEN = "<PERSON_1>"
+RESPONSES_NAME = "Степан Колосов"
+CODEX_TEXT_SSE = os.path.join(
+    os.path.dirname(__file__), "presidio_responses_codex_text.sse"
+)
+CODEX_TOOL_SSE = os.path.join(
+    os.path.dirname(__file__), "presidio_responses_codex_tool.sse"
+)
+
+
+def _responses_event(raw: dict):
+    from litellm.llms.openai.responses.transformation import OpenAIResponsesAPIConfig
+
+    return OpenAIResponsesAPIConfig().transform_streaming_response(
+        model="gpt-5", parsed_chunk=raw, logging_obj=MagicMock()
+    )
+
+
+def _codex_events(sse_path: str) -> list:
+    """Кадры codex -> события LiteLLM, с тем же backfill пустого completed.output, что у стримингового итератора."""
+    from types import SimpleNamespace
+
+    from litellm.responses.streaming_iterator import BaseResponsesAPIStreamingIterator
+
+    state = SimpleNamespace(_streamed_output_items=[], completed_response=None)
+    events = []
+    with open(sse_path, encoding="utf-8") as sse:
+        for line in sse:
+            if not line.startswith("data: {"):
+                continue
+            event = _responses_event(json.loads(line[len("data: ") :]))
+            if event.type == "response.output_item.done":
+                state._streamed_output_items.append(event.item)
+            if event.type == "response.completed":
+                state.completed_response = event
+                BaseResponsesAPIStreamingIterator._backfill_empty_completed_output(state)  # type: ignore[arg-type]
+            events.append(event)
+    return events
+
+
+def _restoring_presidio() -> _OPTIONAL_PresidioPIIMasking:
+    return _OPTIONAL_PresidioPIIMasking(
+        mock_testing=True, output_parse_pii=True, guardrail_name="pii-restore"
+    )
+
+
+async def _through_hook(events, pii_tokens, pulled=None):
+    async def upstream():
+        for event in events:
+            if pulled is not None:
+                pulled.append(event)
+            yield event
+
+    received = []
+    async for event in _restoring_presidio().async_post_call_streaming_iterator_hook(
+        user_api_key_dict=UserAPIKeyAuth(api_key="k"),
+        response=upstream(),
+        request_data={"metadata": {"pii_tokens": pii_tokens}},
+    ):
+        received.append((event, len(pulled) if pulled is not None else None))
+    return received
+
+
+def _field(obj, name):
+    return obj.get(name) if isinstance(obj, dict) else getattr(obj, name)
+
+
+def _deltas(events, event_type, item_id=None):
+    return [
+        event.delta
+        for event in events
+        if event.type == event_type and (item_id is None or event.item_id == item_id)
+    ]
+
+
+def _one(events, event_type):
+    (event,) = [event for event in events if event.type == event_type]
+    return event
+
+
+def _text_delta(delta, sequence_number):
+    return _responses_event(
+        {
+            "type": "response.output_text.delta",
+            "item_id": "msg_1",
+            "output_index": 0,
+            "content_index": 0,
+            "delta": delta,
+            "sequence_number": sequence_number,
+        }
+    )
+
+
+def _text_done(text, sequence_number):
+    return _responses_event(
+        {
+            "type": "response.output_text.done",
+            "item_id": "msg_1",
+            "output_index": 0,
+            "content_index": 0,
+            "text": text,
+            "sequence_number": sequence_number,
+        }
+    )
+
+
+def _args_delta(delta, sequence_number, item_id="fc_1", output_index=0):
+    return _responses_event(
+        {
+            "type": "response.function_call_arguments.delta",
+            "item_id": item_id,
+            "output_index": output_index,
+            "delta": delta,
+            "sequence_number": sequence_number,
+        }
+    )
+
+
+def _args_done(arguments, sequence_number, item_id="fc_1", output_index=0):
+    return _responses_event(
+        {
+            "type": "response.function_call_arguments.done",
+            "item_id": item_id,
+            "output_index": output_index,
+            "arguments": arguments,
+            "sequence_number": sequence_number,
+        }
+    )
+
+
+def _function_call_item_done(
+    arguments, sequence_number, item_id="fc_1", output_index=0
+):
+    return _responses_event(
+        {
+            "type": "response.output_item.done",
+            "output_index": output_index,
+            "sequence_number": sequence_number,
+            "item": {
+                "id": item_id,
+                "type": "function_call",
+                "status": "completed",
+                "arguments": arguments,
+                "call_id": f"call_{item_id}",
+                "name": "web_search",
+            },
+        }
+    )
+
+
+def _completed(sequence_number):
+    return _responses_event(
+        {
+            "type": "response.completed",
+            "sequence_number": sequence_number,
+            "response": {
+                "id": "resp_1",
+                "created_at": 1,
+                "status": "completed",
+                "output": [],
+            },
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_responses_stream_codex_text_is_restored_in_every_event():
+    source = _codex_events(CODEX_TEXT_SSE)
+    shape = [(event.type, event.sequence_number) for event in source]
+
+    events = [
+        event
+        for event, _ in await _through_hook(source, {RESPONSES_TOKEN: RESPONSES_NAME})
+    ]
+
+    assert [(event.type, event.sequence_number) for event in events] == shape
+    item_done = _one(events, "response.output_item.done").item
+    completed_item = _one(events, "response.completed").response.output[0]
+    assert (
+        "".join(_deltas(events, "response.output_text.delta"))
+        == _one(events, "response.output_text.done").text
+        == _one(events, "response.content_part.done").part.text
+        == _field(item_done.content[0], "text")
+        == _field(_field(completed_item, "content")[0], "text")
+        == RESPONSES_NAME
+    )
+
+
+@pytest.mark.asyncio
+async def test_responses_stream_codex_tool_arguments_are_restored_in_every_event():
+    source = _codex_events(CODEX_TOOL_SSE)
+    shape = [(event.type, event.sequence_number) for event in source]
+
+    events = [
+        event
+        for event, _ in await _through_hook(source, {RESPONSES_TOKEN: RESPONSES_NAME})
+    ]
+
+    assert [(event.type, event.sequence_number) for event in events] == shape
+    deltas = _deltas(events, "response.function_call_arguments.delta")
+    arguments = _one(events, "response.function_call_arguments.done").arguments
+    assert deltas[:-1] == [""] * (len(deltas) - 1)
+    assert (
+        "".join(deltas)
+        == arguments
+        == _one(events, "response.output_item.done").item.arguments
+        == _field(_one(events, "response.completed").response.output[0], "arguments")
+    )
+    assert json.loads(arguments) == {"query": RESPONSES_NAME}
+    assert _one(events, "response.output_item.added").item.arguments == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "delta_type, done_type, key_field",
+    [
+        ("response.output_text.delta", "response.output_text.done", "content_index"),
+        (
+            "response.reasoning_summary_text.delta",
+            "response.reasoning_summary_text.done",
+            "summary_index",
+        ),
+    ],
+)
+async def test_responses_stream_holds_split_token_until_it_completes(
+    delta_type, done_type, key_field
+):
+    pieces = ["Имя: ", "<", "PERSON", "_", "1", ">", "."]
+
+    def delta_event(delta, sequence_number):
+        return _responses_event(
+            {
+                "type": delta_type,
+                "item_id": "item_1",
+                "output_index": 0,
+                key_field: 0,
+                "delta": delta,
+                "sequence_number": sequence_number,
+            }
+        )
+
+    source = [delta_event(piece, n) for n, piece in enumerate(pieces)]
+    source.append(
+        _responses_event(
+            {
+                "type": done_type,
+                "item_id": "item_1",
+                "output_index": 0,
+                key_field: 0,
+                "text": "".join(pieces),
+                "sequence_number": len(pieces),
+            }
+        )
+    )
+    pulled = []
+
+    received = await _through_hook(
+        source, {RESPONSES_TOKEN: RESPONSES_NAME}, pulled=pulled
+    )
+
+    events = [event for event, _ in received]
+    assert [event.sequence_number for event in events] == list(range(len(pieces) + 1))
+    assert "".join(_deltas(events, delta_type)) == f"Имя: {RESPONSES_NAME}."
+    assert _one(events, done_type).text == f"Имя: {RESPONSES_NAME}."
+    assert all(
+        RESPONSES_TOKEN[:2] not in event.delta
+        for event in events
+        if event.type == delta_type
+    )
+    first_event, pulled_when_yielded = received[0]
+    assert first_event.delta == "Имя: " and pulled_when_yielded == 1
+
+
+@pytest.mark.asyncio
+async def test_responses_stream_does_not_delay_angle_text_that_is_not_a_known_token():
+    pieces = ["a <", "div", "> <PERSON_", "7", "> b"]
+    source = [_text_delta(piece, n) for n, piece in enumerate(pieces)]
+    pulled = []
+
+    received = await _through_hook(
+        source, {RESPONSES_TOKEN: RESPONSES_NAME}, pulled=pulled
+    )
+
+    assert "".join(event.delta for event, _ in received) == "a <div> <PERSON_7> b"
+    pulled_when_yielded = {
+        event.sequence_number: pulled_count for event, pulled_count in received
+    }
+    assert pulled_when_yielded[0] <= 2
+    assert pulled_when_yielded[2] <= 4
+
+
+@pytest.mark.asyncio
+async def test_responses_stream_distinguishes_tokens_sharing_a_prefix():
+    source = [
+        _text_delta("<PERSON_1", 0),
+        _text_delta("2> и <PERSON_1", 1),
+        _text_delta(">", 2),
+        _text_done("<PERSON_12> и <PERSON_1>", 3),
+    ]
+
+    events = [
+        event
+        for event, _ in await _through_hook(
+            source, {"<PERSON_1>": "Анна", "<PERSON_12>": "Борис"}
+        )
+    ]
+
+    assert "".join(_deltas(events, "response.output_text.delta")) == "Борис и Анна"
+    assert _one(events, "response.output_text.done").text == "Борис и Анна"
+
+
+@pytest.mark.asyncio
+async def test_responses_stream_restores_tokens_in_a_single_pass():
+    source = [_text_delta("<PERSON_1>", 0), _text_done("<PERSON_1>", 1)]
+
+    events = [
+        event
+        for event, _ in await _through_hook(
+            source, {"<PERSON_1>": "<PERSON_2>", "<PERSON_2>": "Анна"}
+        )
+    ]
+
+    assert _deltas(events, "response.output_text.delta") == ["<PERSON_2>"]
+    assert _one(events, "response.output_text.done").text == "<PERSON_2>"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "value",
+    ['Степан "С" Колосов', "C:\\Users\\Степан", "строка 1\nстрока 2"],
+)
+async def test_responses_stream_restored_arguments_stay_valid_json(value):
+    masked = '{"query":"<PERSON_1>","limit":3}'
+    source = [_args_delta(char, n) for n, char in enumerate(masked)]
+    source += [
+        _args_done(masked, len(masked)),
+        _function_call_item_done(masked, len(masked) + 1),
+    ]
+
+    events = [
+        event for event, _ in await _through_hook(source, {RESPONSES_TOKEN: value})
+    ]
+
+    arguments = _one(events, "response.function_call_arguments.done").arguments
+    assert json.loads(arguments) == {"query": value, "limit": 3}
+    assert (
+        "".join(_deltas(events, "response.function_call_arguments.delta")) == arguments
+    )
+    assert _one(events, "response.output_item.done").item.arguments == arguments
+
+
+@pytest.mark.asyncio
+async def test_responses_stream_restores_json_nested_in_a_string_argument():
+    value = 'Степан "С" Колосов'
+    masked = json.dumps({"payload": json.dumps({"name": RESPONSES_TOKEN})})
+    source = [_args_delta(masked, 0), _args_done(masked, 1)]
+
+    events = [
+        event for event, _ in await _through_hook(source, {RESPONSES_TOKEN: value})
+    ]
+
+    arguments = _one(events, "response.function_call_arguments.done").arguments
+    assert json.loads(json.loads(arguments)["payload"]) == {"name": value}
+
+
+@pytest.mark.asyncio
+async def test_responses_stream_interleaved_parallel_tool_calls():
+    first = '{"query":"<PERSON_1>"}'
+    second = '{"query":"<PERSON_2>"}'
+    source = []
+    for n, (a, b) in enumerate(
+        zip(
+            [first[:6], first[6:12], first[12:]],
+            [second[:6], second[6:12], second[12:]],
+        )
+    ):
+        source += [
+            _args_delta(a, 2 * n, item_id="fc_a", output_index=0),
+            _args_delta(b, 2 * n + 1, item_id="fc_b", output_index=1),
+        ]
+    source += [
+        _args_done(first, 6, item_id="fc_a", output_index=0),
+        _args_done(second, 7, item_id="fc_b", output_index=1),
+        _function_call_item_done(first, 8, item_id="fc_a", output_index=0),
+        _function_call_item_done(second, 9, item_id="fc_b", output_index=1),
+    ]
+    tokens = {"<PERSON_1>": "Анна", "<PERSON_2>": "Борис"}
+
+    events = [event for event, _ in await _through_hook(source, tokens)]
+
+    assert [event.sequence_number for event in events] == list(range(10))
+    for item_id, name in (("fc_a", "Анна"), ("fc_b", "Борис")):
+        done = [
+            event
+            for event in events
+            if event.type == "response.function_call_arguments.done"
+            and event.item_id == item_id
+        ]
+        item = [
+            event.item
+            for event in events
+            if event.type == "response.output_item.done" and event.item.id == item_id
+        ]
+        joined = "".join(
+            _deltas(events, "response.function_call_arguments.delta", item_id)
+        )
+        assert json.loads(joined) == {"query": name}
+        assert joined == done[0].arguments == item[0].arguments
+
+
+@pytest.mark.asyncio
+async def test_responses_stream_argument_deltas_do_not_stall():
+    masked = '{"query":"<PERSON_1>"}'
+    source = [
+        _args_delta(masked[:5], 0),
+        _args_delta(masked[5:12], 1),
+        _args_delta(masked[12:], 2),
+    ]
+    source.append(_args_done(masked, 3))
+    pulled = []
+
+    received = await _through_hook(
+        source, {RESPONSES_TOKEN: RESPONSES_NAME}, pulled=pulled
+    )
+
+    pulled_when_yielded = {event.sequence_number: count for event, count in received}
+    assert pulled_when_yielded[0] <= 2
+    assert pulled_when_yielded[1] <= 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("closing", ["output_item.done", "completed"])
+async def test_responses_stream_restores_arguments_without_done_event(closing):
+    masked = '{"query":"<PERSON_1>"}'
+    source = [_args_delta(masked[:9], 0), _args_delta(masked[9:], 1)]
+    if closing == "output_item.done":
+        source.append(_function_call_item_done(masked, 2))
+    source.append(_completed(3))
+
+    events = [
+        event
+        for event, _ in await _through_hook(source, {RESPONSES_TOKEN: RESPONSES_NAME})
+    ]
+
+    joined = "".join(_deltas(events, "response.function_call_arguments.delta"))
+    assert json.loads(joined) == {"query": RESPONSES_NAME}
+    if closing == "output_item.done":
+        assert _one(events, "response.output_item.done").item.arguments == joined
+
+
+@pytest.mark.asyncio
+async def test_responses_stream_is_restored_once_by_both_registered_instances():
+    """Гардрейл с output_parse_pii регистрирует два экземпляра, и прокси вкладывает их хуки друг в друга."""
+    pii_tokens = {RESPONSES_TOKEN: RESPONSES_NAME}
+    request_data = {"metadata": {"pii_tokens": pii_tokens}}
+    primary, post_call_only = _restoring_presidio(), _restoring_presidio()
+    source = _codex_events(CODEX_TOOL_SSE)
+
+    async def upstream():
+        for event in source:
+            yield event
+
+    def hook(guardrail, response):
+        return guardrail.async_post_call_streaming_iterator_hook(
+            user_api_key_dict=UserAPIKeyAuth(api_key="k"),
+            response=response,
+            request_data=request_data,
+        )
+
+    with patch(
+        "litellm.proxy.guardrails.guardrail_hooks.presidio_responses_unmask.ResponsesStreamUnmasker.push",
+        autospec=True,
+        side_effect=lambda self, event: [event],
+    ) as push:
+        chained = [
+            event async for event in hook(post_call_only, hook(primary, upstream()))
+        ]
+
+    assert len(chained) == len(source)
+    assert push.call_count == len(source)
+
+
+@pytest.mark.asyncio
+async def test_responses_stream_upstream_failure_releases_held_text_and_raises():
+    async def upstream():
+        yield _text_delta("Привет, <PER", 0)
+        raise RuntimeError("upstream closed")
+
+    guardrail = _restoring_presidio()
+    received = []
+    with pytest.raises(RuntimeError, match="upstream closed"):
+        async for event in guardrail.async_post_call_streaming_iterator_hook(
+            user_api_key_dict=UserAPIKeyAuth(api_key="k"),
+            response=upstream(),
+            request_data={
+                "metadata": {"pii_tokens": {RESPONSES_TOKEN: RESPONSES_NAME}}
+            },
+        ):
+            received.append(event)
+
+    assert [event.delta for event in received] == ["Привет, <PER"]
+
+
+@pytest.mark.asyncio
+async def test_apply_guardrail_restores_tool_call_arguments_on_response():
+    value = 'Степан "С" Колосов'
+    guardrail = _restoring_presidio()
+    inputs = {
+        "texts": [f"Ищу {RESPONSES_TOKEN}"],
+        "tool_calls": [
+            {
+                "id": "fc_1",
+                "type": "function",
+                "index": 0,
+                "function": {
+                    "name": "web_search",
+                    "arguments": json.dumps({"query": RESPONSES_TOKEN}),
+                },
+            }
+        ],
+    }
+
+    result = await guardrail.apply_guardrail(
+        inputs=inputs,
+        request_data={"metadata": {"pii_tokens": {RESPONSES_TOKEN: value}}},
+        input_type="response",
+    )
+
+    assert result["texts"] == [f"Ищу {value}"]
+    assert json.loads(result["tool_calls"][0]["function"]["arguments"]) == {
+        "query": value
+    }
+
+
+@pytest.mark.asyncio
+async def test_apply_guardrail_masks_response_on_output_masking_instance():
+    """Экземпляр apply_to_output маскирует ответ, даже если словарь токенов запроса не пуст."""
+    guardrail = _OPTIONAL_PresidioPIIMasking(
+        mock_testing=True, apply_to_output=True, output_parse_pii=False
+    )
+
+    async def fake_check_pii(text, output_parse_pii, presidio_config, request_data):
+        return text.replace(RESPONSES_NAME, "<PERSON>")
+
+    guardrail.check_pii = fake_check_pii
+
+    result = await guardrail.apply_guardrail(
+        inputs={"texts": [f"Это {RESPONSES_NAME}"]},
+        request_data={"metadata": {"pii_tokens": {RESPONSES_TOKEN: RESPONSES_NAME}}},
+        input_type="response",
+    )
+
+    assert result["texts"] == ["Это <PERSON>"]
+
+
+def _fake_person_analyzer(*names):
+    async def analyze(text, presidio_config, request_data):
+        return [
+            {
+                "start": text.find(name),
+                "end": text.find(name) + len(name),
+                "entity_type": "PERSON",
+                "score": 0.9,
+            }
+            for name in names
+            if name in text
+        ]
+
+    return analyze
+
+
+@pytest.mark.asyncio
+async def test_unified_responses_request_masks_text_outside_message_content():
+    """Вход /v1/responses через unified-путь, которым идёт и глобальный default_on гардрейл."""
+    from litellm.proxy.guardrails.guardrail_hooks.unified_guardrail.unified_guardrail import (
+        UnifiedLLMGuardrails,
+    )
+
+    guardrail = _OPTIONAL_PresidioPIIMasking(
+        mock_testing=True, output_parse_pii=True, guardrail_name="pii", default_on=True
+    )
+    data = {
+        "model": "gpt-5",
+        "instructions": "Пользователя зовут Степан Колосов.",
+        "input": [
+            {"role": "user", "content": "Найди Анну Петрову"},
+            {
+                "type": "function_call",
+                "call_id": "c1",
+                "name": "web_search",
+                "arguments": '{"query": "Анну Петрову"}',
+            },
+            {
+                "type": "function_call_output",
+                "call_id": "c1",
+                "output": '{"owner": "Степан Колосов"}',
+            },
+        ],
+        "guardrail_to_apply": guardrail,
+    }
+
+    with patch.object(
+        guardrail,
+        "analyze_text",
+        side_effect=_fake_person_analyzer("Степан Колосов", "Анну Петрову"),
+    ):
+        data = await UnifiedLLMGuardrails().async_pre_call_hook(
+            user_api_key_dict=UserAPIKeyAuth(api_key="k"),
+            cache=MagicMock(),
+            data=data,
+            call_type="aresponses",
+        )
+
+    assert data["instructions"] == "Пользователя зовут <PERSON_1>."
+    assert data["input"][0]["content"] == "Найди <PERSON_2>"
+    assert json.loads(data["input"][1]["arguments"]) == {"query": "<PERSON_2>"}
+    assert json.loads(data["input"][2]["output"]) == {"owner": "<PERSON_1>"}
+    assert data["metadata"]["pii_tokens"] == {
+        "<PERSON_1>": "Степан Колосов",
+        "<PERSON_2>": "Анну Петрову",
+    }
+
+
+@pytest.mark.asyncio
+async def test_apply_guardrail_analyzes_request_texts_concurrently_in_stable_order():
+    """На /v1/responses все тексты запроса идут одним apply_guardrail: шаг не должен стать суммой текстов."""
+    guardrail = _OPTIONAL_PresidioPIIMasking(
+        mock_testing=True,
+        output_parse_pii=True,
+        pii_entities_config={PiiEntityType.PERSON: PiiAction.MASK},
+    )
+    first = "Автор Дарьи Волченко"
+    second = "Пилот. Дашборд готов."
+    spans = {first: (6, len(first), 0.05), second: (7, 14, 0.0)}
+    in_flight = 0
+    peak_in_flight = 0
+
+    async def slow_analyze(text, presidio_config, request_data):
+        nonlocal in_flight, peak_in_flight
+        in_flight += 1
+        peak_in_flight = max(peak_in_flight, in_flight)
+        start, end, delay = spans[text]
+        await asyncio.sleep(delay)
+        in_flight -= 1
+        return [{"start": start, "end": end, "entity_type": "PERSON", "score": 0.85}]
+
+    with patch.object(guardrail, "analyze_text", side_effect=slow_analyze):
+        result = await guardrail.apply_guardrail(
+            inputs={"texts": [first, second]},
+            request_data={"metadata": {}},
+            input_type="request",
+        )
+
+    assert peak_in_flight == 2
+    assert result["texts"] == ["Автор <PERSON_1>", "Пилот. <PERSON_2> готов."]
+
+
+@pytest.mark.asyncio
+async def test_span_cache_covers_responses_text_outside_message_content():
+    """Системный промпт и вывод тула повторяются на каждом шаге хода — анализатор зовём один раз."""
+    from litellm.llms.openai.responses.guardrail_translation.handler import (
+        OpenAIResponsesHandler,
+    )
+
+    guardrail = _OPTIONAL_PresidioPIIMasking(
+        mock_testing=True,
+        output_parse_pii=True,
+        pii_entities_config={PiiEntityType.PERSON: PiiAction.MASK},
+    )
+    analyzed = []
+    find_name = _fake_person_analyzer(RESPONSES_NAME)
+
+    async def counting_analyzer(text, presidio_config, request_data):
+        analyzed.append(text)
+        return await find_name(text, presidio_config, request_data)
+
+    def step_request():
+        return {
+            "model": "gpt-5",
+            "instructions": f"Пользователя зовут {RESPONSES_NAME}.",
+            "input": [
+                {
+                    "type": "function_call",
+                    "call_id": "c1",
+                    "name": "get_owner",
+                    "arguments": "{}",
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "c1",
+                    "output": f'{{"owner": "{RESPONSES_NAME}"}}',
+                },
+            ],
+        }
+
+    with patch.object(
+        guardrail, "_analyze_with_analyzer", side_effect=counting_analyzer
+    ):
+        first_step = await OpenAIResponsesHandler().process_input_messages(
+            step_request(), guardrail
+        )
+        analyzed_on_first_step = len(analyzed)
+        second_step = await OpenAIResponsesHandler().process_input_messages(
+            step_request(), guardrail
+        )
+
+    assert analyzed_on_first_step == 3
+    assert len(analyzed) == analyzed_on_first_step
+    assert (
+        second_step["instructions"]
+        == first_step["instructions"]
+        == "Пользователя зовут <PERSON_1>."
+    )
+    assert second_step["input"][1]["output"] == '{"owner": "<PERSON_1>"}'
