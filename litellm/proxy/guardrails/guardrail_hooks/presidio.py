@@ -161,6 +161,9 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
         # Loop-bound session cache for background threads
         self._loop_sessions: Dict[asyncio.AbstractEventLoop, aiohttp.ClientSession] = {}
 
+        # Хвост очереди нумерации токенов на запрос (ключ — id(request_data)).
+        self._numbering_turns: Dict[int, asyncio.Future] = {}
+
         # Имена нельзя оставить на усмотрение конфигурации: правила берут ФИО только в
         # канонических формах, всё остальное — редкие и иностранные имена, фамилия без имени,
         # обращение по имени — держится на языковом слое. Гардрейл, настроенный без PERSON,
@@ -660,14 +663,27 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
             request_data["metadata"]["pii_tokens"] = {}
         pii_tokens = request_data["metadata"]["pii_tokens"]
 
-        # Assign sequence numbers in forward (left-to-right) order so
-        # that <PERSON_1> is the first entity in the text, etc.
+        # Сообщения запроса маскируются по отдельности, а словарь токенов у запроса один:
+        # нумерация продолжается сквозь запрос, иначе <PERSON_1> из разных сообщений
+        # перетирают друг друга и размаскировка подставляет чужое значение.
+        # Одинаковое значение получает тот же токен — модель видит одну сущность.
         sorted_forward = sorted(
             self._drop_overlapping_results(analyze_results), key=lambda x: x["start"]
         )
-        seq_map = {}
-        for idx, ar in enumerate(sorted_forward, start=1):
-            seq_map[(ar["start"], ar["end"])] = idx
+        token_by_value = {
+            (token.rsplit("_", 1)[0], value): token
+            for token, value in pii_tokens.items()
+        }
+        replacements = {}
+        for ar in sorted_forward:
+            prefix = f"<{ar['entity_type']}"
+            key = (prefix, text[ar["start"] : ar["end"]])
+            token = token_by_value.get(key)
+            if token is None:
+                token = f"{prefix}_{len(pii_tokens) + 1}>"
+                pii_tokens[token] = key[1]
+                token_by_value[key] = token
+            replacements[(ar["start"], ar["end"])] = token
 
         # Apply replacements in reverse order by start position so
         # that replacing later spans first does not shift earlier
@@ -676,13 +692,7 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
             start = ar["start"]
             end = ar["end"]
             entity_type = ar["entity_type"]
-            replacement = f"<{entity_type}>"
-            seq = seq_map[(start, end)]
-            if replacement.endswith(">"):
-                replacement = f"{replacement[:-1]}_{seq}>"
-            else:
-                replacement = f"{replacement}_{seq}"
-            pii_tokens[replacement] = text[start:end]
+            replacement = replacements[(start, end)]
             new_text = new_text[:start] + replacement + new_text[end:]
             masked_entity_count[entity_type] = (
                 masked_entity_count.get(entity_type, 0) + 1
@@ -846,6 +856,28 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
                         guardrail_name=self.guardrail_name,
                     )
 
+    def _claim_numbering_turn(
+        self, request_data: dict
+    ) -> Tuple[Optional[asyncio.Future], asyncio.Future]:
+        """
+        Встать в очередь нумерации токенов запроса; вызывать до первого await.
+
+        Сообщения анализируются параллельно, но номера раздаются в порядке вызова
+        check_pii (gather стартует задачи по порядку) — иначе промпт модели зависит
+        от того, чей анализ вернулся первым, и не попадает в prompt cache.
+        """
+        key = id(request_data)
+        previous = self._numbering_turns.get(key)
+        own = asyncio.get_running_loop().create_future()
+        self._numbering_turns[key] = own
+        return previous, own
+
+    def _release_numbering_turn(self, request_data: dict, own: asyncio.Future) -> None:
+        if not own.done():
+            own.set_result(None)
+        if self._numbering_turns.get(id(request_data)) is own:
+            del self._numbering_turns[id(request_data)]
+
     async def check_pii(
         self,
         text: str,
@@ -861,6 +893,7 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
         status: GuardrailStatus = "success"
         masked_entity_count: Dict[str, int] = {}
         exception_str: str = ""
+        previous_turn, own_turn = self._claim_numbering_turn(request_data)
         try:
             if self.mock_redacted_text is not None:
                 redacted_text = self.mock_redacted_text
@@ -891,6 +924,9 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
                     analyze_results=analyze_results
                 )
 
+                if previous_turn is not None:
+                    await previous_turn
+
                 # Then anonymize the text using the analysis results
                 anonymized_text = await self.anonymize_text(
                     text=text,
@@ -906,6 +942,7 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
             exception_str = str(e)
             raise e
         finally:
+            self._release_numbering_turn(request_data, own_turn)
             ####################################################
             # Create Guardrail Trace for logging on Langfuse, Datadog, etc.
             ####################################################
