@@ -64,7 +64,6 @@ if TYPE_CHECKING:
     from litellm.types.llms.openai import ResponseInputParam
     from litellm.types.utils import ResponsesAPIResponse
 
-# Где лежит проверяемый текст: data["instructions"], item["arguments"], part["text"] и т.п.
 _TextSlot = Tuple[Dict[str, Any], str]
 
 _TOOL_CALL_TEXT_FIELDS = {"function_call": "arguments", "custom_tool_call": "input"}

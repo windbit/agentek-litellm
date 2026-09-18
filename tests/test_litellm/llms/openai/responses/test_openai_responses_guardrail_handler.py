@@ -1171,8 +1171,6 @@ class TestGetStructuredMessages:
 
 
 class RecordingGuardrail(CustomGuardrail):
-    """Помечает каждый текст запроса и запоминает, что пришло на проверку."""
-
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.seen_texts: List[str] = []
@@ -1193,8 +1191,6 @@ class RecordingGuardrail(CustomGuardrail):
 
 
 class TestOpenAIResponsesHandlerNonMessageInput:
-    """windbit/issues#1391: текст вне content сообщений тоже уходит провайдеру и должен проверяться."""
-
     @pytest.mark.asyncio
     async def test_instructions_tool_history_and_reasoning_summary_are_guardrailed(
         self,
@@ -1340,8 +1336,6 @@ class ArgumentsRewritingGuardrail(CustomGuardrail):
 
 
 class TestOpenAIResponsesHandlerToolCallWriteBack:
-    """windbit/issues#1391: аргументы, которые вернул гардрейл, должны попасть в ответ."""
-
     @pytest.mark.asyncio
     async def test_process_output_response_writes_back_tool_call_arguments(self):
         handler = OpenAIResponsesHandler()

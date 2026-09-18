@@ -83,20 +83,13 @@ from litellm.utils import (
 # Хук стрима зарегистрирован дважды (pre+post и post-only), и прокси вкладывает их друг в друга.
 _STREAM_UNMASK_CLAIM = "_presidio_stream_unmask_claimed"
 
-# Анализатор — общий на окружение ресурс, а ход шлёт всю свою историю одним gather: без потолка
-# два десятка параллельных ходов дают залп в сотню разборов, анализатор проседает до 15с на запрос
-# и промахивается мимо своей liveness-пробы (timeoutSeconds: 10) — это инцидент I#738 с его рестартами.
-# Ёмкость считается как реплики × воркеры и разная по окружениям, поэтому берётся из env;
-# дефолт консервативный, чтобы подойти и коробке с одним слабым анализатором.
+# Ёмкость анализатора — реплики × воркеры, она разная по окружениям.
 PRESIDIO_ANALYZE_MAX_CONCURRENCY = get_env_int("PRESIDIO_ANALYZE_MAX_CONCURRENCY", 4)
-# Свой таймаут на разбор: дефолт aiohttp — 300с, и зависший анализатор держал ход дольше пяти минут,
-# чтобы в конце всё равно отказать. Держим заметно ниже gunicornTimeout анализатора (120с):
-# ждать дольше, чем живёт обрабатывающий воркер, бессмысленно.
+# Ниже gunicornTimeout анализатора: дольше, чем живёт его воркер, ждать нечего.
 PRESIDIO_ANALYZE_TIMEOUT_SECONDS = get_env_int("PRESIDIO_ANALYZE_TIMEOUT", 30)
 
-# Семафор привязан к event-loop, поэтому держим по одному на каждый: в проде loop один и живёт
-# долго, в тестах на каждый прогон свой. Один семафор на процесс, а не на запрос: лимит должен
-# резать суммарный залп от всех ходов сразу.
+# Потолок общий на процесс, а не на запрос: он режет суммарный залп от всех ходов.
+# Семафор привязан к event-loop, поэтому по одному на loop.
 _analyze_slots: Dict[asyncio.AbstractEventLoop, asyncio.Semaphore] = {}
 
 
@@ -432,10 +425,8 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
                 self._span_cache.move_to_end(cache_key)
                 return list(cached)
 
-        # Кириллица, экранированная как \uXXXX (json.dumps без ensure_ascii), для анализатора и
-        # правил выглядит текстом без букв, и ПДн в ней остаются незамеченными. Разбираем
-        # раскодированный текст, а спаны возвращаем в координатах исходной строки:
-        # маска встаёт в неё, и ни формат, ни остальной текст не меняются.
+        # В \uXXXX анализатор букв не видит: разбираем раскодированный текст, а спаны возвращаем
+        # в координатах исходной строки — маска встаёт в неё, формат не меняется.
         decoded = decode_json_escapes(text)
         analysis_text = decoded.text if decoded is not None else text
 
@@ -556,8 +547,6 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
                     )
                     return []
 
-                # Слот держим только на время обращения к анализатору: разбор ответа и кэш
-                # своей очереди не занимают.
                 async with _analyze_slot():
                     async with session.post(
                         analyze_url,
@@ -1796,14 +1785,12 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
         if input_type == "response" and self.output_parse_pii:
             return self._restore_response_inputs(inputs, request_data)
 
-        # Аргументы прошлых вызовов тулов в истории /chat/completions уходят провайдеру наравне с текстом.
         tool_call_functions = [
             tool_call["function"]
             for tool_call in inputs.get("tool_calls") or []
             if tool_call.get("function", {}).get("arguments")
         ]
-        # Параллельно, как в async_pre_call_hook: шаг длится как самый длинный текст, а не их сумма.
-        # Номера токенов всё равно раздаются по порядку текстов (см. _claim_numbering_turn).
+        # Разбор параллельный, но номера токенов раздаются по порядку текстов (см. _claim_numbering_turn).
         request_data = request_data or {}
         masked = await asyncio.gather(
             *(

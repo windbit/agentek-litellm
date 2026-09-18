@@ -3613,7 +3613,7 @@ async def test_numbered_tokens_follow_message_order_under_gather():
 
 
 # ---------------------------------------------------------------------------
-# windbit/issues#1391: восстановление PII на /v1/responses
+# /v1/responses: восстановление PII
 # ---------------------------------------------------------------------------
 
 RESPONSES_TOKEN = "<PERSON_1>"
@@ -3635,7 +3635,7 @@ def _responses_event(raw: dict):
 
 
 def _codex_events(sse_path: str) -> list:
-    """Кадры codex -> события LiteLLM, с тем же backfill пустого completed.output, что у стримингового итератора."""
+    """Кадры codex -> события LiteLLM, с тем же backfill пустого completed.output, что делает итератор."""
     from types import SimpleNamespace
 
     from litellm.responses.streaming_iterator import BaseResponsesAPIStreamingIterator
@@ -4241,7 +4241,6 @@ async def test_unified_responses_request_masks_text_outside_message_content():
 
 @pytest.mark.asyncio
 async def test_apply_guardrail_analyzes_request_texts_concurrently_in_stable_order():
-    """На /v1/responses все тексты запроса идут одним apply_guardrail: шаг не должен стать суммой текстов."""
     guardrail = _OPTIONAL_PresidioPIIMasking(
         mock_testing=True,
         output_parse_pii=True,
@@ -4275,7 +4274,6 @@ async def test_apply_guardrail_analyzes_request_texts_concurrently_in_stable_ord
 
 @pytest.mark.asyncio
 async def test_span_cache_covers_responses_text_outside_message_content():
-    """Системный промпт и вывод тула повторяются на каждом шаге хода — анализатор зовём один раз."""
     from litellm.llms.openai.responses.guardrail_translation.handler import (
         OpenAIResponsesHandler,
     )
@@ -4334,7 +4332,6 @@ async def test_span_cache_covers_responses_text_outside_message_content():
 
 @pytest.mark.asyncio
 async def test_chat_request_masks_tool_call_arguments_in_history():
-    """Аргументы прошлого вызова тула на /chat/completions уходят провайдеру так же, как текст сообщений."""
     from litellm.llms.openai.chat.guardrail_translation.handler import (
         OpenAIChatCompletionsHandler,
     )
@@ -4379,7 +4376,7 @@ async def test_chat_request_masks_tool_call_arguments_in_history():
 
 
 # ---------------------------------------------------------------------------
-# I#738: потолок одновременных разборов и таймаут анализатора
+# Потолок одновременных разборов и таймаут анализатора
 # ---------------------------------------------------------------------------
 
 
@@ -4468,7 +4465,6 @@ def _http_presidio() -> _OPTIONAL_PresidioPIIMasking:
 
 @pytest.mark.asyncio
 async def test_analyzer_calls_stay_within_the_configured_limit():
-    """Потолок общий на процесс: два десятка параллельных ходов не должны собираться в залп."""
     guardrail = _http_presidio()
     session = _FakeAnalyzerSession(delay=0.02)
 
@@ -4489,7 +4485,6 @@ async def test_analyzer_calls_stay_within_the_configured_limit():
 
 @pytest.mark.asyncio
 async def test_cached_spans_do_not_wait_for_an_analyzer_slot():
-    """Кэш-хит не занимает слот: иначе повтор истории на каждом шаге стоит в общей очереди."""
     from litellm.proxy.guardrails.guardrail_hooks import presidio as presidio_module
 
     guardrail = _http_presidio()
@@ -4532,7 +4527,7 @@ def _run_in_one_off_loop(coroutine_factory):
 
 
 def test_analyzer_slot_of_a_closed_loop_is_dropped():
-    """logging_hook заводит loop на каждый вызов: слоты закрытых loop не должны копиться."""
+    """logging_hook заводит loop на каждый вызов."""
     from litellm.proxy.guardrails.guardrail_hooks import presidio as presidio_module
 
     async def wait_for_a_slot():
@@ -4567,7 +4562,6 @@ def test_http_session_of_a_closed_loop_is_dropped():
 
 @pytest.mark.asyncio
 async def test_slow_analyzer_fails_the_guardrail_instead_of_hanging():
-    """Зависший анализатор держал ход до дефолтных 300с aiohttp, чтобы в конце всё равно отказать."""
     from litellm.proxy.guardrails.guardrail_hooks import presidio as presidio_module
 
     guardrail = _http_presidio()
@@ -4590,7 +4584,7 @@ async def test_slow_analyzer_fails_the_guardrail_instead_of_hanging():
 
 
 # ---------------------------------------------------------------------------
-# windbit/issues#1447: ПДн в экранированном виде (`\uXXXX`)
+# ПДн в экранированном виде (`\uXXXX`)
 # ---------------------------------------------------------------------------
 
 ESCAPED_NAME = "Степан Колосов"
@@ -4607,7 +4601,7 @@ def _masking_presidio() -> _OPTIONAL_PresidioPIIMasking:
 
 
 def _analyzer_finding(*names):
-    """Анализатор видит только тот текст, который ему дали: имена ищем в нём, а не в оригинале."""
+    """Имена ищем в тексте, который получил анализатор, — он раскодирован."""
 
     async def analyze(text, presidio_config, request_data):
         spans = []
@@ -4642,7 +4636,6 @@ async def _mask(guardrail, text, request_data=None, names=(ESCAPED_NAME,)):
 
 @pytest.mark.asyncio
 async def test_escaped_tool_output_is_masked_on_the_responses_request_path():
-    """Кейс issue: вывод тула, собранный json.dumps без ensure_ascii, уходил провайдеру открытым."""
     from litellm.proxy.guardrails.guardrail_hooks.unified_guardrail.unified_guardrail import (
         UnifiedLLMGuardrails,
     )
@@ -4769,7 +4762,7 @@ async def test_adjacent_escaped_spans_get_their_own_tokens():
 
 @pytest.mark.asyncio
 async def test_escaped_pii_value_stays_out_of_logged_and_cached_results():
-    """Результаты анализатора уходят в standard logging и живут в кэше спанов: значению там не место."""
+    """Результаты анализатора уходят в standard logging и живут в кэше спанов."""
     guardrail = _masking_presidio()
     request_data = {}
 
