@@ -41,6 +41,8 @@ from litellm.llms.base_llm.guardrail_translation.base_translation import BaseTra
 from litellm.llms.base_llm.guardrail_translation.utils import (
     effective_skip_system_message_for_guardrail,
     effective_skip_tool_message_for_guardrail,
+    openai_messages_without_system,
+    openai_messages_without_tool,
 )
 from litellm.responses.litellm_completion_transformation.transformation import (
     LiteLLMCompletionResponsesConfig,
@@ -113,26 +115,24 @@ class OpenAIResponsesHandler(BaseTranslation):
         if input_data is None or not isinstance(input_data, (str, list)):
             return data
 
-        # Провайдер получает не только content сообщений: instructions, история тулов
-        # и summary рассуждений уходят ему так же открыто.
+        skip_system = effective_skip_system_message_for_guardrail(guardrail_to_apply)
+        skip_tool = effective_skip_tool_message_for_guardrail(guardrail_to_apply)
         text_slots: List[_TextSlot] = []
         images_to_check: List[str] = []
-        if isinstance(data.get("instructions"), str) and not (
-            effective_skip_system_message_for_guardrail(guardrail_to_apply)
-        ):
+        if isinstance(data.get("instructions"), str) and not skip_system:
             text_slots.append((data, "instructions"))
         if isinstance(input_data, str):
             text_slots.append((data, "input"))
         else:
-            skip_tool_output = effective_skip_tool_message_for_guardrail(
-                guardrail_to_apply
-            )
             for message in input_data:
+                if skip_system and message.get("role") == "system":
+                    continue
+                if skip_tool and message.get("type") in _TOOL_OUTPUT_TYPES:
+                    continue
                 self._extract_input_text_and_images(
                     message=message,
                     text_slots=text_slots,
                     images_to_check=images_to_check,
-                    skip_tool_output=skip_tool_output,
                 )
 
         if not text_slots:
@@ -150,6 +150,10 @@ class OpenAIResponsesHandler(BaseTranslation):
             if tools_to_check:
                 inputs["tools"] = tools_to_check
         structured_messages = self.get_structured_messages(data)
+        if structured_messages and skip_system:
+            structured_messages = openai_messages_without_system(structured_messages)
+        if structured_messages and skip_tool:
+            structured_messages = openai_messages_without_tool(structured_messages)
         if structured_messages:
             inputs["structured_messages"] = structured_messages  # type: ignore
         model = data.get("model")
@@ -264,7 +268,6 @@ class OpenAIResponsesHandler(BaseTranslation):
         message: Any,  # Can be Dict[str, Any] or ResponseInputParam
         text_slots: List[_TextSlot],
         images_to_check: List[str],
-        skip_tool_output: bool,
     ) -> None:
         """
         Extract text locations and images from an input item.
@@ -273,8 +276,7 @@ class OpenAIResponsesHandler(BaseTranslation):
         """
         item_type = message.get("type")
         if item_type in _TOOL_OUTPUT_TYPES:
-            if not skip_tool_output:
-                self._append_text_slots(message, "output", text_slots)
+            self._append_text_slots(message, "output", text_slots)
             return
         if item_type in _TOOL_CALL_TEXT_FIELDS:
             self._append_text_slots(

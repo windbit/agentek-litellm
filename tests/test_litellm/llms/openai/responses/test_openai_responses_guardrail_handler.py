@@ -1176,6 +1176,7 @@ class RecordingGuardrail(CustomGuardrail):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.seen_texts: List[str] = []
+        self.seen_structured_messages: List[Any] = []
 
     async def apply_guardrail(
         self,
@@ -1186,6 +1187,7 @@ class RecordingGuardrail(CustomGuardrail):
     ) -> GenericGuardrailAPIInputs:
         texts = inputs.get("texts", [])
         self.seen_texts.extend(texts)
+        self.seen_structured_messages.extend(inputs.get("structured_messages") or [])
         inputs["texts"] = [f"[G]{text}" for text in texts]
         return inputs
 
@@ -1283,7 +1285,7 @@ class TestOpenAIResponsesHandlerNonMessageInput:
         assert result["input"] == "[G]user"
 
     @pytest.mark.asyncio
-    async def test_skip_flags_exclude_instructions_and_tool_outputs(self):
+    async def test_skip_flags_exclude_system_and_tool_outputs_everywhere(self):
         handler = OpenAIResponsesHandler()
         guardrail = RecordingGuardrail(guardrail_name="test")
         guardrail.skip_system_message_in_guardrail = True
@@ -1291,6 +1293,7 @@ class TestOpenAIResponsesHandlerNonMessageInput:
         data = {
             "instructions": "system",
             "input": [
+                {"role": "system", "content": "system in input"},
                 {"role": "user", "content": "user"},
                 {
                     "type": "function_call",
@@ -1305,8 +1308,12 @@ class TestOpenAIResponsesHandlerNonMessageInput:
         result = await handler.process_input_messages(data, guardrail)
 
         assert guardrail.seen_texts == ["user", "{}"]
+        assert {
+            message["role"] for message in guardrail.seen_structured_messages
+        }.isdisjoint({"system", "tool"})
         assert result["instructions"] == "system"
-        assert result["input"][2]["output"] == "out"
+        assert result["input"][0]["content"] == "system in input"
+        assert result["input"][3]["output"] == "out"
 
 
 class ArgumentsRewritingGuardrail(CustomGuardrail):
