@@ -4522,6 +4522,49 @@ async def test_cached_spans_do_not_wait_for_an_analyzer_slot():
             )
 
 
+def _run_in_one_off_loop(coroutine_factory):
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(coroutine_factory())
+    finally:
+        loop.close()
+    return loop
+
+
+def test_analyzer_slot_of_a_closed_loop_is_dropped():
+    """logging_hook заводит loop на каждый вызов: слоты закрытых loop не должны копиться."""
+    from litellm.proxy.guardrails.guardrail_hooks import presidio as presidio_module
+
+    async def wait_for_a_slot():
+        slot = presidio_module._analyze_slot()
+
+        async def hold():
+            async with slot:
+                await asyncio.sleep(0)
+
+        await asyncio.gather(hold(), hold(), hold(), hold(), hold())
+
+    with _analyzer_concurrency_limit(1):
+        _run_in_one_off_loop(wait_for_a_slot)
+        latest = _run_in_one_off_loop(wait_for_a_slot)
+
+        assert list(presidio_module._analyze_slots) == [latest]
+
+
+def test_http_session_of_a_closed_loop_is_dropped():
+    guardrail = _http_presidio()
+    guardrail._main_thread_id = -1
+
+    async def open_session():
+        async with guardrail._get_session_iterator() as session:
+            await session.close()
+
+    _run_in_one_off_loop(open_session)
+    latest = _run_in_one_off_loop(open_session)
+
+    assert list(guardrail._loop_sessions) == [latest]
+
+
 @pytest.mark.asyncio
 async def test_slow_analyzer_fails_the_guardrail_instead_of_hanging():
     """Зависший анализатор держал ход до дефолтных 300с aiohttp, чтобы в конце всё равно отказать."""

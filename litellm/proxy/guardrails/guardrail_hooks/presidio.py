@@ -97,16 +97,24 @@ PRESIDIO_ANALYZE_TIMEOUT_SECONDS = get_env_int("PRESIDIO_ANALYZE_TIMEOUT", 30)
 # Семафор привязан к event-loop, поэтому держим по одному на каждый: в проде loop один и живёт
 # долго, в тестах на каждый прогон свой. Один семафор на процесс, а не на запрос: лимит должен
 # резать суммарный залп от всех ходов сразу.
-_analyze_slots: Dict[Any, asyncio.Semaphore] = {}
+_analyze_slots: Dict[asyncio.AbstractEventLoop, asyncio.Semaphore] = {}
 
 
 def _analyze_slot() -> asyncio.Semaphore:
     loop = asyncio.get_running_loop()
     slot = _analyze_slots.get(loop)
     if slot is None:
+        _drop_closed_loops(_analyze_slots)
         slot = asyncio.Semaphore(PRESIDIO_ANALYZE_MAX_CONCURRENCY)
         _analyze_slots[loop] = slot
     return slot
+
+
+def _drop_closed_loops(per_loop: Dict[asyncio.AbstractEventLoop, Any]) -> None:
+    # logging_hook заводит одноразовый loop на каждый вызов. WeakKeyDictionary тут не помогает:
+    # семафор, на котором ждали слот, и aiohttp-сессия держат сильную ссылку на свой loop.
+    for loop in [loop for loop in per_loop if loop.is_closed()]:
+        del per_loop[loop]
 
 
 class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
@@ -328,6 +336,7 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
                 current_loop not in self._loop_sessions
                 or self._loop_sessions[current_loop].closed
             ):
+                _drop_closed_loops(self._loop_sessions)
                 self._loop_sessions[current_loop] = aiohttp.ClientSession()
             yield self._loop_sessions[current_loop]
 
