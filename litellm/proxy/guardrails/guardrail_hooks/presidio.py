@@ -54,8 +54,10 @@ from litellm.types.guardrails import (
     PresidioPerRequestConfig,
 )
 from litellm.proxy.guardrails.guardrail_hooks.json_escaped_text import (
+    ESCAPE_TRIGGER,
     DecodedText,
     decode_json_escapes,
+    unescape_json_fragment,
 )
 from litellm.proxy.guardrails.guardrail_hooks.pii_rules import (
     PiiRuleEngine,
@@ -450,14 +452,8 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
     def _span_in_source_text(
         span: PresidioAnalyzeResponseItem, decoded: DecodedText
     ) -> PresidioAnalyzeResponseItem:
-        """Спан раскодированного текста — в координаты исходной строки, со значением как его увидел анализатор."""
         start, end = decoded.source_span(span["start"], span["end"])
-        return {
-            **span,
-            "start": start,
-            "end": end,
-            "value": decoded.text[span["start"] : span["end"]],
-        }
+        return {**span, "start": start, "end": end}
 
     def _span_cache_key(
         self,
@@ -744,12 +740,13 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
             (token.rsplit("_", 1)[0], value): token
             for token, value in pii_tokens.items()
         }
+        # Текст с \uXXXX анализировался раскодированным: в словарь токенов идёт значение, а не его запись.
+        escaped = ESCAPE_TRIGGER in text
         replacements = {}
         for ar in sorted_forward:
             prefix = f"<{ar['entity_type']}"
-            # У спана из экранированного текста значение своё: в исходной строке на его месте
-            # лежит запись \uXXXX, а восстанавливать в ответе надо имя, а не её.
-            key = (prefix, ar.get("value") or text[ar["start"] : ar["end"]])
+            value = text[ar["start"] : ar["end"]]
+            key = (prefix, unescape_json_fragment(value) if escaped else value)
             token = token_by_value.get(key)
             if token is None:
                 token = f"{prefix}_{len(pii_tokens) + 1}>"

@@ -51,10 +51,18 @@ class DecodedText:
 
 
 def decode_json_escapes(text: str) -> Optional[DecodedText]:
-    """Раскодировать эскейпы; None — если их нет и текст можно разбирать как есть."""
+    """Раскодировать эскейпы; None — если \\u нет и текст разбирается как есть."""
     if ESCAPE_TRIGGER not in text:
         return None
+    return _decode(text)
 
+
+def unescape_json_fragment(fragment: str) -> str:
+    """Значение отрезка исходной строки. Отрезок должен лежать на границах эскейпов, как спаны из source_span."""
+    return _decode(fragment).text
+
+
+def _decode(text: str) -> DecodedText:
     chunks: List[str] = []
     segment_starts: List[int] = []
     segment_sources: List[int] = []

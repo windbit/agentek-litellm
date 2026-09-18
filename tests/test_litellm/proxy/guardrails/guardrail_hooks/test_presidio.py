@@ -4725,6 +4725,28 @@ async def test_adjacent_escaped_spans_get_their_own_tokens():
 
 
 @pytest.mark.asyncio
+async def test_escaped_pii_value_stays_out_of_logged_and_cached_results():
+    """Результаты анализатора уходят в standard logging и живут в кэше спанов: значению там не место."""
+    guardrail = _masking_presidio()
+    request_data = {}
+
+    await _mask(guardrail, json.dumps({"name": ESCAPED_NAME}), request_data)
+
+    logged = {
+        key: value
+        for key, value in request_data["metadata"].items()
+        if key != "pii_tokens"
+    }
+    assert logged, "check_pii пишет свою трассу в metadata"
+    assert ESCAPED_NAME not in json.dumps(logged, ensure_ascii=False, default=str)
+    cached = json.dumps(
+        list(guardrail._span_cache.values()), ensure_ascii=False, default=str
+    )
+    assert guardrail._span_cache and ESCAPED_NAME not in cached
+    assert request_data["metadata"]["pii_tokens"] == {"<PERSON_1>": ESCAPED_NAME}
+
+
+@pytest.mark.asyncio
 async def test_text_without_escapes_goes_to_the_analyzer_as_is():
     from litellm.proxy.guardrails.guardrail_hooks.json_escaped_text import (
         decode_json_escapes,
