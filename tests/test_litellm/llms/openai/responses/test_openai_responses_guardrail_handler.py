@@ -1168,3 +1168,214 @@ class TestGetStructuredMessages:
         data = {"input": None}
         result = handler.get_structured_messages(data)
         assert result is None
+
+
+class RecordingGuardrail(CustomGuardrail):
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.seen_texts: List[str] = []
+        self.seen_structured_messages: List[Any] = []
+
+    async def apply_guardrail(
+        self,
+        inputs: GenericGuardrailAPIInputs,
+        request_data: dict,
+        input_type: Literal["request", "response"],
+        logging_obj: Optional[Any] = None,
+    ) -> GenericGuardrailAPIInputs:
+        texts = inputs.get("texts", [])
+        self.seen_texts.extend(texts)
+        self.seen_structured_messages.extend(inputs.get("structured_messages") or [])
+        inputs["texts"] = [f"[G]{text}" for text in texts]
+        return inputs
+
+
+class TestOpenAIResponsesHandlerNonMessageInput:
+    @pytest.mark.asyncio
+    async def test_instructions_tool_history_and_reasoning_summary_are_guardrailed(
+        self,
+    ):
+        handler = OpenAIResponsesHandler()
+        guardrail = RecordingGuardrail(guardrail_name="test")
+        data = {
+            "model": "gpt-5",
+            "instructions": "system",
+            "input": [
+                {"role": "user", "content": "user"},
+                {
+                    "type": "reasoning",
+                    "id": "rs_1",
+                    "summary": [{"type": "summary_text", "text": "summary"}],
+                    "encrypted_content": "opaque",
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "web_search",
+                    "arguments": '{"query": "args"}',
+                },
+                {"type": "function_call_output", "call_id": "call_1", "output": "out"},
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_2",
+                    "output": [
+                        {"type": "input_text", "text": "part"},
+                        {
+                            "type": "input_image",
+                            "image_url": "https://example.com/a.png",
+                        },
+                    ],
+                },
+                {
+                    "type": "custom_tool_call",
+                    "call_id": "call_3",
+                    "name": "patch",
+                    "input": "custom",
+                },
+                {
+                    "type": "custom_tool_call_output",
+                    "call_id": "call_3",
+                    "output": "custom out",
+                },
+            ],
+        }
+
+        result = await handler.process_input_messages(data, guardrail)
+
+        assert guardrail.seen_texts == [
+            "system",
+            "user",
+            "summary",
+            '{"query": "args"}',
+            "out",
+            "part",
+            "custom",
+            "custom out",
+        ]
+        items = result["input"]
+        assert result["instructions"] == "[G]system"
+        assert items[0]["content"] == "[G]user"
+        assert items[1]["summary"][0]["text"] == "[G]summary"
+        assert items[1]["encrypted_content"] == "opaque"
+        assert items[2]["arguments"] == '[G]{"query": "args"}'
+        assert items[3]["output"] == "[G]out"
+        assert items[4]["output"][0]["text"] == "[G]part"
+        assert items[4]["output"][1] == {
+            "type": "input_image",
+            "image_url": "https://example.com/a.png",
+        }
+        assert items[5]["input"] == "[G]custom"
+        assert items[6]["output"] == "[G]custom out"
+
+    @pytest.mark.asyncio
+    async def test_instructions_are_guardrailed_with_string_input(self):
+        handler = OpenAIResponsesHandler()
+        guardrail = RecordingGuardrail(guardrail_name="test")
+
+        result = await handler.process_input_messages(
+            {"model": "gpt-5", "instructions": "system", "input": "user"}, guardrail
+        )
+
+        assert guardrail.seen_texts == ["system", "user"]
+        assert result["instructions"] == "[G]system"
+        assert result["input"] == "[G]user"
+
+    @pytest.mark.asyncio
+    async def test_skip_flags_exclude_system_and_tool_outputs_everywhere(self):
+        handler = OpenAIResponsesHandler()
+        guardrail = RecordingGuardrail(guardrail_name="test")
+        guardrail.skip_system_message_in_guardrail = True
+        guardrail.skip_tool_message_in_guardrail = True
+        data = {
+            "instructions": "system",
+            "input": [
+                {"role": "system", "content": "system in input"},
+                {"role": "user", "content": "user"},
+                {
+                    "type": "function_call",
+                    "call_id": "c",
+                    "name": "t",
+                    "arguments": "{}",
+                },
+                {"type": "function_call_output", "call_id": "c", "output": "out"},
+            ],
+        }
+
+        result = await handler.process_input_messages(data, guardrail)
+
+        assert guardrail.seen_texts == ["user", "{}"]
+        assert {
+            message["role"] for message in guardrail.seen_structured_messages
+        }.isdisjoint({"system", "tool"})
+        assert result["instructions"] == "system"
+        assert result["input"][0]["content"] == "system in input"
+        assert result["input"][3]["output"] == "out"
+
+
+class ArgumentsRewritingGuardrail(CustomGuardrail):
+    async def apply_guardrail(
+        self,
+        inputs: GenericGuardrailAPIInputs,
+        request_data: dict,
+        input_type: Literal["request", "response"],
+        logging_obj: Optional[Any] = None,
+    ) -> GenericGuardrailAPIInputs:
+        inputs["tool_calls"] = [
+            {
+                **tool_call,
+                "function": {
+                    **tool_call["function"],
+                    "arguments": tool_call["function"]["arguments"].replace(
+                        "<PERSON_1>", "Степан"
+                    ),
+                },
+            }
+            for tool_call in inputs.get("tool_calls", [])
+        ]
+        return inputs
+
+
+class TestOpenAIResponsesHandlerToolCallWriteBack:
+    @pytest.mark.asyncio
+    async def test_process_output_response_writes_back_tool_call_arguments(self):
+        handler = OpenAIResponsesHandler()
+        response = ResponsesAPIResponse(
+            id="resp_1",
+            created_at=1,
+            model="gpt-5",
+            object="response",
+            status="completed",
+            output=[
+                {
+                    "type": "message",
+                    "id": "msg_1",
+                    "status": "completed",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "ищу"}],
+                },
+                ResponseFunctionToolCall(
+                    type="function_call",
+                    id="fc_1",
+                    call_id="call_1",
+                    name="web_search",
+                    arguments='{"query": "<PERSON_1>"}',
+                ),
+                {
+                    "type": "function_call",
+                    "id": "fc_2",
+                    "call_id": "call_2",
+                    "name": "web_search",
+                    "arguments": '{"query": "<PERSON_1> 2"}',
+                },
+            ],
+        )
+
+        result = await handler.process_output_response(
+            response, ArgumentsRewritingGuardrail(guardrail_name="test")
+        )
+
+        def arguments(item: Any) -> str:
+            return item["arguments"] if isinstance(item, dict) else item.arguments
+
+        assert arguments(result.output[1]) == '{"query": "Степан"}'
+        assert arguments(result.output[2]) == '{"query": "Степан 2"}'
