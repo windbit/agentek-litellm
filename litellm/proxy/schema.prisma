@@ -611,6 +611,7 @@ model LiteLLM_SpendLogs {
   @@index([startTime, request_id])
   @@index([end_user])
   @@index([session_id])
+  @@index([team_id, startTime])
 }
 
 // View spend, model, api_key per request
