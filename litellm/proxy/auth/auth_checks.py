@@ -4064,11 +4064,26 @@ async def _team_multi_budget_check(
     if team_object is None or not team_object.budget_limits:
         return
 
-    from litellm.proxy.proxy_server import get_current_spend
+    from litellm.proxy.proxy_server import (
+        _ensure_window_spend_counter_initialized,
+        get_current_spend,
+    )
+    from litellm.proxy.spend_tracking.budget_reservation import get_budget_window_start
 
     for window in team_object.budget_limits:
         w: dict = window if isinstance(window, dict) else window.model_dump()
         counter_key = f"spend:team:{team_object.team_id}:window:{w['budget_duration']}"
+        # A cold counter (Redis TTL, pod restart, manual reset) must be seeded from the
+        # spend logs of the running window: without this the check falls back to zero and
+        # the cap silently stops applying until the first write path seeds the counter.
+        window_start = get_budget_window_start(w)
+        if window_start is not None and team_object.team_id is not None:
+            await _ensure_window_spend_counter_initialized(
+                counter_key=counter_key,
+                entity_type="Team",
+                entity_id=team_object.team_id,
+                window_start=window_start,
+            )
         window_spend = await get_current_spend(
             counter_key=counter_key,
             fallback_spend=0.0,

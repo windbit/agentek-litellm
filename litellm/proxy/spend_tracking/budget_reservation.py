@@ -782,6 +782,14 @@ def get_budget_window_start(window: Any) -> Optional[datetime]:
     else:
         if reset_at.tzinfo is None:
             reset_at = reset_at.replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        if reset_at <= now:
+            # The reset job advances reset_at on a schedule, so a boundary that already
+            # passed means the window is overdue, not that the period runs up to it.
+            # Seeding from `reset_at - duration` would then charge the counter with the
+            # previous period's spend and exceed the cap on the first request.
+            elapsed_periods = int((now - reset_at).total_seconds() // duration_seconds) + 1
+            reset_at = reset_at + timedelta(seconds=duration_seconds * elapsed_periods)
         period_start = reset_at - timedelta(seconds=duration_seconds)
 
     spend_since = _coerce_datetime(window_dict.get("spend_since"))

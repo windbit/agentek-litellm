@@ -1762,3 +1762,46 @@ async def test_should_not_block_concurrent_team_request_when_first_request_lacks
         await release_budget_reservation(first_reservation)
     if second_reservation is not None:
         await release_budget_reservation(second_reservation)
+
+
+def test_should_start_window_at_current_period_when_reset_at_is_overdue():
+    # The reset job runs on a schedule, so reset_at can lag behind the calendar boundary it
+    # describes. Counting from `reset_at - duration` then seeds a cold counter with the previous
+    # period's spend and blocks the team on a budget it has not spent yet.
+    overdue_reset_at = datetime.now(timezone.utc) - timedelta(hours=2)
+
+    window_start = get_budget_window_start(
+        {"budget_duration": "1d", "reset_at": overdue_reset_at.isoformat()}
+    )
+
+    assert window_start == overdue_reset_at
+
+
+@pytest.mark.asyncio
+async def test_should_seed_cold_team_window_counter_before_budget_check():
+    # A cold counter (Redis TTL, pod restart, manual reset) must be seeded from the spend logs of
+    # the running window: falling back to zero silently switches the cap off.
+    from litellm.proxy.auth.auth_checks import _team_multi_budget_check
+
+    reset_at = datetime.now(timezone.utc) + timedelta(hours=8)
+    team = LiteLLM_TeamTable(
+        team_id="team-cold",
+        budget_limits=[
+            BudgetLimitEntry(
+                budget_duration="1d", max_budget=1.52, reset_at=reset_at.isoformat()
+            )
+        ],
+    )
+
+    seed = AsyncMock(return_value=True)
+    with patch(
+        "litellm.proxy.proxy_server._ensure_window_spend_counter_initialized", seed
+    ), patch(
+        "litellm.proxy.proxy_server.get_current_spend", AsyncMock(return_value=0.5)
+    ):
+        await _team_multi_budget_check(team_object=team)
+
+    seed.assert_awaited_once()
+    assert seed.await_args.kwargs["counter_key"] == "spend:team:team-cold:window:1d"
+    assert seed.await_args.kwargs["entity_id"] == "team-cold"
+    assert seed.await_args.kwargs["window_start"] == reset_at - timedelta(days=1)
