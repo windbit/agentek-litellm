@@ -262,6 +262,192 @@ class TestGigaChatToolsTransformation:
         assert result[1]["name"] == "func2"
 
 
+class TestGigaChatToolSchemaSanitization:
+    """Tests for tool JSON Schema sanitization (windbit/issues#1613)"""
+
+    @pytest.fixture
+    def config(self):
+        from litellm.llms.gigachat.chat.transformation import GigaChatConfig
+
+        return GigaChatConfig()
+
+    def _params(self, config, properties):
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "notify_user",
+                    "description": "Notify the user",
+                    "parameters": {"type": "object", "properties": properties},
+                },
+            }
+        ]
+        return config._convert_tools_to_functions(tools)[0]["parameters"]
+
+    def test_any_of_with_null_collapses_to_single_type(self, config):
+        """Optional-параметр из pydantic/zod: anyOf с null -> одиночный тип"""
+        params = self._params(
+            config,
+            {
+                "notify": {
+                    "anyOf": [{"type": "boolean"}, {"type": "null"}],
+                    "description": "d",
+                }
+            },
+        )
+
+        assert params["properties"]["notify"] == {"type": "boolean", "description": "d"}
+
+    def test_type_list_keeps_first_non_null(self, config):
+        params = self._params(config, {"notify": {"type": ["boolean", "null"]}})
+
+        assert params["properties"]["notify"]["type"] == "boolean"
+
+    def test_null_type_becomes_fallback(self, config):
+        params = self._params(config, {"notify": {"type": "null"}})
+
+        assert params["properties"]["notify"]["type"] == "string"
+
+    def test_type_inferred_when_union_leaves_none(self, config):
+        """Тип выводится из формы узла, а не подставляется строкой наугад"""
+        params = self._params(
+            config,
+            {
+                "payload": {
+                    "anyOf": [
+                        {"properties": {"a": {"type": "string"}}},
+                        {"type": "null"},
+                    ]
+                },
+                "tags": {"items": {"type": "string"}},
+                "level": {"enum": [1, 2, 3]},
+            },
+        )
+        properties = params["properties"]
+
+        assert properties["payload"]["type"] == "object"
+        assert properties["tags"]["type"] == "array"
+        assert properties["level"]["type"] == "integer"
+
+    def test_nested_schemas_sanitized(self, config):
+        params = self._params(
+            config,
+            {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "flag": {"anyOf": [{"type": "boolean"}, {"type": "null"}]}
+                        },
+                    },
+                }
+            },
+        )
+
+        item_schema = params["properties"]["items"]["items"]
+        assert item_schema["properties"]["flag"] == {"type": "boolean"}
+
+    def test_defs_sanitized(self, config):
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "f",
+                    "description": "d",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"ref": {"$ref": "#/$defs/Flag"}},
+                        "$defs": {
+                            "Flag": {"anyOf": [{"type": "boolean"}, {"type": "null"}]}
+                        },
+                    },
+                },
+            }
+        ]
+        params = config._convert_tools_to_functions(tools)[0]["parameters"]
+
+        assert params["$defs"]["Flag"]["type"] == "boolean"
+        # `$ref` без типа GigaChat принимает, поэтому тип туда не дописываем.
+        assert params["properties"]["ref"] == {"$ref": "#/$defs/Flag"}
+
+    def test_valid_schema_unchanged(self, config):
+        properties = {"city": {"type": "string", "description": "City"}}
+        params = self._params(config, properties)
+
+        assert params == {"type": "object", "properties": properties}
+
+    def test_structured_output_schema_sanitized(self, config):
+        params = config.map_openai_params(
+            non_default_params={
+                "response_format": {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "person",
+                        "schema": {
+                            "type": "object",
+                            "properties": {"age": {"type": ["integer", "null"]}},
+                        },
+                    },
+                }
+            },
+            optional_params={},
+            model="GigaChat",
+            drop_params=False,
+        )
+
+        assert (
+            params["functions"][0]["parameters"]["properties"]["age"]["type"]
+            == "integer"
+        )
+
+    def test_all_of_branches_merged(self, config):
+        """allOf — пересечение, поэтому ветки сливаются, а не выбирается первая"""
+        params = self._params(
+            config,
+            {
+                "target": {
+                    "allOf": [
+                        {"type": "object", "properties": {"a": {"type": "string"}}},
+                        {"description": "merged"},
+                    ]
+                }
+            },
+        )
+        target = params["properties"]["target"]
+
+        assert target["type"] == "object"
+        assert target["description"] == "merged"
+        assert target["properties"]["a"] == {"type": "string"}
+
+    def test_functions_passthrough_sanitized(self, config):
+        """Схемы, пришедшие в legacy-параметре functions, тоже чистятся"""
+        result = config.map_openai_params(
+            non_default_params={
+                "functions": [
+                    {
+                        "name": "notify_user",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "notify": {
+                                    "anyOf": [{"type": "boolean"}, {"type": "null"}]
+                                }
+                            },
+                        },
+                    }
+                ]
+            },
+            optional_params={},
+            model="GigaChat",
+            drop_params=False,
+        )
+
+        assert result["functions"][0]["parameters"]["properties"]["notify"] == {
+            "type": "boolean"
+        }
+
+
 class TestGigaChatParamsTransformation:
     """Tests for parameter transformation"""
 

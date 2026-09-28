@@ -65,6 +65,118 @@ def _is_assistant_message(
     return message.get("role") == "assistant"
 
 
+# GigaChat валидирует схемы функций строго: `type` обязателен и только одиночной строкой,
+# поэтому список типов, `anyOf`/`oneOf` и `type: "null"` он отбивает 422 — а ровно такую схему
+# даёт любой Optional-параметр из pydantic/zod (windbit/issues#1613).
+SCHEMA_FALLBACK_TYPE = "string"
+SCHEMA_INTERSECTION_KEY = "allOf"
+SCHEMA_UNION_KEYS = ("anyOf", "oneOf")
+SCHEMA_MAP_KEYS = ("properties", "$defs", "definitions", "patternProperties")
+SCHEMA_CHILD_KEYS = ("items", "prefixItems", "additionalProperties", "contains")
+JSON_TYPE_BY_PYTHON_TYPE: dict[type, str] = {
+    bool: "boolean",
+    int: "integer",
+    float: "number",
+    str: "string",
+    list: "array",
+    dict: "object",
+}
+
+
+def _non_null_branches(branches: object) -> tuple[dict[str, object], ...]:
+    if not isinstance(branches, list):
+        return ()
+    return tuple(
+        branch
+        for branch in branches
+        if isinstance(branch, dict) and branch.get("type") != "null"
+    )
+
+
+def _without_unions(schema: dict[str, object]) -> dict[str, object]:
+    """Схема без union-ключей: `allOf` сливается целиком, `anyOf`/`oneOf` — первой не-null ветвью."""
+    intersection = _non_null_branches(schema.get(SCHEMA_INTERSECTION_KEY))
+    alternatives = tuple(
+        branch
+        for key in SCHEMA_UNION_KEYS
+        for branch in _non_null_branches(schema.get(key))[:1]
+    )
+    inherited = {
+        key: value
+        for branch in intersection + alternatives
+        for key, value in branch.items()
+    }
+    own = {
+        key: value
+        for key, value in schema.items()
+        if key not in SCHEMA_UNION_KEYS and key != SCHEMA_INTERSECTION_KEY
+    }
+    return {**inherited, **own}
+
+
+def _inferred_type(schema: dict[str, object]) -> str:
+    """Тип по форме узла — для схем, где его не осталось после слияния union'а."""
+    if isinstance(schema.get("properties"), dict):
+        return "object"
+    if any(key in schema for key in ("items", "prefixItems")):
+        return "array"
+    enum = schema.get("enum")
+    for value in enum if isinstance(enum, list) else ():
+        if value is not None:
+            return JSON_TYPE_BY_PYTHON_TYPE.get(type(value), SCHEMA_FALLBACK_TYPE)
+    return SCHEMA_FALLBACK_TYPE
+
+
+def _resolved_type(schema: dict[str, object]) -> object | None:
+    """Одиночный `type` для узла; `None` — если тип дописывать не нужно."""
+    declared = schema.get("type")
+    if isinstance(declared, list):
+        non_null = [item for item in declared if item != "null"]
+        return non_null[0] if non_null else _inferred_type(schema)
+    if declared is not None and declared != "null":
+        return declared
+    if "$ref" in schema:
+        return None
+    return _inferred_type(schema)
+
+
+def sanitize_json_schema(schema: object) -> object:
+    """Приводит JSON Schema к подмножеству, которое принимает GigaChat; вложенные схемы тоже."""
+    if isinstance(schema, list):
+        return [sanitize_json_schema(item) for item in schema]
+    if not isinstance(schema, dict):
+        return schema
+
+    flat = _without_unions(schema)
+    children = {
+        key: (
+            {name: sanitize_json_schema(item) for name, item in value.items()}
+            if key in SCHEMA_MAP_KEYS
+            else sanitize_json_schema(value)
+        )
+        for key, value in flat.items()
+        if (key in SCHEMA_MAP_KEYS and isinstance(value, dict))
+        or (key in SCHEMA_CHILD_KEYS and isinstance(value, (dict, list)))
+    }
+    resolved_type = _resolved_type(flat)
+    body = {key: value for key, value in {**flat, **children}.items() if key != "type"}
+    return body if resolved_type is None else {**body, "type": resolved_type}
+
+
+def sanitize_function_schemas(functions: object) -> object:
+    """Санитизирует `parameters` у каждой функции в списке; прочие поля не трогает."""
+    if not isinstance(functions, list):
+        return functions
+    return [
+        (
+            {**function, "parameters": sanitize_json_schema(function["parameters"])}
+            if isinstance(function, dict) and "parameters" in function
+            else function
+        )
+        for function in functions
+    ]
+
+
 class GigaChatError(BaseLLMException):
     """GigaChat API error."""
 
@@ -201,7 +313,7 @@ class GigaChatConfig(BaseConfig):
                 if mapped_choice is not None:
                     optional_params["function_call"] = mapped_choice
             elif param == "functions":
-                optional_params["functions"] = value
+                optional_params["functions"] = sanitize_function_schemas(value)
             elif param == "function_call":
                 optional_params["function_call"] = value
             elif param == "response_format":
@@ -214,7 +326,7 @@ class GigaChatConfig(BaseConfig):
                     function_def = {
                         "name": schema_name,
                         "description": f"Output structured response: {schema_name}",
-                        "parameters": schema,
+                        "parameters": sanitize_json_schema(schema),
                     }
 
                     if "functions" not in optional_params:
@@ -235,7 +347,7 @@ class GigaChatConfig(BaseConfig):
                     {
                         "name": func.get("name", ""),
                         "description": func.get("description", ""),
-                        "parameters": func.get("parameters", {}),
+                        "parameters": sanitize_json_schema(func.get("parameters", {})),
                     }
                 )
         return functions
