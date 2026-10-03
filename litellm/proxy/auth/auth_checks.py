@@ -95,6 +95,8 @@ from .auth_checks_organization import organization_role_based_access_check
 from .auth_utils import get_model_from_request
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from opentelemetry.trace import Span as _Span
 
     Span = Union[_Span, Any]
@@ -4089,6 +4091,21 @@ async def _team_multi_budget_check(
             fallback_spend=0.0,
         )
         if math.isfinite(w["max_budget"]) and window_spend >= w["max_budget"]:
+            # The counter can sit at exactly max_budget without any spend behind it:
+            # reserve_budget_for_request clamps an oversized estimate down to the
+            # remaining budget, and a request that dies before reconciliation leaves
+            # that reservation in the counter. Confirm the refusal against the spend
+            # logs first, otherwise one lost reservation keeps the team at 429 for the
+            # whole counter TTL on zero booked spend.
+            if window_start is not None and team_object.team_id is not None:
+                booked_spend = await _booked_window_spend(
+                    team_id=team_object.team_id, window_start=window_start
+                )
+                if booked_spend is not None and booked_spend < w["max_budget"]:
+                    await _reseed_window_counter(
+                        counter_key=counter_key, booked_spend=booked_spend
+                    )
+                    continue
             raise litellm.BudgetExceededError(
                 current_cost=window_spend,
                 max_budget=w["max_budget"],
@@ -4096,6 +4113,53 @@ async def _team_multi_budget_check(
                     f"ExceededBudget: Team={team_object.team_id} over {w['budget_duration']} budget. "
                     f"Spend=${window_spend:.4f}, Limit=${w['max_budget']:.2f}"
                 ),
+            )
+
+
+async def _booked_window_spend(
+    team_id: str,
+    window_start: "datetime",
+) -> Optional[float]:
+    """Spend actually booked for a team's window in the spend logs, None if unreadable.
+
+    Only consulted on the refusal path, so the extra query costs nothing while a team
+    stays under its cap.
+    """
+    from litellm.proxy.db.spend_counter_reseed import SpendCounterReseed
+    from litellm.proxy.proxy_server import prisma_client
+
+    try:
+        return await SpendCounterReseed.window_from_spend_logs(
+            prisma_client=prisma_client,
+            entity_type="Team",
+            entity_id=team_id,
+            window_start=window_start,
+        )
+    except Exception as e:
+        verbose_proxy_logger.warning(
+            "Failed to read booked window spend for team %s: %s", team_id, e
+        )
+        return None
+
+
+async def _reseed_window_counter(counter_key: str, booked_spend: float) -> None:
+    """Pull a counter back down to booked spend, dropping an unreconciled reservation.
+
+    In-flight reservations on the same window are dropped with it, so a burst that
+    straddles this correction can overshoot the cap by one window of concurrency;
+    the alternative is refusing a team that has not spent its budget.
+    """
+    from litellm.proxy.proxy_server import spend_counter_cache
+
+    spend_counter_cache.in_memory_cache.set_cache(key=counter_key, value=booked_spend)
+    if spend_counter_cache.redis_cache is not None:
+        try:
+            await spend_counter_cache.redis_cache.async_set_cache(
+                key=counter_key, value=booked_spend
+            )
+        except Exception as redis_err:
+            verbose_proxy_logger.warning(
+                "Failed to reseed Redis counter %s: %s", counter_key, redis_err
             )
 
 
