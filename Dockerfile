@@ -21,8 +21,8 @@ RUN apk add --no-cache \
     gcc \
     python3 \
     python3-dev \
-    openssl \
-    openssl-dev \
+    openssl-4.0 \
+    openssl-4.0-dev \
     nodejs \
     npm \
     libsndfile
@@ -76,7 +76,7 @@ FROM $LITELLM_RUNTIME_IMAGE AS runtime
 USER root
 
 # node (without npm) is required by the prisma CLI at runtime
-RUN apk add --no-cache bash openssl tzdata nodejs python3 libsndfile
+RUN apk add --no-cache bash openssl-4.0 tzdata nodejs python3 libsndfile
 
 WORKDIR /app
 ENV PATH="/app/.venv/bin:${PATH}"
