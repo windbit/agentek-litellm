@@ -127,32 +127,70 @@ def _inferred_type(schema: dict[str, object]) -> str:
     return SCHEMA_FALLBACK_TYPE
 
 
-def _resolved_type(schema: dict[str, object]) -> object | None:
-    """Одиночный `type` для узла; `None` — если тип дописывать не нужно."""
+def _resolved_type(schema: dict[str, object]) -> object:
+    """Одиночный `type` для узла."""
     declared = schema.get("type")
     if isinstance(declared, list):
         non_null = [item for item in declared if item != "null"]
         return non_null[0] if non_null else _inferred_type(schema)
     if declared is not None and declared != "null":
         return declared
-    if "$ref" in schema:
-        return None
     return _inferred_type(schema)
+
+
+def _definitions(schema: object) -> dict[str, object]:
+    if not isinstance(schema, dict):
+        return {}
+    return {
+        f"#/{key}/{name}": value
+        for key in ("$defs", "definitions")
+        if isinstance(schema.get(key), dict)
+        for name, value in schema[key].items()  # type: ignore[index]
+    }
+
+
+def _dereferenced(
+    schema: dict[str, object], defs: dict[str, object], seen: tuple[str, ...]
+) -> tuple[dict[str, object], tuple[str, ...]]:
+    """Подставляет тело локального `$ref`; цикл обрывает пустым object."""
+    ref = schema.get("$ref")
+    if not isinstance(ref, str):
+        return schema, seen
+    own = {key: value for key, value in schema.items() if key != "$ref"}
+    if ref in seen:
+        return {**own, "type": "object", "properties": {}}, seen
+    target = defs.get(ref)
+    if not isinstance(target, dict):
+        return {**own, "type": _inferred_type(own)}, seen
+    return {**target, **own}, seen + (ref,)
 
 
 def sanitize_json_schema(schema: object) -> object:
     """Приводит JSON Schema к подмножеству, которое принимает GigaChat; вложенные схемы тоже."""
+    return _sanitized(schema, _definitions(schema), ())
+
+
+def _sanitized(
+    schema: object, defs: dict[str, object], seen: tuple[str, ...]
+) -> object:
     if isinstance(schema, list):
-        return [sanitize_json_schema(item) for item in schema]
+        return [_sanitized(item, defs, seen) for item in schema]
     if not isinstance(schema, dict):
         return schema
 
-    flat = _without_unions(schema)
+    # GigaChat не разбирает `$ref` и `$defs`, поэтому схема приезжает к нему уже развёрнутой
+    # и без словаря определений (windbit/issues#1613).
+    resolved, seen = _dereferenced(schema, defs, seen)
+    flat = {
+        key: value
+        for key, value in _without_unions(resolved).items()
+        if key not in ("$defs", "definitions")
+    }
     children = {
         key: (
-            {name: sanitize_json_schema(item) for name, item in value.items()}
+            {name: _sanitized(item, defs, seen) for name, item in value.items()}
             if key in SCHEMA_MAP_KEYS
-            else sanitize_json_schema(value)
+            else _sanitized(value, defs, seen)
         )
         for key, value in flat.items()
         if (key in SCHEMA_MAP_KEYS and isinstance(value, dict))
@@ -160,7 +198,14 @@ def sanitize_json_schema(schema: object) -> object:
     }
     resolved_type = _resolved_type(flat)
     body = {key: value for key, value in {**flat, **children}.items() if key != "type"}
-    return body if resolved_type is None else {**body, "type": resolved_type}
+    # Object без `properties` GigaChat отбивает 422 "Field '...properties' is missing",
+    # а схлопнутый Optional-объект приходит ровно таким.
+    implied_properties = (
+        {"properties": {}}
+        if resolved_type == "object" and "properties" not in body
+        else {}
+    )
+    return {**body, **implied_properties, "type": resolved_type}
 
 
 def sanitize_function_schemas(functions: object) -> object:

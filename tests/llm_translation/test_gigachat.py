@@ -348,7 +348,8 @@ class TestGigaChatToolSchemaSanitization:
         item_schema = params["properties"]["items"]["items"]
         assert item_schema["properties"]["flag"] == {"type": "boolean"}
 
-    def test_defs_sanitized(self, config):
+    def test_ref_is_inlined_and_defs_dropped(self, config):
+        """GigaChat не разбирает $ref/$defs, поэтому схема уезжает развёрнутой"""
         tools = [
             {
                 "type": "function",
@@ -367,9 +368,35 @@ class TestGigaChatToolSchemaSanitization:
         ]
         params = config._convert_tools_to_functions(tools)[0]["parameters"]
 
-        assert params["$defs"]["Flag"]["type"] == "boolean"
-        # `$ref` без типа GigaChat принимает, поэтому тип туда не дописываем.
-        assert params["properties"]["ref"] == {"$ref": "#/$defs/Flag"}
+        assert "$defs" not in params
+        assert params["properties"]["ref"] == {"type": "boolean"}
+
+    def test_recursive_ref_terminates(self, config):
+        """Циклическая ссылка обрывается пустым object, а не рекурсией"""
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "f",
+                    "description": "d",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"node": {"$ref": "#/$defs/Node"}},
+                        "$defs": {
+                            "Node": {
+                                "type": "object",
+                                "properties": {"child": {"$ref": "#/$defs/Node"}},
+                            }
+                        },
+                    },
+                },
+            }
+        ]
+        params = config._convert_tools_to_functions(tools)[0]["parameters"]
+        node = params["properties"]["node"]
+
+        assert node["type"] == "object"
+        assert node["properties"]["child"] == {"type": "object", "properties": {}}
 
     def test_valid_schema_unchanged(self, config):
         properties = {"city": {"type": "string", "description": "City"}}
@@ -400,6 +427,21 @@ class TestGigaChatToolSchemaSanitization:
             params["functions"][0]["parameters"]["properties"]["age"]["type"]
             == "integer"
         )
+
+    def test_object_without_properties_gets_empty_properties(self, config):
+        """GigaChat требует properties у object-узла, иначе 422"""
+        params = self._params(config, {"arguments": {"type": "object"}})
+
+        assert params["properties"]["arguments"] == {"type": "object", "properties": {}}
+
+    def test_optional_object_keeps_properties_after_collapse(self, config):
+        """Схлопнутый Optional-объект тоже должен получить properties"""
+        params = self._params(
+            config,
+            {"arguments": {"anyOf": [{"type": "object"}, {"type": "null"}]}},
+        )
+
+        assert params["properties"]["arguments"] == {"type": "object", "properties": {}}
 
     def test_all_of_branches_merged(self, config):
         """allOf — пересечение, поэтому ветки сливаются, а не выбирается первая"""
