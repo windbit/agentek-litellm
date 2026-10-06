@@ -77,6 +77,8 @@ USER root
 
 # node (without npm) is required by the prisma CLI at runtime
 RUN apk add --no-cache bash openssl-4.0 tzdata nodejs python3 libsndfile
+# gdb reads the core file the gateway leaves after a native crash (helm-litellm gateway.debugMalloc)
+RUN apk add --no-cache gdb
 
 WORKDIR /app
 ENV PATH="/app/.venv/bin:${PATH}"
