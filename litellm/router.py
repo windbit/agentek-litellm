@@ -4946,12 +4946,17 @@ class Router:
         # The original_generic_function is preserved so the per-attempt
         # helper knows which underlying API to call on fallback.
         fallback_kwargs: Dict[str, Any] = kwargs.copy()
-        if isinstance(fallback_kwargs.get("litellm_metadata"), dict):
-            fallback_kwargs["litellm_metadata"] = safe_deep_copy(
-                fallback_kwargs["litellm_metadata"]
-            )
-        if isinstance(fallback_kwargs.get("metadata"), dict):
-            fallback_kwargs["metadata"] = safe_deep_copy(fallback_kwargs["metadata"])
+        for metadata_name in ("litellm_metadata", "metadata"):
+            metadata = fallback_kwargs.get(metadata_name)
+            if not isinstance(metadata, dict):
+                continue
+            fallback_kwargs[metadata_name] = safe_deep_copy(metadata)
+            # The proxy settles one budget reservation per request: the fallback's
+            # success callback and the proxy stream cleanup must settle the same dict.
+            if "user_api_key_budget_reservation" in metadata:
+                fallback_kwargs[metadata_name]["user_api_key_budget_reservation"] = (
+                    metadata["user_api_key_budget_reservation"]
+                )
         fallback_kwargs["original_generic_function"] = original_function
 
         response = await self._ageneric_api_call_with_fallbacks(
