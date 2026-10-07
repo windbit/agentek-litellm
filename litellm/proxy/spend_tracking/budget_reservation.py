@@ -70,7 +70,7 @@ async def reserve_budget_for_request(
 ) -> Optional[dict]:
     if valid_token is None or not RouteChecks.is_llm_api_route(route=route):
         return None
-    if route in {"/models", "/v1/models", "/utils/token_counter"}:
+    if route in {"/models", "/v1/models"} or _is_token_counting_route(route):
         return None
     if get_model_from_request(request_body, route, llm_router=llm_router) is None:
         return None
@@ -167,6 +167,15 @@ async def reserve_budget_for_request(
         "entries": applied_entries,
         "finalized": False,
     }
+
+
+def _is_token_counting_route(route: str) -> bool:
+    # These routes never call the model, so no success or failure callback settles a reservation.
+    return (
+        route == "/utils/token_counter"
+        or route.endswith("/count_tokens")
+        or route.endswith(":countTokens")
+    )
 
 
 async def reconcile_budget_reservation(

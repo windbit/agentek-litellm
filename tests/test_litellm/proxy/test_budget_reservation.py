@@ -1449,6 +1449,46 @@ async def test_should_not_double_apply_concurrent_settlements_of_one_reservation
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "route",
+    [
+        "/utils/token_counter",
+        "/v1/messages/count_tokens",
+        "/v1beta/models/gemini-2.5-pro:countTokens",
+        "/models/gemini-2.5-pro:countTokens",
+    ],
+)
+async def test_should_not_reserve_budget_for_token_counting_routes(
+    spend_counter_state, route
+):
+    counter_cache, key_cache = spend_counter_state
+
+    with patch(
+        "litellm.proxy.spend_tracking.budget_reservation.estimate_request_max_cost",
+        return_value=0.6,
+    ):
+        reservation = await reserve_budget_for_request(
+            request_body=_request_body(),
+            route=route,
+            llm_router=None,
+            valid_token=UserAPIKeyAuth(
+                token="key-count-tokens", spend=0.0, max_budget=2.0
+            ),
+            team_object=None,
+            user_object=None,
+            prisma_client=None,
+            user_api_key_cache=key_cache,
+            proxy_logging_obj=ProxyLogging(user_api_key_cache=key_cache),
+        )
+
+    assert reservation is None
+    assert (
+        counter_cache.in_memory_cache.get_cache(key="spend:key:key-count-tokens")
+        is None
+    )
+
+
+@pytest.mark.asyncio
 async def test_should_release_reservation_on_failure(spend_counter_state):
     counter_cache, key_cache = spend_counter_state
     proxy_logging_obj = ProxyLogging(user_api_key_cache=key_cache)
