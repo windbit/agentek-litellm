@@ -4760,8 +4760,6 @@ def test_is_deployment_blocked_static_helper_reflects_blocked_flag():
 
 @pytest.mark.asyncio
 async def test_aresponses_streaming_fallback_shares_budget_reservation():
-    # The proxy settles one reservation per request: the fallback's success
-    # callback and the proxy stream cleanup must see the same dict.
     router = _make_router_with_fallback()
     reservation = {"reserved_cost": 0.3, "entries": [], "finalized": False}
     primary_tags = ["primary"]

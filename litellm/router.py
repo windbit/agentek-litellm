@@ -4951,8 +4951,8 @@ class Router:
             if not isinstance(metadata, dict):
                 continue
             fallback_kwargs[metadata_name] = safe_deep_copy(metadata)
-            # The proxy settles one budget reservation per request: the fallback's
-            # success callback and the proxy stream cleanup must settle the same dict.
+            # Share the reservation, not a copy: the fallback's success callback and
+            # the proxy stream cleanup settle the same one.
             if "user_api_key_budget_reservation" in metadata:
                 fallback_kwargs[metadata_name]["user_api_key_budget_reservation"] = (
                     metadata["user_api_key_budget_reservation"]

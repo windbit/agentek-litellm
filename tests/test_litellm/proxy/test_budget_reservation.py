@@ -1416,7 +1416,6 @@ async def test_should_keep_actual_cost_when_unbilled_release_follows_success(
 async def test_should_not_double_apply_concurrent_settlements_of_one_reservation(
     spend_counter_state,
 ):
-    # Stream cleanup and the success callback settle one reservation from two coroutines.
     counter_cache, key_cache = spend_counter_state
     # Booked spend keeps the double-applied adjustment positive, so no underflow guard masks it.
     await counter_cache.async_set_cache(key="spend:key:key-stream-race", value=0.5)
