@@ -129,6 +129,39 @@ async def _record_streaming_client_disconnect_if_needed(
     return True
 
 
+async def _release_unbilled_stream_reservation(request_data: dict) -> None:
+    """Free the budget reservation of an ended stream unless its success callback settled it.
+
+    A stream that fails after the 200 (an upstream error event, a client disconnect) reaches
+    neither the success callback nor post_call_failure_hook, so nothing else releases it.
+    """
+    from litellm.proxy.spend_tracking.budget_reservation import (
+        invalidate_budget_reservation_counters,
+        release_unbilled_budget_reservation,
+    )
+
+    for metadata_name in ("litellm_metadata", "metadata"):
+        reservation = (request_data.get(metadata_name) or {}).get(
+            "user_api_key_budget_reservation"
+        )
+        if isinstance(reservation, dict):
+            break
+    else:
+        return
+    try:
+        await release_unbilled_budget_reservation(reservation)
+    except Exception:
+        verbose_proxy_logger.exception(
+            "Failed to release budget reservation after the stream ended"
+        )
+        try:
+            await invalidate_budget_reservation_counters(budget_reservation=reservation)
+        except Exception:
+            verbose_proxy_logger.exception(
+                "Failed to invalidate budget reservation counters after the stream ended"
+            )
+
+
 async def _cancel_pending_gather_tasks(tasks: list["asyncio.Task[Any]"]) -> None:
     pending_tasks = [task for task in tasks if not task.done()]
     for task in pending_tasks:
@@ -2467,6 +2500,8 @@ class ProxyBaseLLMRequestProcessing:
                 )
             if recorded_client_disconnect:
                 ProxyLogging._fire_deferred_stream_logging(request_data)
+
+            await _release_unbilled_stream_reservation(request_data)
 
             if hasattr(response, "aclose"):
                 try:

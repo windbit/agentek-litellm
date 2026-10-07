@@ -195,6 +195,21 @@ async def release_budget_reservation(budget_reservation: Optional[dict]) -> None
     )
 
 
+async def release_unbilled_budget_reservation(
+    budget_reservation: Optional[dict],
+) -> None:
+    """Drop the reservation of a request whose cost may never be logged, keeping it open.
+
+    For a stream that has ended: a success callback still on its way books the actual cost
+    over this release, one that already ran has finalized the reservation and this is a no-op.
+    """
+    await reconcile_budget_reservation(
+        budget_reservation=budget_reservation,
+        actual_cost=0.0,
+        finalize=False,
+    )
+
+
 async def invalidate_budget_reservation_counters(
     budget_reservation: Optional[dict],
 ) -> None:
@@ -656,15 +671,22 @@ async def _set_reserved_entry_actual_cost(
     adjustment = target_adjustment - applied_adjustment
     if adjustment == 0:
         return
-    await _ensure_counter_can_apply_adjustment(
-        counter_key=counter_key,
-        adjustment=adjustment,
-    )
-    await _increment_spend_counter_cache(
-        counter_key=counter_key,
-        increment=adjustment,
-    )
+    # Claimed before the first await: stream cleanup and the success callback settle
+    # the same entry concurrently, and each must see the other's adjustment.
     entry["applied_adjustment"] = target_adjustment
+    try:
+        await _ensure_counter_can_apply_adjustment(
+            counter_key=counter_key,
+            adjustment=adjustment,
+        )
+        await _increment_spend_counter_cache(
+            counter_key=counter_key,
+            increment=adjustment,
+        )
+    except BaseException:
+        if entry.get("applied_adjustment") == target_adjustment:
+            entry["applied_adjustment"] = applied_adjustment
+        raise
 
 
 async def _ensure_counter_can_apply_adjustment(

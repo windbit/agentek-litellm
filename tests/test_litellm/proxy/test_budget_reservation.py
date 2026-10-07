@@ -1,3 +1,4 @@
+import asyncio
 import json
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -23,6 +24,7 @@ from litellm.proxy.spend_tracking.budget_reservation import (
     get_budget_window_start,
     invalidate_budget_reservation_counters,
     release_budget_reservation,
+    release_unbilled_budget_reservation,
     reserve_budget_for_request,
 )
 from litellm.proxy.utils import ProxyLogging
@@ -1326,6 +1328,124 @@ async def test_should_reconcile_reserved_counter_to_actual_spend(
     assert counter_cache.in_memory_cache.get_cache(
         key="spend:team:team-without-budget"
     ) == pytest.approx(0.2)
+
+
+async def _reserve_key_budget(
+    key_cache: DualCache, token: str, estimate: float
+) -> dict:
+    with patch(
+        "litellm.proxy.spend_tracking.budget_reservation.estimate_request_max_cost",
+        return_value=estimate,
+    ):
+        reservation = await reserve_budget_for_request(
+            request_body=_request_body(),
+            route="/chat/completions",
+            llm_router=None,
+            valid_token=UserAPIKeyAuth(token=token, spend=0.0, max_budget=2.0),
+            team_object=None,
+            user_object=None,
+            prisma_client=None,
+            user_api_key_cache=key_cache,
+            proxy_logging_obj=ProxyLogging(user_api_key_cache=key_cache),
+        )
+    assert reservation is not None
+    return reservation
+
+
+@pytest.mark.asyncio
+async def test_should_release_unbilled_reservation_when_stream_ends_without_success(
+    spend_counter_state,
+):
+    counter_cache, key_cache = spend_counter_state
+    reservation = await _reserve_key_budget(key_cache, "key-stream-dropped", 0.6)
+
+    await release_unbilled_budget_reservation(reservation)
+
+    assert counter_cache.in_memory_cache.get_cache(
+        key="spend:key:key-stream-dropped"
+    ) == pytest.approx(0.0)
+
+
+@pytest.mark.asyncio
+async def test_should_book_actual_cost_when_success_arrives_after_unbilled_release(
+    spend_counter_state,
+):
+    counter_cache, key_cache = spend_counter_state
+    reservation = await _reserve_key_budget(key_cache, "key-stream-late-success", 0.6)
+
+    from litellm.proxy.proxy_server import increment_spend_counters
+
+    await release_unbilled_budget_reservation(reservation)
+    await increment_spend_counters(
+        token="key-stream-late-success",
+        team_id=None,
+        user_id=None,
+        response_cost=0.2,
+        budget_reservation=reservation,
+    )
+
+    assert counter_cache.in_memory_cache.get_cache(
+        key="spend:key:key-stream-late-success"
+    ) == pytest.approx(0.2)
+
+
+@pytest.mark.asyncio
+async def test_should_keep_actual_cost_when_unbilled_release_follows_success(
+    spend_counter_state,
+):
+    counter_cache, key_cache = spend_counter_state
+    reservation = await _reserve_key_budget(key_cache, "key-stream-early-success", 0.6)
+
+    from litellm.proxy.proxy_server import increment_spend_counters
+
+    await increment_spend_counters(
+        token="key-stream-early-success",
+        team_id=None,
+        user_id=None,
+        response_cost=0.2,
+        budget_reservation=reservation,
+    )
+    await release_unbilled_budget_reservation(reservation)
+
+    assert counter_cache.in_memory_cache.get_cache(
+        key="spend:key:key-stream-early-success"
+    ) == pytest.approx(0.2)
+
+
+@pytest.mark.asyncio
+async def test_should_not_double_apply_concurrent_settlements_of_one_reservation(
+    spend_counter_state,
+):
+    # Stream cleanup and the success callback settle one reservation from two coroutines.
+    counter_cache, key_cache = spend_counter_state
+    # Booked spend keeps the double-applied adjustment positive, so no underflow guard masks it.
+    await counter_cache.async_set_cache(key="spend:key:key-stream-race", value=0.5)
+    reservation = await _reserve_key_budget(key_cache, "key-stream-race", 0.6)
+
+    import litellm.proxy.spend_tracking.budget_reservation as br
+    from litellm.proxy.proxy_server import increment_spend_counters
+
+    original_ensure = br._ensure_counter_can_apply_adjustment
+
+    async def yielding_ensure(counter_key: str, adjustment: float) -> None:
+        await asyncio.sleep(0)
+        await original_ensure(counter_key=counter_key, adjustment=adjustment)
+
+    with patch.object(br, "_ensure_counter_can_apply_adjustment", yielding_ensure):
+        await asyncio.gather(
+            release_unbilled_budget_reservation(reservation),
+            increment_spend_counters(
+                token="key-stream-race",
+                team_id=None,
+                user_id=None,
+                response_cost=0.2,
+                budget_reservation=reservation,
+            ),
+        )
+
+    assert counter_cache.in_memory_cache.get_cache(
+        key="spend:key:key-stream-race"
+    ) == pytest.approx(0.7)
 
 
 @pytest.mark.asyncio
