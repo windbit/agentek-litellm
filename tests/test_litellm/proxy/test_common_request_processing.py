@@ -1,7 +1,7 @@
 import asyncio
 import copy
 import datetime
-from typing import AsyncGenerator, Optional
+from typing import Any, AsyncGenerator, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -3848,3 +3848,126 @@ class TestAllmPassthroughStreamingProviderGate:
         streamed = [chunk async for chunk in result.body_iterator]
         assert streamed == chunks
         mock_handler.assert_not_awaited()
+
+
+class TestStreamReleasesBudgetReservation:
+    @staticmethod
+    async def _reserved_stream_request(counter_key: str, reserved_cost: float) -> dict:
+        from litellm.proxy.proxy_server import spend_counter_cache
+
+        await spend_counter_cache.async_set_cache(key=counter_key, value=reserved_cost)
+        reservation = {
+            "reserved_cost": reserved_cost,
+            "entries": [{"counter_key": counter_key, "reserved_cost": reserved_cost}],
+            "finalized": False,
+        }
+        return {
+            "model": "mock-model",
+            "litellm_metadata": {"user_api_key_budget_reservation": reservation},
+        }
+
+    @pytest.fixture()
+    def spend_counter_cache(self, monkeypatch):
+        import litellm.proxy.proxy_server as ps
+        from litellm.caching.dual_cache import DualCache
+
+        cache = DualCache()
+        monkeypatch.setattr(ps, "spend_counter_cache", cache)
+        return cache
+
+    @pytest.fixture()
+    def no_release_grace(self, monkeypatch):
+        import litellm.proxy.common_request_processing as crp
+
+        monkeypatch.setattr(crp, "STREAM_RESERVATION_RELEASE_GRACE_SECONDS", 0)
+        return crp
+
+    @staticmethod
+    async def _drain(stream: Any, request_data: dict) -> None:
+        ProxyLogging._callback_capabilities_cache.clear()
+        async for _ in ProxyBaseLLMRequestProcessing.async_streaming_data_generator(
+            response=stream,
+            user_api_key_dict=MagicMock(spec=UserAPIKeyAuth),
+            request_data=request_data,
+            proxy_logging_obj=ProxyLogging(user_api_key_cache=MagicMock()),
+            serialize_chunk=lambda c: "data: x\n\n",
+            serialize_error=lambda e: "data: error\n\n",
+        ):
+            pass
+
+    @pytest.mark.asyncio
+    async def test_should_release_reservation_when_stream_ends_with_error_event(
+        self, spend_counter_cache, no_release_grace
+    ):
+        request_data = await self._reserved_stream_request(
+            "spend:team:t1:window:1d", 0.3
+        )
+
+        await self._drain(_ErrorEventStream(), request_data)
+        await asyncio.gather(*no_release_grace._pending_reservation_releases)
+
+        assert spend_counter_cache.in_memory_cache.get_cache(
+            key="spend:team:t1:window:1d"
+        ) == pytest.approx(0.0)
+
+    @pytest.mark.asyncio
+    async def test_should_keep_reservation_for_the_success_callback_within_grace(
+        self, spend_counter_cache
+    ):
+        request_data = await self._reserved_stream_request(
+            "spend:team:t3:window:1d", 0.3
+        )
+
+        await self._drain(_ErrorEventStream(), request_data)
+
+        assert spend_counter_cache.in_memory_cache.get_cache(
+            key="spend:team:t3:window:1d"
+        ) == pytest.approx(0.3)
+
+    @pytest.mark.asyncio
+    async def test_should_release_reservation_when_client_disconnects(
+        self, spend_counter_cache, no_release_grace
+    ):
+        class EndlessStream:
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                return {"type": "chunk"}
+
+        ProxyLogging._callback_capabilities_cache.clear()
+        request_data = await self._reserved_stream_request(
+            "spend:team:t2:window:1d", 0.3
+        )
+        gen = ProxyBaseLLMRequestProcessing.async_streaming_data_generator(
+            response=EndlessStream(),
+            user_api_key_dict=MagicMock(spec=UserAPIKeyAuth),
+            request_data=request_data,
+            proxy_logging_obj=ProxyLogging(user_api_key_cache=MagicMock()),
+            serialize_chunk=lambda c: "data: x\n\n",
+            serialize_error=lambda e: "data: error\n\n",
+        )
+
+        await gen.__anext__()
+        await gen.aclose()
+        await asyncio.gather(*no_release_grace._pending_reservation_releases)
+
+        assert spend_counter_cache.in_memory_cache.get_cache(
+            key="spend:team:t2:window:1d"
+        ) == pytest.approx(0.0)
+
+
+class _ErrorEventStream:
+    """Forwards the upstream error event and ends, as a stream that failed after the 200."""
+
+    def __init__(self):
+        self._sent = False
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if self._sent:
+            raise StopAsyncIteration
+        self._sent = True
+        return {"type": "error", "code": "server_is_overloaded"}

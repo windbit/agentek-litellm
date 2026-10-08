@@ -70,7 +70,7 @@ async def reserve_budget_for_request(
 ) -> Optional[dict]:
     if valid_token is None or not RouteChecks.is_llm_api_route(route=route):
         return None
-    if route in {"/models", "/v1/models", "/utils/token_counter"}:
+    if route in {"/models", "/v1/models"} or _is_token_counting_route(route):
         return None
     if get_model_from_request(request_body, route, llm_router=llm_router) is None:
         return None
@@ -169,6 +169,15 @@ async def reserve_budget_for_request(
     }
 
 
+def _is_token_counting_route(route: str) -> bool:
+    # These routes never call the model, so no success or failure callback settles a reservation.
+    return (
+        route == "/utils/token_counter"
+        or route.endswith("/count_tokens")
+        or route.endswith(":countTokens")
+    )
+
+
 async def reconcile_budget_reservation(
     budget_reservation: Optional[dict],
     actual_cost: Optional[float],
@@ -192,6 +201,20 @@ async def release_budget_reservation(budget_reservation: Optional[dict]) -> None
     await reconcile_budget_reservation(
         budget_reservation=budget_reservation,
         actual_cost=0.0,
+    )
+
+
+async def release_unbilled_budget_reservation(
+    budget_reservation: Optional[dict],
+) -> None:
+    """Release a reservation whose cost may never be logged, leaving it open for a late success callback.
+
+    No-op once the success callback has finalized it.
+    """
+    await reconcile_budget_reservation(
+        budget_reservation=budget_reservation,
+        actual_cost=0.0,
+        finalize=False,
     )
 
 
@@ -656,15 +679,21 @@ async def _set_reserved_entry_actual_cost(
     adjustment = target_adjustment - applied_adjustment
     if adjustment == 0:
         return
-    await _ensure_counter_can_apply_adjustment(
-        counter_key=counter_key,
-        adjustment=adjustment,
-    )
-    await _increment_spend_counter_cache(
-        counter_key=counter_key,
-        increment=adjustment,
-    )
+    # Claimed before the first await: stream cleanup and the success callback settle one entry concurrently.
     entry["applied_adjustment"] = target_adjustment
+    try:
+        await _ensure_counter_can_apply_adjustment(
+            counter_key=counter_key,
+            adjustment=adjustment,
+        )
+        await _increment_spend_counter_cache(
+            counter_key=counter_key,
+            increment=adjustment,
+        )
+    except BaseException:
+        if entry.get("applied_adjustment") == target_adjustment:
+            entry["applied_adjustment"] = applied_adjustment
+        raise
 
 
 async def _ensure_counter_can_apply_adjustment(

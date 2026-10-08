@@ -4756,3 +4756,40 @@ def test_is_deployment_blocked_static_helper_reflects_blocked_flag():
         )
         is True
     )
+
+
+@pytest.mark.asyncio
+async def test_aresponses_streaming_fallback_shares_budget_reservation():
+    router = _make_router_with_fallback()
+    reservation = {"reserved_cost": 0.3, "entries": [], "finalized": False}
+    primary_tags = ["primary"]
+    primary_stream = _make_responses_iterator()
+    captured = {}
+
+    async def capture_initial_kwargs(response, initial_kwargs):
+        captured.update(initial_kwargs)
+        return response
+
+    with (
+        patch.object(
+            router,
+            "_ageneric_api_call_with_fallbacks",
+            AsyncMock(return_value=primary_stream),
+        ),
+        patch.object(
+            router, "_aresponses_streaming_iterator", side_effect=capture_initial_kwargs
+        ),
+    ):
+        await router._aresponses_with_streaming_fallbacks(
+            original_function=AsyncMock(),
+            model="gpt-4",
+            stream=True,
+            litellm_metadata={
+                "user_api_key_budget_reservation": reservation,
+                "tags": primary_tags,
+            },
+        )
+
+    fallback_metadata = captured["litellm_metadata"]
+    assert fallback_metadata["user_api_key_budget_reservation"] is reservation
+    assert fallback_metadata["tags"] is not primary_tags
