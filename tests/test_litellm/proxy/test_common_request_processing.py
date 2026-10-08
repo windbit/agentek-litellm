@@ -3875,13 +3875,6 @@ class TestStreamReleasesBudgetReservation:
         monkeypatch.setattr(ps, "spend_counter_cache", cache)
         return cache
 
-    @pytest.fixture()
-    def no_release_grace(self, monkeypatch):
-        import litellm.proxy.common_request_processing as crp
-
-        monkeypatch.setattr(crp, "STREAM_RESERVATION_RELEASE_GRACE_SECONDS", 0)
-        return crp
-
     @staticmethod
     async def _drain(stream: Any, request_data: dict) -> None:
         ProxyLogging._callback_capabilities_cache.clear()
@@ -3896,51 +3889,48 @@ class TestStreamReleasesBudgetReservation:
             pass
 
     @pytest.mark.asyncio
-    async def test_should_release_reservation_when_stream_ends_with_error_event(
-        self, spend_counter_cache, no_release_grace
+    async def test_should_release_reservation_at_once_when_stream_ends_without_completion(
+        self, spend_counter_cache
     ):
         request_data = await self._reserved_stream_request(
             "spend:team:t1:window:1d", 0.3
         )
 
-        await self._drain(_ErrorEventStream(), request_data)
-        await asyncio.gather(*no_release_grace._pending_reservation_releases)
+        await self._drain(
+            _ResponsesEventStream("response.created", "error"), request_data
+        )
 
         assert spend_counter_cache.in_memory_cache.get_cache(
             key="spend:team:t1:window:1d"
         ) == pytest.approx(0.0)
 
     @pytest.mark.asyncio
-    async def test_should_keep_reservation_for_the_success_callback_within_grace(
+    async def test_should_leave_completed_stream_reservation_to_the_success_callback(
         self, spend_counter_cache
     ):
         request_data = await self._reserved_stream_request(
             "spend:team:t3:window:1d", 0.3
         )
 
-        await self._drain(_ErrorEventStream(), request_data)
+        await self._drain(
+            _ResponsesEventStream("response.created", "response.completed"),
+            request_data,
+        )
 
         assert spend_counter_cache.in_memory_cache.get_cache(
             key="spend:team:t3:window:1d"
         ) == pytest.approx(0.3)
 
     @pytest.mark.asyncio
-    async def test_should_release_reservation_when_client_disconnects(
-        self, spend_counter_cache, no_release_grace
+    async def test_should_release_reservation_at_once_when_client_disconnects(
+        self, spend_counter_cache
     ):
-        class EndlessStream:
-            def __aiter__(self):
-                return self
-
-            async def __anext__(self):
-                return {"type": "chunk"}
-
         ProxyLogging._callback_capabilities_cache.clear()
         request_data = await self._reserved_stream_request(
             "spend:team:t2:window:1d", 0.3
         )
         gen = ProxyBaseLLMRequestProcessing.async_streaming_data_generator(
-            response=EndlessStream(),
+            response=_ResponsesEventStream(*["response.output_text.delta"] * 10),
             user_api_key_dict=MagicMock(spec=UserAPIKeyAuth),
             request_data=request_data,
             proxy_logging_obj=ProxyLogging(user_api_key_cache=MagicMock()),
@@ -3950,24 +3940,169 @@ class TestStreamReleasesBudgetReservation:
 
         await gen.__anext__()
         await gen.aclose()
-        await asyncio.gather(*no_release_grace._pending_reservation_releases)
 
         assert spend_counter_cache.in_memory_cache.get_cache(
             key="spend:team:t2:window:1d"
         ) == pytest.approx(0.0)
 
 
-class _ErrorEventStream:
-    """Forwards the upstream error event and ends, as a stream that failed after the 200."""
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("terminal_event", "expected_counter"),
+        [("response.failed", 0.0), ("response.incomplete", 0.3)],
+    )
+    async def test_should_settle_by_responses_terminal_event(
+        self, spend_counter_cache, terminal_event, expected_counter
+    ):
+        request_data = await self._reserved_stream_request(
+            "spend:team:t4:window:1d", 0.3
+        )
 
-    def __init__(self):
-        self._sent = False
+        await self._drain(
+            _ResponsesEventStream("response.created", terminal_event), request_data
+        )
+
+        assert spend_counter_cache.in_memory_cache.get_cache(
+            key="spend:team:t4:window:1d"
+        ) == pytest.approx(expected_counter)
+
+    @pytest.mark.asyncio
+    async def test_should_not_treat_an_error_inside_the_stream_as_a_normal_end(
+        self, monkeypatch
+    ):
+        import litellm.proxy.common_request_processing as crp
+
+        schedule = MagicMock()
+        release_now = AsyncMock()
+        monkeypatch.setattr(crp, "_schedule_reservation_release_after_grace", schedule)
+        monkeypatch.setattr(crp, "_release_unbilled_reservation_now", release_now)
+
+        class FailingStream:
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                raise ValueError("provider broke mid-stream")
+
+        proxy_logging_obj = ProxyLogging(user_api_key_cache=MagicMock())
+        proxy_logging_obj.post_call_failure_hook = AsyncMock(return_value=None)
+        reservation = {"reserved_cost": 0.3, "entries": [], "finalized": False}
+        ProxyLogging._callback_capabilities_cache.clear()
+        async for _ in ProxyBaseLLMRequestProcessing.async_streaming_data_generator(
+            response=FailingStream(),
+            user_api_key_dict=MagicMock(spec=UserAPIKeyAuth),
+            request_data={
+                "litellm_metadata": {"user_api_key_budget_reservation": reservation}
+            },
+            proxy_logging_obj=proxy_logging_obj,
+            serialize_chunk=lambda c: "data: x\n\n",
+            serialize_error=lambda e: "data: error\n\n",
+        ):
+            pass
+
+        schedule.assert_not_called()
+        release_now.assert_awaited_once_with(reservation)
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_releases_reservation_at_once_on_client_disconnect(
+    monkeypatch,
+):
+    import litellm.proxy.proxy_server as ps
+    from litellm.caching.dual_cache import DualCache
+
+    cache = DualCache()
+    monkeypatch.setattr(ps, "spend_counter_cache", cache)
+    counter_key = "spend:team:t5:window:1d"
+    await cache.async_set_cache(key=counter_key, value=0.3)
+    request_data = {
+        "model": "gpt-4o",
+        "metadata": {
+            "user_api_key_budget_reservation": {
+                "reserved_cost": 0.3,
+                "entries": [{"counter_key": counter_key, "reserved_cost": 0.3}],
+                "finalized": False,
+            }
+        },
+    }
+
+    async def endless_chunks(*args, **kwargs):
+        while True:
+            yield litellm.ModelResponseStream(
+                choices=[{"index": 0, "delta": {"content": "hi"}}]
+            )
+
+    proxy_logging_obj = MagicMock(spec=ProxyLogging)
+    proxy_logging_obj.async_post_call_streaming_iterator_hook = endless_chunks
+    proxy_logging_obj.async_post_call_streaming_hook = AsyncMock(
+        side_effect=lambda **kwargs: kwargs.get("response")
+    )
+    response = MagicMock()
+    response.aclose = AsyncMock()
+
+    with patch.object(ps, "proxy_logging_obj", proxy_logging_obj):
+        gen = ps.async_data_generator(
+            response, MagicMock(spec=UserAPIKeyAuth), request_data
+        )
+        await gen.__anext__()
+        await gen.aclose()
+
+    assert cache.in_memory_cache.get_cache(key=counter_key) == pytest.approx(0.0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("event_types", "expected_counter"),
+    [
+        (("response.created", "error"), 0.0),
+        (("response.created", "response.completed"), 0.3),
+    ],
+)
+async def test_responses_stream_via_proxy_generator_settles_by_terminal_event(
+    monkeypatch, event_types, expected_counter
+):
+    # /v1/responses streams go through proxy_server.async_data_generator, not the shared generator.
+    import litellm.proxy.proxy_server as ps
+    from litellm.caching.dual_cache import DualCache
+
+    cache = DualCache()
+    monkeypatch.setattr(ps, "spend_counter_cache", cache)
+    counter_key = "spend:team:t6:window:1d"
+    await cache.async_set_cache(key=counter_key, value=0.3)
+    request_data = {
+        "model": "gpt-4o",
+        "metadata": {
+            "user_api_key_budget_reservation": {
+                "reserved_cost": 0.3,
+                "entries": [{"counter_key": counter_key, "reserved_cost": 0.3}],
+                "finalized": False,
+            }
+        },
+    }
+    response = _ResponsesEventStream(*event_types)
+    response.aclose = AsyncMock()
+    proxy_logging_obj = MagicMock(spec=ProxyLogging)
+    proxy_logging_obj.needs_iterator_wrap.return_value = False
+
+    with patch.object(ps, "proxy_logging_obj", proxy_logging_obj):
+        async for _ in ps.async_data_generator(
+            response, MagicMock(spec=UserAPIKeyAuth), request_data
+        ):
+            pass
+
+    assert cache.in_memory_cache.get_cache(key=counter_key) == pytest.approx(
+        expected_counter
+    )
+
+
+class _ResponsesEventStream:
+    def __init__(self, *event_types: str):
+        self._events = [MagicMock(type=event_type) for event_type in event_types]
 
     def __aiter__(self):
         return self
 
     async def __anext__(self):
-        if self._sent:
+        if not self._events:
             raise StopAsyncIteration
-        self._sent = True
-        return {"type": "error", "code": "server_is_overloaded"}
+        return self._events.pop(0)
