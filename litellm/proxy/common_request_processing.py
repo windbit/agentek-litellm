@@ -130,15 +130,57 @@ async def _record_streaming_client_disconnect_if_needed(
     return True
 
 
+_RESPONSES_SUCCESS_EVENTS = frozenset({"response.completed", "response.incomplete"})
+
 _pending_reservation_releases: "set[asyncio.Task[None]]" = set()
 
 
-def _schedule_unbilled_stream_reservation_release(request_data: dict) -> None:
-    """Release an ended stream's budget reservation unless its success callback settles it first.
+class StreamOutcome:
+    """Tells from the chunks a stream sent whether its success callback will run.
+
+    A Responses stream logs success only on a completed or incomplete terminal event;
+    other streams log it whenever they end without an error.
+    """
+
+    def __init__(self) -> None:
+        self._saw_responses_event = False
+        self._saw_responses_success = False
+
+    def observe(self, chunk: Any) -> None:
+        event_type = (
+            chunk.get("type") if isinstance(chunk, dict) else getattr(chunk, "type", None)
+        )
+        if isinstance(event_type, str) and (
+            event_type.startswith("response.") or event_type == "error"
+        ):
+            self._saw_responses_event = True
+            self._saw_responses_success |= event_type in _RESPONSES_SUCCESS_EVENTS
+
+    def expects_success_callback(self, ended_normally: bool) -> bool:
+        return ended_normally and (
+            self._saw_responses_success or not self._saw_responses_event
+        )
+
+
+async def _settle_stream_reservation(
+    request_data: dict, expect_success_callback: bool
+) -> None:
+    """Release the budget reservation of an ended stream that its success callback will not settle.
 
     A stream that fails after the 200 (an upstream error event, a client disconnect) reaches
-    neither the success callback nor post_call_failure_hook.
+    neither the success callback nor post_call_failure_hook. When a success callback is expected,
+    the release only backs it up after a grace period.
     """
+    reservation = _find_stream_reservation(request_data)
+    if reservation is None or reservation.get("finalized") is True:
+        return
+    if expect_success_callback:
+        _schedule_reservation_release_after_grace(reservation)
+    else:
+        await _release_unbilled_reservation_now(reservation)
+
+
+def _find_stream_reservation(request_data: dict) -> Optional[dict]:
     from litellm.proxy.hooks.proxy_track_cost_callback import (
         _get_budget_reservation_from_metadata,
     )
@@ -148,20 +190,28 @@ def _schedule_unbilled_stream_reservation_release(request_data: dict) -> None:
         if not isinstance(metadata, dict):
             continue
         reservation = _get_budget_reservation_from_metadata(metadata=metadata)
-        if reservation is not None and reservation.get("finalized") is not True:
-            task = asyncio.create_task(_release_reservation_after_grace(reservation))
-            _pending_reservation_releases.add(task)
-            task.add_done_callback(_pending_reservation_releases.discard)
-            return
+        if reservation is not None:
+            return reservation
+    return None
+
+
+def _schedule_reservation_release_after_grace(reservation: dict) -> None:
+    task = asyncio.create_task(_release_reservation_after_grace(reservation))
+    _pending_reservation_releases.add(task)
+    task.add_done_callback(_pending_reservation_releases.discard)
 
 
 async def _release_reservation_after_grace(reservation: dict) -> None:
+    await asyncio.sleep(STREAM_RESERVATION_RELEASE_GRACE_SECONDS)
+    await _release_unbilled_reservation_now(reservation)
+
+
+async def _release_unbilled_reservation_now(reservation: dict) -> None:
     from litellm.proxy.spend_tracking.budget_reservation import (
         invalidate_budget_reservation_counters,
         release_unbilled_budget_reservation,
     )
 
-    await asyncio.sleep(STREAM_RESERVATION_RELEASE_GRACE_SECONDS)
     try:
         await release_unbilled_budget_reservation(reservation)
     except Exception:
@@ -2493,6 +2543,7 @@ class ProxyBaseLLMRequestProcessing:
         response: Any,
         stream_completed: bool = False,
         client_disconnected: bool = False,
+        expect_success_callback: bool = False,
     ) -> None:
         with anyio.CancelScope(shield=True):
             should_record_client_disconnect = client_disconnected or (
@@ -2510,7 +2561,7 @@ class ProxyBaseLLMRequestProcessing:
             if recorded_client_disconnect:
                 ProxyLogging._fire_deferred_stream_logging(request_data)
 
-            _schedule_unbilled_stream_reservation_release(request_data)
+            await _settle_stream_reservation(request_data, expect_success_callback)
 
             if hasattr(response, "aclose"):
                 try:
@@ -2557,6 +2608,8 @@ class ProxyBaseLLMRequestProcessing:
         debug_enabled = verbose_proxy_logger.isEnabledFor(logging.DEBUG)
         stream_completed = False
         client_disconnected = False
+        ended_normally = False
+        outcome = StreamOutcome()
         try:
             str_so_far = ""
             async for (
@@ -2572,6 +2625,8 @@ class ProxyBaseLLMRequestProcessing:
                     verbose_proxy_logger.debug(
                         "async_data_generator: received streaming chunk - %s", chunk
                     )
+
+                outcome.observe(chunk)
 
                 if fast_path:
                     yield serialize_chunk(chunk)
@@ -2605,6 +2660,7 @@ class ProxyBaseLLMRequestProcessing:
                 )
                 yield serialize_chunk(chunk)
             stream_completed = True
+            ended_normally = True
         except (asyncio.CancelledError, GeneratorExit):
             # Client disconnected mid-stream. CancelledError / GeneratorExit
             # are BaseException and bypass the success/failure logging
@@ -2654,6 +2710,9 @@ class ProxyBaseLLMRequestProcessing:
                 response=response,
                 stream_completed=stream_completed,
                 client_disconnected=client_disconnected,
+                expect_success_callback=outcome.expects_success_callback(
+                    ended_normally
+                ),
             )
 
     @staticmethod

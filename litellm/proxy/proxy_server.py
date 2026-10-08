@@ -282,6 +282,7 @@ from litellm.proxy.batches_endpoints.endpoints import router as batches_router
 from litellm.proxy.caching_routes import router as caching_router
 from litellm.proxy.common_request_processing import (
     ProxyBaseLLMRequestProcessing,
+    StreamOutcome,
     _is_azure_model_router_request,
     create_response,
 )
@@ -7131,6 +7132,8 @@ async def async_data_generator(
     verbose_proxy_logger.debug("inside generator")
     stream_completed = False
     client_disconnected = False
+    ended_normally = False
+    outcome = StreamOutcome()
     try:
         error_message: Optional[str] = None
         requested_model_from_client = _get_client_requested_model_for_streaming(
@@ -7165,6 +7168,7 @@ async def async_data_generator(
             stream_iterator = response
 
         async for chunk in stream_iterator:
+            outcome.observe(chunk)
             if needs_per_chunk_hook:
                 ### CALL HOOKS ### - modify outgoing data
                 chunk, _str_so_far = await _apply_streaming_chunk_hooks(
@@ -7226,6 +7230,7 @@ async def async_data_generator(
                 yield f"data: {str(e)}\n\n"
 
         stream_completed = True
+        ended_normally = error_message is None
         if not needs_iterator_wrap:
             # The iterator-wrap path fires deferred logging itself; fire it
             # here for the no-wrap fast path so non-callback deployments
@@ -7303,6 +7308,7 @@ async def async_data_generator(
             response=response,
             stream_completed=stream_completed,
             client_disconnected=client_disconnected,
+            expect_success_callback=outcome.expects_success_callback(ended_normally),
         )
 
 
