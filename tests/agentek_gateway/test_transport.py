@@ -9,7 +9,15 @@ import httpx
 import pytest
 from aiohttp import web
 
+from agentek_gateway.subscriptions.events import LimitWindow
+from agentek_gateway.subscriptions.providers import chatgpt as chatgpt_module
+from agentek_gateway.subscriptions.providers.base import AuthRejected, LimitReached
+from agentek_gateway.subscriptions.providers.chatgpt import ChatgptAuth, ChatGPTProvider
 from agentek_gateway.subscriptions.providers.transport import HttpxProbeTransport
+
+from .test_chatgpt_provider import NOW, fixture
+
+AUTH = ChatgptAuth(access_token="at-1", refresh_token="rt-1", account_id="acct-1")
 
 
 @dataclass
@@ -27,7 +35,11 @@ class Server:
 
 
 @asynccontextmanager
-async def serving(status: int = 200, body: str = "{}") -> AsyncIterator[Server]:
+async def serving(
+    status: int = 200,
+    body: str = "{}",
+    headers: dict[str, str] | None = None,
+) -> AsyncIterator[Server]:
     server = Server("")
 
     async def handle(request: web.Request) -> web.Response:
@@ -39,7 +51,7 @@ async def serving(status: int = 200, body: str = "{}") -> AsyncIterator[Server]:
                 await request.text(),
             )
         )
-        return web.Response(status=status, text=body, headers={"X-Codex-Test": "7"})
+        return web.Response(status=status, text=body, headers={"X-Codex-Test": "7", **(headers or {})})
 
     app = web.Application()
     app.router.add_route("*", "/{tail:.*}", handle)
@@ -110,3 +122,33 @@ async def test_a_dead_endpoint_raises_instead_of_returning_a_reply() -> None:
 
     with pytest.raises(httpx.TransportError):
         await HttpxProbeTransport(timeout_s=2).post_json(f"{dead}/x", {}, {})
+
+
+async def test_provider_classifies_a_recorded_usage_limit_reply_served_over_real_http(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recorded = fixture("error_429_usage_limit.json")
+    async with serving(429, recorded["body"], recorded["headers"]) as server:
+        monkeypatch.setattr(chatgpt_module, "RESPONSES_URL", f"{server.base}/responses")
+        provider = ChatGPTProvider(HttpxProbeTransport(), "probe-model")
+
+        result = await provider.probe_health(AUTH, now=NOW)
+
+    assert (result.ok, result.error, server.seen[0].headers["ChatGPT-Account-Id"]) == (
+        False,
+        LimitReached(LimitWindow.WEEKLY, 1791580236.0),
+        "acct-1",
+    )
+
+
+async def test_provider_reads_a_revoked_token_reply_served_over_real_http(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recorded = fixture("error_401_token_revoked.json")
+    async with serving(401, recorded["body"]) as server:
+        monkeypatch.setattr(chatgpt_module, "RESPONSES_URL", f"{server.base}/responses")
+        provider = ChatGPTProvider(HttpxProbeTransport(), "probe-model")
+
+        result = await provider.probe_health(AUTH, now=NOW)
+
+    assert result.error == AuthRejected()
