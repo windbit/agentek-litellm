@@ -1,0 +1,63 @@
+{
+ "credentials": 4,
+ "errors": 277,
+ "observed": {
+  "bins_with_errors": 133,
+  "exactly_1": 72,
+  "ge2": 61,
+  "ge3": 20,
+  "ge4": 6
+ },
+ "null_A_permute_within_hour": {
+  "ge2": {
+   "observed": 61,
+   "null_mean": 56.2,
+   "null_p95": 60,
+   "null_p99": 62,
+   "null_max": 64,
+   "p_value": 0.039
+  },
+  "ge3": {
+   "observed": 20,
+   "null_mean": 22.46,
+   "null_p95": 27,
+   "null_p99": 28,
+   "null_max": 32,
+   "p_value": 0.8764
+  },
+  "ge4": {
+   "observed": 6,
+   "null_mean": 4.22,
+   "null_p95": 7,
+   "null_p99": 8,
+   "null_max": 11,
+   "p_value": 0.208
+  }
+ },
+ "null_B_shift_per_credential": {
+  "ge2": {
+   "observed": 61,
+   "null_mean": 3.46,
+   "null_p95": 12,
+   "null_p99": 19,
+   "null_max": 31,
+   "p_value": 0.0
+  },
+  "ge3": {
+   "observed": 20,
+   "null_mean": 0.02,
+   "null_p95": 0,
+   "null_p99": 1,
+   "null_max": 5,
+   "p_value": 0.0
+  },
+  "ge4": {
+   "observed": 6,
+   "null_mean": 0.0,
+   "null_p95": 0,
+   "null_p99": 0,
+   "null_max": 1,
+   "p_value": 0.0
+  }
+ }
+}

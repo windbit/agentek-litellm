@@ -1,7 +1,8 @@
 """0.10 (cont.): chat path, plugin allows ONLY A, A fails 3x -> router weighted failover wants B/C (plugin rejects them): final error, timing, Retry-After."""
 import time
+import os
 from lib import *
-MOCKLOG = "logs/mock_upstream.jsonl"
+MOCKLOG = os.path.join(LOGS, "mock_upstream.jsonl")
 A = "priced:sub-a"
 key = new_key("spike-10d")
 for stream in (False, True):

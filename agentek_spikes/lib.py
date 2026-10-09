@@ -4,6 +4,8 @@ import os
 import urllib.error
 import urllib.request
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+LOGS = os.path.join(HERE, "logs")
 GW = os.environ.get("GW", "http://127.0.0.1:54000")
 MOCK = os.environ.get("MOCK", "http://127.0.0.1:59000")
 MASTER = "sk-spike-master"
@@ -75,7 +77,7 @@ def read_jsonl(path):
         return [json.loads(line) for line in handle if line.strip()]
 
 
-EVENTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", "spike_events.jsonl")
+EVENTS = os.path.join(LOGS, "spike_events.jsonl")
 
 
 def mark(label):
@@ -133,5 +135,5 @@ def psql(sql, db="litellm"):
 
 def write_ctl(**kw):
     import time
-    json.dump(kw, open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "ctl.json"), "w"))
+    json.dump(kw, open(os.path.join(HERE, "ctl.json"), "w"))
     time.sleep(0.4)

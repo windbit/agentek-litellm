@@ -1,7 +1,8 @@
 """0.1 (continued): compact view of retry/failover attempts for Responses + chat."""
 import time
+import os
 from lib import *
-key = open("logs/key.txt").read()
+key = open(os.path.join(LOGS, "key.txt")).read()
 def scenario(label, fn, scripts):
     mock_reset(); mark(label)
     for acct, script in scripts.items():

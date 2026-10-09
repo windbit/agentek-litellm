@@ -1,0 +1,8 @@
+{"own_error_class": "retryable", "scenario": "group of 1, upstream 429", "result": "RateLimitError 429 retry-after=10", "elapsed_s": 20.3, "upstream": ["A:usa"], "filter_calls": 5}
+{"own_error_class": "retryable", "scenario": "group of 3, upstream 429", "result": "RateLimitError 429 retry-after=None", "elapsed_s": 0.1, "upstream": ["A:usa", "B:usa", "C:usa"], "filter_calls": 3}
+{"own_error_class": "retryable", "scenario": "group of 1, upstream 503", "result": "RateLimitError 429 retry-after=10", "elapsed_s": 18.0, "upstream": ["A:ove"], "filter_calls": 5}
+{"own_error_class": "retryable", "scenario": "group of 3, upstream 503", "result": "RateLimitError 429 retry-after=10", "elapsed_s": 0.1, "upstream": ["A:ove", "B:ove", "C:ove"], "filter_calls": 5}
+{"own_error_class": "final", "scenario": "group of 1, upstream 429", "result": "NoSubscriptions 429 retry-after=10", "elapsed_s": 0.7, "upstream": ["A:usa"], "filter_calls": 2}
+{"own_error_class": "final", "scenario": "group of 3, upstream 429", "result": "RateLimitError 429 retry-after=None", "elapsed_s": 0.1, "upstream": ["A:usa", "B:usa", "C:usa"], "filter_calls": 3}
+{"own_error_class": "final", "scenario": "group of 1, upstream 503", "result": "NoSubscriptions 429 retry-after=10", "elapsed_s": 0.9, "upstream": ["A:ove"], "filter_calls": 2}
+{"own_error_class": "final", "scenario": "group of 3, upstream 503", "result": "NoSubscriptions 429 retry-after=10", "elapsed_s": 0.1, "upstream": ["A:ove", "B:ove", "C:ove"], "filter_calls": 4}

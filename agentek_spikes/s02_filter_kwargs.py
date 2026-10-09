@@ -1,8 +1,9 @@
 """0.1: what async_filter_deployments sees for Responses (Hermes-like, prompt_cache_key) and chat, incl. retry / failover."""
 import json, time
+import os
 from lib import *
-LOG = "logs/spike_events.jsonl"
-key = open("logs/key.txt").read()
+LOG = os.path.join(LOGS, "spike_events.jsonl")
+key = open(os.path.join(LOGS, "key.txt")).read()
 
 def run(label, fn, scripts):
     mock_reset()

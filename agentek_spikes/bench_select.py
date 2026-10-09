@@ -123,22 +123,23 @@ async def measure(router, concurrency, key_labels):
 
 
 async def measure_open_loop(router, rate, key_labels, seconds=10):
-    """Arrivals at a fixed rate (not a closed loop): latency includes queueing on the single event loop."""
+    """Arrivals at a fixed rate (not a closed loop). Latency is measured from the PLANNED arrival time, so a stalled
+    event loop that delays task start is counted (no coordinated omission)."""
     lat = []
 
-    async def one(idx):
+    async def one(idx, planned):
         kwargs = {"litellm_metadata": {"user_api_key_metadata": {"labels": [key_labels[idx % len(key_labels)]]}}, "input": "x"}
-        t0 = time.perf_counter()
         await router.async_get_available_deployment(model=f"m{idx % MODELS_PER_SUB}", request_kwargs=kwargs, input="x")
-        lat.append((time.perf_counter() - t0) * 1000)
+        lat.append((time.perf_counter() - planned) * 1000)
 
     tasks = []
     start = time.perf_counter()
     for idx in range(int(rate * seconds)):
-        delay = start + idx / rate - time.perf_counter()
+        planned = start + idx / rate
+        delay = planned - time.perf_counter()
         if delay > 0:
             await asyncio.sleep(delay)
-        tasks.append(asyncio.create_task(one(idx)))
+        tasks.append(asyncio.create_task(one(idx, planned)))
     await asyncio.gather(*tasks)
     return {"p50_ms": round(statistics.median(lat), 2), "p95_ms": round(pct(lat, 0.95), 2), "p99_ms": round(pct(lat, 0.99), 2),
             "max_ms": round(max(lat), 2), "calls": len(lat), "rate_rps": rate}

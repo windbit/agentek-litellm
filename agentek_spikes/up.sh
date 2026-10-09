@@ -17,4 +17,4 @@ docker run -d --name "poolspike-$NAME" --network poolspike --memory 1500m -p "12
   -e LITELLM_MASTER_KEY=sk-spike-master -e LITELLM_SALT_KEY=sk-spike-salt \
   -e REDIS_URL=redis://poolspike-redis:6379 -e STORE_MODEL_IN_DB=True \
   -e SPIKE_DIR=/spikes ${GW_ENV:-} \
-  "$IMAGE" --config /spikes/config.yaml --port 4000
+  "$IMAGE" --config /spikes/spike-config.yaml --port 4000

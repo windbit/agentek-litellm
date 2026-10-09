@@ -1,0 +1,16 @@
+# Mirrors deploy/helm/helm-litellm/values.yaml config (weighted failover, redis cache, prometheus) minus guardrails.
+general_settings:
+  master_key: sk-spike-master
+  store_model_in_db: true
+router_settings:
+  enable_weighted_failover: true
+  num_retries: 4
+litellm_settings:
+  callbacks: ["prometheus"]
+  drop_params: true
+  global_disable_no_log_param: true
+  cache: true
+  cache_params:
+    type: redis
+    url: redis://poolspike-redis:6379
+    supported_call_types: []

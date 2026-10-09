@@ -1,8 +1,9 @@
 """0.10 (cont.): (1) real weighted failover (stream dies before the first chunk) -> does the filter see _excluded_deployment_ids;
 (2) how our own "no subscriptions" error carries Retry-After to the client."""
 import json, time
+import os
 from lib import *
-MOCKLOG = "logs/mock_upstream.jsonl"
+MOCKLOG = os.path.join(LOGS, "mock_upstream.jsonl")
 A, B, C = "priced:sub-a", "priced:sub-b", "priced:sub-c"
 key = new_key("spike-10b")
 

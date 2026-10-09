@@ -103,6 +103,16 @@ def patch_provider_error_observer() -> None:
     ChatGPTResponsesAPIConfig._agentek_wrapped = True
 
 
+class NoSubscriptions(litellm.NotFoundError):
+    """Own error: final for the router retry loop (NotFoundError), reported to the client with status 429."""
+
+    def __init__(self, model: str) -> None:
+        super().__init__(message="agentek: no available subscriptions (spike)", model=model, llm_provider="agentek")
+        self.status_code = 429
+        self.headers = {"retry-after": "10"}
+        self.agentek_internal = True
+
+
 class SpikeLogger(CustomLogger):
     def __init__(self) -> None:
         super().__init__()
@@ -129,11 +139,16 @@ class SpikeLogger(CustomLogger):
             prompt_cache_key=rk.get("prompt_cache_key"),
             excluded=rk.get("_excluded_deployment_ids"),
             target_order=rk.get("_target_order"),
+            agentek_request_id=((md or lmd or {}).get("agentek_request_id")),
             failover_excluded_meta=(md or lmd or {}).get("_failover_excluded_ids"),
             num_retries=rk.get("num_retries"),
             healthy_ids=ids,
         )
         mode = ctl().get("filter_mode", "log")
+        if not healthy_deployments and ctl().get("raise_on_empty"):
+            INTERNAL_ERRORS.add(rk.get("litellm_call_id"))
+            emit("filter_empty", call_id=rk.get("litellm_call_id"))
+            raise NoSubscriptions(model)
         if mode == "log":
             return healthy_deployments
         excluded = set(rk.get("_excluded_deployment_ids") or [])
@@ -147,6 +162,9 @@ class SpikeLogger(CustomLogger):
                         emit("filter_pick", call_id=rk.get("litellm_call_id"), picked=dep_id)
                         return [dep]
             emit("filter_pick", call_id=rk.get("litellm_call_id"), picked=None)
+            if ctl().get("own_error_class") == "final":
+                INTERNAL_ERRORS.add(rk.get("litellm_call_id"))
+                raise NoSubscriptions(model)
             exc = litellm.RateLimitError(
                 message="agentek: no available subscriptions (spike)",
                 llm_provider="agentek",
@@ -160,6 +178,14 @@ class SpikeLogger(CustomLogger):
             INTERNAL_ERRORS.add(rk.get("litellm_call_id"))
             raise exc
         return healthy_deployments
+
+    async def async_pre_call_hook(self, user_api_key_dict, cache, data, call_type):
+        """Server-issued request id: a client can set litellm_call_id with the x-litellm-call-id header, this one it cannot."""
+        import uuid
+
+        name = "litellm_metadata" if isinstance(data.get("litellm_metadata"), dict) else "metadata"
+        data.setdefault(name, {})["agentek_request_id"] = str(uuid.uuid4())
+        return data
 
     async def async_pre_call_deployment_hook(self, kwargs: Dict[str, Any], call_type: Optional[Any]) -> Optional[dict]:
         md_name = "litellm_metadata" if isinstance(kwargs.get("litellm_metadata"), dict) else "metadata"

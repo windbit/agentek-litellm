@@ -1,8 +1,9 @@
 """0.3: which errors the plugin hooks see: 2 errors in a row in one non-stream request, error on 3rd stream chunk, client disconnect."""
 import collections, http.client, json, time
+import os
 from lib import *
-key = open("logs/key.txt").read()
-MOCKLOG = "logs/mock_upstream.jsonl"
+key = open(os.path.join(LOGS, "key.txt")).read()
+MOCKLOG = os.path.join(LOGS, "mock_upstream.jsonl")
 
 def summarize(label, extra=""):
     evs = [e for e in events_since_mark(label) if e["event"] != "MARK"]

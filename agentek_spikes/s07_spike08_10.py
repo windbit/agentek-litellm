@@ -1,7 +1,8 @@
 """0.8 (tag rewrite after A->B switch) and 0.10 (filter + weighted failover) on one gateway with a priced model group."""
 import json, sys, time
+import os
 from lib import *
-MOCKLOG = "logs/mock_upstream.jsonl"
+MOCKLOG = os.path.join(LOGS, "mock_upstream.jsonl")
 A, B, C = "priced:sub-a", "priced:sub-b", "priced:sub-c"
 
 def setup():

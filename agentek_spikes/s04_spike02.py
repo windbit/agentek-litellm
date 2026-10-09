@@ -1,8 +1,9 @@
 """0.2 (mock variant): 429 usage_limit and response.failed in SSE, successful stream — what reaches exception / hooks / client."""
 import json, sys, time
+import os
 from lib import *
-key = open("logs/key.txt").read()
-MOCKLOG = "logs/mock_upstream.jsonl"
+key = open(os.path.join(LOGS, "key.txt")).read()
+MOCKLOG = os.path.join(LOGS, "mock_upstream.jsonl")
 
 def scenario(label, fn, script, acct="acctA"):
     settle(); mock_reset(); mark(label)

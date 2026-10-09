@@ -1,0 +1,19 @@
+## 0.5 raw checks (gateway container built from the CI image + COPY agentek_gateway)
+GET /agentek/spike/ping -> (200, '{"ok":true,"state":{"hook_ran_at":0.01,"prisma_ready_at":3.41,"router_ready_at":2.83,"bg_ticks":2,"router_included":true}}')
+GET /agentek/spike/whoami (no key) -> 401
+GET /agentek/spike/whoami (master key) -> (200, '{"role":"proxy_admin","key_alias":null}')
+GET /metrics/ (master key) -> 200; agentek lines: ['agentek_spike_filter_calls_total 0.0', 'agentek_spike_filter_calls_created 1.7915554397606359e+09', 'agentek_spike_started 1.7915554398702273e+09']
+GET /metrics (no slash) -> 200 (redirect to /metrics/)
+startup event: {"t": 1791547310.362, "event": "startup_hook_begin", "prisma_client_is_none": true}
+last ready event: {"t": 1791555444.609, "pid": 1, "event": "ready", "hook_ran_at": 0.01, "prisma_ready_at": 3.41, "router_ready_at": 2.83, "bg_ticks": 2, "router_included": true}
+## X2 client-chosen litellm_call_id vs server-issued request id
+filter saw litellm_call_id='client-chosen-call-id' agentek_request_id='5a0ec3ec-c74e-4c23-9ff1-f565a65545e3'
+## R3 own error over HTTP: plugin allows only A, A fails with 503
+own error class=retryable: HTTP 429 in 0.2s Retry-After=None upstream attempts=1
+own error class=final: HTTP 429 in 0.1s Retry-After=10 upstream attempts=1
+## R4 all deployments of the group in router cooldown (3 x upstream 429), then new requests; plugin raises on an empty list
+request 1: HTTP 429 in 0.1s Retry-After=None upstream so far=5 body='{"error":{"message":"litellm.RateLimitError: RateLimitError: ChatgptException - {\\"error\\"'
+request 2: HTTP 429 in 0.1s Retry-After=None upstream so far=10 body='{"error":{"message":"litellm.RateLimitError: RateLimitError: ChatgptException - {\\"error\\"'
+request 3: HTTP 429 in 0.1s Retry-After=None upstream so far=11 body='{"error":{"message":"litellm.RateLimitError: RateLimitError: ChatgptException - {\\"error\\"'
+request 4: HTTP 429 in 0.0s Retry-After=10 upstream so far=11 body='{"error":{"message":"litellm.NotFoundError: agentek: no available subscriptions (spike). R'
+request 5: HTTP 429 in 0.0s Retry-After=10 upstream so far=11 body='{"error":{"message":"litellm.NotFoundError: agentek: no available subscriptions (spike). R'

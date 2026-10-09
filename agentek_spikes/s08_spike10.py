@@ -1,7 +1,8 @@
 """0.10: plugin filter returns ONE deployment per attempt + weighted failover; check _excluded_deployment_ids handling and the no-candidates error."""
 import json, time
+import os
 from lib import *
-MOCKLOG = "logs/mock_upstream.jsonl"
+MOCKLOG = os.path.join(LOGS, "mock_upstream.jsonl")
 A, B, C = "priced:sub-a", "priced:sub-b", "priced:sub-c"
 key = new_key("spike-10")
 

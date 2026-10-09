@@ -1,8 +1,9 @@
 """0.10 (cont.): where does the router actually emit _excluded_deployment_ids? chat vs Responses, with an unclassified 500 on A.
 The plugin does NOT track attempts here, so A is re-picked until the router's own failover kicks in."""
 import time
+import os
 from lib import *
-MOCKLOG = "logs/mock_upstream.jsonl"
+MOCKLOG = os.path.join(LOGS, "mock_upstream.jsonl")
 A, B = "priced:sub-a", "priced:sub-b"
 key = new_key("spike-10c")
 def scenario(label, fn):
