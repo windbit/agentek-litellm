@@ -80,7 +80,10 @@ class FailureRouter:
                     self._log_implausible(subscription, note)
                 return SwitchReason.LIMIT
             case AuthRejected():
-                await self._states.apply(subscription, Unauthorized())
+                if not await self._store.recently_refreshed(
+                    subscription.credential_name
+                ):
+                    await self._states.apply(subscription, Unauthorized())
                 return SwitchReason.AUTH
             case AccountBanned():
                 await self._states.apply(subscription, AccountDeactivated())

@@ -1,15 +1,23 @@
 import asyncio
 
 import fakeredis
+from litellm.llms.chatgpt import authenticator
 from litellm.llms.chatgpt.responses.transformation import ChatGPTResponsesAPIConfig
 
+from agentek_gateway.subscriptions.credentials import InMemoryCredentialStore
+from agentek_gateway.subscriptions.memory import (
+    InMemoryPolicyRepo,
+    InMemorySubscriptionRepo,
+)
 from agentek_gateway.subscriptions.plugin import (
     ENV_REDIS_URL,
+    Connections,
     build_proxy_runtime,
     default_plugins,
     redis_from_env,
 )
 from agentek_gateway.subscriptions.adapter import SubscriptionCallback
+from agentek_gateway.subscriptions.refresh_guard import uninstall_refresh_guard
 from agentek_gateway.subscriptions.providers.observer import (
     ORIGINAL_CLASS_ATTRIBUTE,
     uninstall_error_observer,
@@ -29,17 +37,29 @@ class FakeHost:
     def state_table(self) -> FakeTable:
         return self.table
 
+    def credentials_table(self) -> None:
+        return None
+
 
 async def test_runtime_is_built_loaded_and_observing_provider_errors() -> None:
     redis = fakeredis.FakeAsyncRedis(decode_responses=True)
-    runtime = await build_proxy_runtime(FakeHost(), {}, FakeClock(), redis)  # type: ignore[arg-type]
+    connections = Connections(
+        redis,
+        fakeredis.FakeRedis(decode_responses=True),
+        InMemoryCredentialStore(),
+        InMemorySubscriptionRepo(),
+        InMemoryPolicyRepo(),
+    )
+    runtime = await build_proxy_runtime(FakeHost(), {}, FakeClock(), connections)  # type: ignore[arg-type]
     try:
         assert (
             runtime.parts.snapshot.current is not None,
             hasattr(ChatGPTResponsesAPIConfig, ORIGINAL_CLASS_ATTRIBUTE),
-        ) == (True, True)
+            authenticator.REFRESH_GUARD is not None,
+        ) == (True, True, True)
     finally:
         uninstall_error_observer(ChatGPTResponsesAPIConfig)
+        uninstall_refresh_guard()
         for task in tuple(runtime.parts.tasks._running):  # noqa: SLF001
             task.cancel()
         await asyncio.gather(

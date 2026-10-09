@@ -315,3 +315,17 @@ async def test_model_not_supported_on_the_last_candidate_reaches_the_client_as_4
 
         with pytest.raises(litellm.BadRequestError):
             await stack.call()
+
+
+async def test_401_right_after_a_token_refresh_does_not_start_another_refresh() -> None:
+    async with running_stack(["a", "b"]) as stack:
+        await stack.store.mark_refreshed("cred-a", 60)
+        stack.mock.script(account_of("a"), "unauthorized")
+
+        response = await stack.call()
+
+        assert (
+            response.choices[0].message.content,  # type: ignore[attr-defined]
+            await state_of(stack, "a"),
+            stack.mock.accounts_served(),
+        ) == ("Hello from mock", None, [account_of("a"), account_of("b")])

@@ -234,6 +234,14 @@ class RedisStateStore:
         raw = await self._redis.hgetall(self._keys.enabled)
         return {sub_id: value == ENABLED for sub_id, value in raw.items()}
 
+    async def mark_refreshed(self, credential_name: str, window_s: float) -> None:
+        await self._redis.set(
+            self._keys.refreshed(credential_name), "1", ex=int(window_s)
+        )
+
+    async def recently_refreshed(self, credential_name: str) -> bool:
+        return bool(await self._redis.exists(self._keys.refreshed(credential_name)))
+
     async def _redis_states(self) -> dict[SubscriptionId, StateRecord]:
         keys = [
             key

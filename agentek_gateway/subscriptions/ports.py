@@ -71,6 +71,10 @@ class StateStore(Protocol):
 
     async def read_enabled_flags(self) -> Mapping[SubscriptionId, bool]: ...
 
+    async def mark_refreshed(self, credential_name: str, window_s: float) -> None: ...
+
+    async def recently_refreshed(self, credential_name: str) -> bool: ...
+
 
 class SlotStore(Protocol):
     async def reserve(

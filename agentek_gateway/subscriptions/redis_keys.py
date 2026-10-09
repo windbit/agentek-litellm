@@ -35,6 +35,19 @@ class Keys:
     def changes(self) -> str:
         return f"{self._prefix}changes"
 
+    @property
+    def leader(self) -> str:
+        return f"{self._prefix}leader"
+
+    def refresh_lock(self, credential_name: str) -> str:
+        return f"{self._prefix}refresh-lock:{credential_name}"
+
+    def latest_auth(self, credential_name: str) -> str:
+        return f"{self._prefix}latest-auth:{credential_name}"
+
+    def refreshed(self, credential_name: str) -> str:
+        return f"{self._prefix}refreshed:{credential_name}"
+
     def state(self, subscription_id: SubscriptionId) -> str:
         return f"{self._prefix}state:{subscription_id}"
 

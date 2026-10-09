@@ -42,6 +42,7 @@ class SubscriptionRuntime:
     gateway: SubscriptionGateway
     outcomes: OutcomeTracker
     toggle: SubscriptionToggle
+    states: StateService
 
     def request_key(self, request: dict[str, object]) -> str | None:
         return request_key_of(request)
@@ -84,6 +85,7 @@ def build_runtime(deps: RuntimeDeps) -> SubscriptionRuntime:
         gateway=SubscriptionGateway(parts),
         outcomes=OutcomeTracker(parts),
         toggle=SubscriptionToggle(store, deps.repo, states),
+        states=states,
     )
 
 

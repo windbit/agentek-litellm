@@ -46,6 +46,7 @@ class InMemoryStateStore:
         self._unsupported: dict[tuple[SubscriptionId, str], float] = {}
         self._usage: dict[SubscriptionId, UsageRecord] = {}
         self._flags: dict[SubscriptionId, bool] = {}
+        self._refreshed: dict[str, float] = {}
 
     async def read_state(self, subscription_id: SubscriptionId) -> StateRecord | None:
         return self._states.get(subscription_id)
@@ -147,3 +148,9 @@ class InMemoryStateStore:
 
     async def read_enabled_flags(self) -> Mapping[SubscriptionId, bool]:
         return dict(self._flags)
+
+    async def mark_refreshed(self, credential_name: str, window_s: float) -> None:
+        self._refreshed[credential_name] = self._clock.now() + window_s
+
+    async def recently_refreshed(self, credential_name: str) -> bool:
+        return self._refreshed.get(credential_name, 0.0) > self._clock.now()
