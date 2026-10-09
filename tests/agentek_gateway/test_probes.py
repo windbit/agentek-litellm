@@ -347,3 +347,35 @@ async def test_breaking_right_after_a_good_probe_does_not_inherit_the_old_schedu
     await replica.probes.tick()
 
     assert len(upkeep.provider.probes) == probes_before
+
+
+async def test_probes_that_die_on_the_transport_break_the_subscription_like_failed_ones() -> (
+    None
+):
+    upkeep, _ = build_upkeep(["a"])
+    replica = upkeep.replica()
+    upkeep.provider.health_errors.extend([TimeoutError("egress down")] * 4)
+    await half_open_since_a_minute(upkeep, replica, "a")
+
+    for _ in range(4):
+        upkeep.clock.advance(PAST_ANY_OVERLOAD_PAUSE_S)
+        await replica.probes.tick()
+        upkeep.clock.advance(HALF_OPEN_INTERVAL_S)
+        await replica.probes.tick()
+
+    assert (await current(replica), len(upkeep.provider.probes)) == (S.BROKEN, 4)
+
+
+async def test_a_probe_that_raises_does_not_stop_the_other_subscriptions_being_probed() -> (
+    None
+):
+    upkeep, _ = build_upkeep(["a", "b"])
+    replica = upkeep.replica()
+    upkeep.provider.health_errors.append(ConnectionError("reset"))
+    await half_open_since_a_minute(upkeep, replica, "a", "b")
+    await replica.probes.tick()
+    upkeep.clock.advance(HALF_OPEN_JITTER_S + 1)
+
+    await replica.probes.tick()
+
+    assert (len(upkeep.provider.probes), await current(replica, "b")) == (2, S.ACTIVE)
