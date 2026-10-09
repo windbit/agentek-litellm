@@ -5,9 +5,14 @@ import pytest
 from litellm.integrations.telemetry_masking import (
     CYCLE_PLACEHOLDER,
     MAX_TEXT_CHARS,
+    WINDOWS_PER_SPAN_CONCURRENCY,
     TelemetryMasker,
     TelemetryMaskingUnavailable,
     TelemetryTextTooLarge,
+)
+from litellm.proxy.guardrails.guardrail_hooks.analysis_windows import (
+    WINDOW,
+    plan_windows,
 )
 
 RULEBOOK = """
@@ -661,3 +666,218 @@ async def test_memory_stays_bounded_under_analyzer_overload(
     assert set(dropped) <= {"overloaded", "deadline"}
     assert peak < all_spans_bytes / 10
     assert tm._loop_budget().spans == 0
+
+
+PERSON = "Иван Петров"
+
+
+class WindowAnalyzer:
+    """Фиктивный анализатор: находит PERSON целиком внутри присланного текста.
+
+    Имя, оборванное краем текста, он принимает за находку с более высоким score, как это бывает на краю окна.
+    """
+
+    def __init__(self, delay=0.0, fail_on=None):
+        self.texts = []
+        self.live = 0
+        self.peak = 0
+        self.delay = delay
+        self.fail_on = fail_on
+
+    async def __call__(self, text):
+        self.texts.append(text)
+        if not text.strip():
+            raise TelemetryMaskingUnavailable("analyzer rejects blank text")
+        if self.fail_on and self.fail_on in text:
+            raise TelemetryMaskingUnavailable("analyzer returned HTTP 500")
+        self.live += 1
+        self.peak = max(self.peak, self.live)
+        try:
+            await asyncio.sleep(self.delay)
+        finally:
+            self.live -= 1
+        found, position = [], text.find(PERSON)
+        while position >= 0:
+            found.append(
+                {
+                    "entity_type": "PERSON",
+                    "start": position,
+                    "end": position + len(PERSON),
+                    "score": 0.85,
+                }
+            )
+            position = text.find(PERSON, position + 1)
+        if text.rstrip().endswith("Иван"):
+            stub = len(text.rstrip()) - len("Иван")
+            found.append(
+                {"entity_type": "PERSON", "start": stub, "end": stub + 4, "score": 0.9}
+            )
+        return found
+
+
+def window_masker(analyzer):
+    return TelemetryMasker(
+        entities=["PERSON"], analyzer_base="http://analyzer", analyze_request=analyzer
+    )
+
+
+def prose(length):
+    # Номера делают окна непохожими друг на друга: одинаковые окна делили бы один обмен.
+    return "".join(f"слово{number} " for number in range(length // 6 + 1))[:length]
+
+
+def put(text, value, position):
+    return text[:position] + value + text[position + len(value) :]
+
+
+@pytest.mark.asyncio
+async def test_long_text_goes_in_windows_and_name_on_the_seam_is_masked():
+    text = prose(100_000)
+    cut = plan_windows(text)[0].end
+    text = put(text, PERSON, cut - len("Иван "))
+    windows = plan_windows(text)
+    assert (
+        windows[0].end - len("Иван ") < windows[0].end < windows[0].end + len("Петров")
+    )
+    analyzer = WindowAnalyzer()
+
+    masked = await window_masker(analyzer).mask({"content": text})
+
+    assert len(analyzer.texts) == len(windows) > 10
+    assert max(len(sent) for sent in analyzer.texts) <= WINDOW
+    assert "Иван" not in masked["content"]
+    assert "Петров" not in masked["content"]
+    assert masked["content"].count("<PERSON_1>") == 1
+    assert len(masked["content"]) == len(text) - len(PERSON) + len("<PERSON_1>")
+
+
+@pytest.mark.asyncio
+async def test_each_name_in_a_long_text_is_masked_once():
+    text = prose(100_000)
+    positions = list(range(500, 99_000, 4_000))
+    for position in positions:
+        text = put(text, PERSON, position)
+
+    masked = await window_masker(WindowAnalyzer()).mask({"content": text})
+
+    assert PERSON not in masked["content"]
+    assert masked["content"].count("<PERSON_") == len(positions)
+
+
+@pytest.mark.asyncio
+async def test_failed_window_drops_the_whole_span():
+    text = put(prose(60_000), "СБОЙ", 30_000)
+    analyzer = WindowAnalyzer(fail_on="СБОЙ")
+
+    with pytest.raises(TelemetryMaskingUnavailable) as error:
+        await window_masker(analyzer).mask_span({"content": text}, None)
+
+    assert error.value.reason == "masking_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_blank_window_is_not_sent_to_the_analyzer():
+    text = " " * (WINDOW + 500) + PERSON
+    analyzer = WindowAnalyzer()
+
+    masked = await window_masker(analyzer).mask({"content": text})
+
+    assert all(sent.strip() for sent in analyzer.texts)
+    assert masked["content"].endswith("<PERSON_1>")
+
+
+@pytest.mark.asyncio
+async def test_windows_are_cached_between_spans():
+    text = prose(60_000)
+    analyzer = WindowAnalyzer()
+    masker = window_masker(analyzer)
+    await masker.mask({"content": text})
+    sent = len(analyzer.texts)
+
+    await masker.mask({"content": text})
+
+    assert len(analyzer.texts) == sent
+
+
+@pytest.mark.asyncio
+async def test_appended_paragraph_costs_at_most_two_exchanges():
+    text = prose(60_000)
+    analyzer = WindowAnalyzer()
+    masker = window_masker(analyzer)
+    await masker.mask({"content": text})
+    sent = len(analyzer.texts)
+
+    await masker.mask({"content": text + "\n\nновый абзац"})
+
+    assert len(analyzer.texts) - sent <= 2
+
+
+@pytest.mark.asyncio
+async def test_concurrent_spans_share_window_exchanges():
+    text = prose(40_000)
+    analyzer = WindowAnalyzer(delay=0.02)
+    masker = window_masker(analyzer)
+
+    await asyncio.gather(*(masker.mask({"content": text}) for _ in range(4)))
+
+    assert len(analyzer.texts) == len(plan_windows(text))
+
+
+@pytest.mark.asyncio
+async def test_windows_of_one_span_run_in_parallel_up_to_the_span_limit():
+    analyzer = WindowAnalyzer(delay=0.02)
+
+    await window_masker(analyzer).mask({"content": prose(80_000)})
+
+    assert analyzer.peak == WINDOWS_PER_SPAN_CONCURRENCY
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("length", [WINDOW, WINDOW + 1])
+async def test_window_boundary_decides_between_one_exchange_and_several(length):
+    text = prose(length)
+    analyzer = WindowAnalyzer()
+
+    await window_masker(analyzer).mask({"content": text})
+
+    assert analyzer.texts == [text] if length == WINDOW else len(analyzer.texts) == 2
+
+
+@pytest.mark.asyncio
+async def test_text_needing_too_many_windows_is_dropped_before_any_is_sent(monkeypatch):
+    import litellm.integrations.telemetry_masking as tm
+
+    monkeypatch.setattr(tm, "MAX_TEXT_CHARS", 2_000_000)
+    analyzer = WindowAnalyzer()
+
+    with pytest.raises(TelemetryTextTooLarge):
+        await window_masker(analyzer).mask({"content": prose(1_000_000)})
+
+    assert analyzer.texts == []
+
+
+@pytest.mark.asyncio
+async def test_text_over_limit_is_dropped_before_any_window_is_sent():
+    analyzer = WindowAnalyzer()
+
+    with pytest.raises(TelemetryTextTooLarge):
+        await window_masker(analyzer).mask({"content": prose(MAX_TEXT_CHARS + 1)})
+
+    assert analyzer.texts == []
+
+
+@pytest.mark.asyncio
+async def test_span_deadline_applies_to_all_windows_together(monkeypatch):
+    import litellm.integrations.telemetry_masking as tm
+
+    tm._budgets.clear()
+    monkeypatch.setattr(tm, "MASK_DEADLINE_SECONDS", 0.05)
+    analyzer = WindowAnalyzer(delay=0.3)
+    masker = window_masker(analyzer)
+
+    with pytest.raises(tm.TelemetryMaskingDeadline):
+        await masker.mask_span({"content": prose(80_000)}, None)
+
+    await asyncio.sleep(1)
+    assert tm._loop_budget().spans == 0
+    assert tm._loop_budget().exchanges == 0

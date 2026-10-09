@@ -30,6 +30,12 @@ from typing import (
 
 from litellm._logging import verbose_logger
 from litellm.constants import LOGGING_WORKER_MAX_TIME_PER_COROUTINE
+from litellm.proxy.guardrails.guardrail_hooks.analysis_windows import (
+    OversizeError,
+    own_items,
+    plan_windows,
+    run_windows,
+)
 from litellm.proxy.guardrails.guardrail_hooks.pii_rules import (
     PiiRuleEngine,
     RulebookError,
@@ -82,6 +88,9 @@ MAX_TEXT_CHARS = _env_number("LITELLM_TELEMETRY_MAX_TEXT_CHARS", 200_000, int)
 SPAN_CACHE_SIZE = _env_number("LITELLM_TELEMETRY_SPAN_CACHE", 5000, int)
 MAX_INFLIGHT_SPANS = _env_number("LITELLM_TELEMETRY_MAX_INFLIGHT_SPANS", 32, int)
 MAX_INFLIGHT_CHARS = _env_number("LITELLM_TELEMETRY_MAX_INFLIGHT_CHARS", 16_000_000, int)
+# Выделенный анализатор телеметрии держит три воркера: больше окон одного спана ему не нужно,
+# а остальной бюджет процесса остаётся другим спанам.
+WINDOWS_PER_SPAN_CONCURRENCY = 3
 # Дедлайн спана обязан истекать раньше таймаута LoggingWorker: иначе спан снимает внешняя
 # отмена, и дроп не попадает в счётчик со своей причиной.
 MASK_DEADLINE_SECONDS = min(
@@ -349,6 +358,29 @@ class TelemetryMasker:
         return self._replace(text, spans)
 
     async def _analyze(self, text: str) -> List[Dict[str, Any]]:
+        try:
+            windows = plan_windows(text)
+        except OversizeError as err:
+            raise TelemetryTextTooLarge(
+                f"text length {len(text)} needs too many analysis windows"
+            ) from err
+        if len(windows) == 1:
+            return await self._analyze_window(text)
+        per_window = await run_windows(
+            windows,
+            lambda window: self._analyze_window(text[window.start : window.end]),
+            gate=asyncio.Semaphore(WINDOWS_PER_SPAN_CONCURRENCY),
+            timeout=None,
+        )
+        return [
+            item
+            for window, items in zip(windows, per_window)
+            for item in own_items(window, items)
+        ]
+
+    async def _analyze_window(self, text: str) -> List[Dict[str, Any]]:
+        if not text.strip():
+            return []
         # Колбэк логирования litellm оборачивает маскировку в свой wait_for и отменяет её
         # на полуслове, когда analyzer медленный. Если отмена прилетает во время чтения
         # ответа, aiohttp не успевает подчистить протокол соединения — ResponseHandler и
