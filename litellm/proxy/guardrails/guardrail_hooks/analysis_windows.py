@@ -11,7 +11,9 @@
 """
 
 import asyncio
+import bisect
 import re
+import threading
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TypeVar
@@ -20,6 +22,7 @@ WINDOW = 8000
 OVERLAP = 1024
 MAX_WINDOWS = 128
 SNAP_BACK = 256
+SPAN_CACHE_MAX_SPANS = 200_000
 
 PARAGRAPH_BREAKS = ("\n\n", "\r\n\r\n")
 SENTENCE_END = ".!?…。！？"
@@ -104,6 +107,25 @@ def own_items(window: Window, items: Sequence[object]) -> list[dict[str, object]
     даёт `InvalidWindowResponse`: ответ с такой находкой нельзя считать полным.
     """
     return [item for item in _shifted(window, items) if _is_owned(window, item)]
+
+
+def validate_window_items(window: Window, items: Sequence[object]) -> None:
+    """Бросает `InvalidWindowResponse`, если ответ окна содержит находку с неверными позициями."""
+    _shifted(window, items)
+
+
+def overlap_priority(item: Mapping[str, object]) -> tuple[float, int, int, str]:
+    """Ключ выбора между пересекающимися находками: больше — приоритетнее.
+
+    Общий для склейки окон и для итогового разбора перекрытий, чтобы окна и один запрос выбирали одинаково.
+    """
+    start, end = item["start"], item["end"]
+    return (
+        item.get("score", 0),  # type: ignore[return-value]
+        end - start,  # type: ignore[operator]
+        -start,  # type: ignore[operator]
+        str(item.get("entity_type", "")),
+    )
 
 
 def merge_windows(
@@ -191,6 +213,7 @@ class SpanLRU:
     """LRU-кэш списков находок, ограниченный числом записей и суммой находок во всех записях.
 
     Длинное сообщение даёт тысячи находок на запись, поэтому одного числа записей мало.
+    Потокобезопасен: кэш гардрейла правят основной loop и одноразовые loop-ы потока логирования.
     """
 
     def __init__(self, max_entries: int, max_spans: int) -> None:
@@ -198,6 +221,7 @@ class SpanLRU:
         self._max_entries = max_entries
         self._max_spans = max_spans
         self._total_spans = 0
+        self._lock = threading.Lock()
 
     def __len__(self) -> int:
         return len(self._entries)
@@ -207,23 +231,25 @@ class SpanLRU:
         return self._total_spans
 
     def get(self, key: str) -> list[dict[str, object]] | None:
-        spans = self._entries.pop(key, None)
-        if spans is None:
-            return None
-        self._entries[key] = spans
-        return list(spans)
+        with self._lock:
+            spans = self._entries.pop(key, None)
+            if spans is None:
+                return None
+            self._entries[key] = spans
+            return list(spans)
 
     def put(self, key: str, spans: Sequence[dict[str, object]]) -> None:
-        self._discard(key)
-        if len(spans) > self._max_spans:
-            return
-        self._entries[key] = list(spans)
-        self._total_spans += len(spans)
-        while (
-            len(self._entries) > self._max_entries
-            or self._total_spans > self._max_spans
-        ):
-            self._discard(next(iter(self._entries)))
+        with self._lock:
+            self._discard(key)
+            if len(spans) > self._max_spans:
+                return
+            self._entries[key] = list(spans)
+            self._total_spans += len(spans)
+            while (
+                len(self._entries) > self._max_entries
+                or self._total_spans > self._max_spans
+            ):
+                self._discard(next(iter(self._entries)))
 
     def _discard(self, key: str) -> None:
         spans = self._entries.pop(key, None)
@@ -258,14 +284,6 @@ def _touches_edge(window: Window, item: Mapping[str, object]) -> bool:
     return item["end"] == window.end or item["start"] == window.start
 
 
-def _overlaps(left: Mapping[str, object], right: Mapping[str, object]) -> bool:
-    return (
-        left.get("entity_type") == right.get("entity_type")
-        and left["start"] < right["end"]  # type: ignore[operator]
-        and right["start"] < left["end"]  # type: ignore[operator]
-    )
-
-
 def _covers(outer: Mapping[str, object], inner: Mapping[str, object]) -> bool:
     return (
         outer.get("entity_type") == inner.get("entity_type")
@@ -287,14 +305,28 @@ def _replace_stub(
 def _without_overlaps(
     accepted: Sequence[dict[str, object]], foreign: Sequence[dict[str, object]]
 ) -> list[dict[str, object]]:
-    """Принятые находки целиком, затем находки соседей, не пересекающие уже оставленные того же типа."""
+    """Принятые находки целиком, затем находки соседей, не пересекающие уже оставленные того же типа.
+
+    Оставленные одного типа не пересекаются, поэтому проверка пересечения — два соседа в отсортированном по началу списке.
+    """
     kept: list[dict[str, object]] = []
-    for item in sorted(accepted, key=lambda item: -(item["end"] - item["start"])):  # type: ignore[operator]
-        if not any(_overlaps(item, other) for other in kept):
-            kept.append(item)
-    for item in sorted(foreign, key=lambda item: (item["start"], -item["end"])):  # type: ignore[operator]
-        if not any(_overlaps(item, other) for other in kept):
-            kept.append(item)
+    spans_by_type: dict[object, tuple[list[int], list[int]]] = {}
+
+    def keep_if_free(item: dict[str, object]) -> None:
+        starts, ends = spans_by_type.setdefault(item.get("entity_type"), ([], []))
+        start, end = item["start"], item["end"]
+        index = bisect.bisect_right(starts, start)  # type: ignore[arg-type]
+        if index > 0 and ends[index - 1] > start:  # type: ignore[operator]
+            return
+        if index < len(starts) and starts[index] < end:  # type: ignore[operator]
+            return
+        starts.insert(index, start)  # type: ignore[arg-type]
+        ends.insert(index, end)  # type: ignore[arg-type]
+        kept.append(item)
+
+    for group in (accepted, foreign):
+        for item in sorted(group, key=overlap_priority, reverse=True):
+            keep_if_free(item)
     return kept
 
 

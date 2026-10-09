@@ -1,5 +1,8 @@
 import asyncio
 import random
+import sys
+import threading
+import time
 
 import pytest
 
@@ -16,6 +19,7 @@ from litellm.proxy.guardrails.guardrail_hooks.analysis_windows import (
     own_items,
     plan_windows,
     run_windows,
+    validate_window_items,
 )
 
 UNBOUNDED = 10**6
@@ -597,3 +601,104 @@ def test_duplicate_stubs_replaced_by_one_cover_give_one_item():
     second = [{"entity_type": "A", "start": 10, "end": 120}]
     merged = merge_windows(windows, [first, second])
     assert [(item["start"], item["end"]) for item in merged] == [(50, 160)]
+
+
+MERGE_BUDGET_SECONDS = 0.5
+MERGE_ITEMS_PER_WINDOW = 1500
+
+
+def test_merge_of_twenty_thousand_findings_does_not_block_the_loop() -> None:
+    windows = plan_windows(random_prose(150_000))
+    per_window = [
+        [
+            {
+                "entity_type": "PERSON",
+                "start": 4 * index,
+                "end": 4 * index + 3,
+                "score": 0.85,
+            }
+            for index in range(
+                min(MERGE_ITEMS_PER_WINDOW, (window.end - window.start) // 4 - 1)
+            )
+        ]
+        for window in windows
+    ]
+    total = sum(map(len, per_window))
+    assert total >= 20_000
+
+    started = time.perf_counter()
+    merged = merge_windows(windows, per_window)
+    elapsed = time.perf_counter() - started
+
+    assert len(merged) > 0
+    assert elapsed < MERGE_BUDGET_SECONDS
+
+
+def one_window(items: list[dict]) -> list[dict]:
+    return merge_windows([Window(0, 100, 0, 100)], [items])
+
+
+def person(
+    start: int, end: int, score: float = 0.85, entity_type: str = "PERSON"
+) -> dict:
+    return {"entity_type": entity_type, "start": start, "end": end, "score": score}
+
+
+def test_overlap_prefers_higher_score_over_longer_span_of_the_same_type() -> None:
+    assert one_window([person(5, 20, score=0.5), person(0, 10, score=0.9)]) == [
+        person(0, 10, score=0.9)
+    ]
+
+
+def test_overlap_with_equal_score_prefers_longer_then_earlier_start() -> None:
+    assert one_window([person(0, 10), person(5, 20)]) == [person(5, 20)]
+    assert one_window([person(5, 15), person(0, 10)]) == [person(0, 10)]
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_overlap_choice_ignores_the_order_of_the_response(reverse: bool) -> None:
+    items = [person(0, 10), person(5, 15)]
+    assert one_window(items[::-1] if reverse else items) == [person(0, 10)]
+
+
+def test_overlap_of_different_types_keeps_both() -> None:
+    items = [person(0, 10), person(5, 15, entity_type="LOCATION")]
+    assert len(one_window(items)) == 2
+
+
+def test_validate_window_items_rejects_positions_outside_the_window() -> None:
+    window = Window(100, 200, 100, 200)
+    validate_window_items(window, [{"start": 0, "end": 100}, "not a dict"])
+    with pytest.raises(InvalidWindowResponse):
+        validate_window_items(window, [{"start": 0, "end": 101}])
+
+
+def test_span_lru_keeps_a_true_span_total_under_concurrent_threads() -> None:
+    cache = SpanLRU(max_entries=50, max_spans=200)
+    errors: list[BaseException] = []
+
+    def work(seed: int) -> None:
+        rng = random.Random(seed)
+        try:
+            for _ in range(20_000):
+                key = str(rng.randrange(80))
+                if rng.random() < 0.5:
+                    cache.get(key)
+                else:
+                    cache.put(key, [{"start": 0, "end": 1}] * rng.randrange(1, 10))
+        except BaseException as error:
+            errors.append(error)
+
+    interval = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)
+    try:
+        threads = [threading.Thread(target=work, args=(seed,)) for seed in range(4)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+    finally:
+        sys.setswitchinterval(interval)
+
+    assert errors == []
+    assert cache.total_spans == sum(len(spans) for spans in cache._entries.values())
