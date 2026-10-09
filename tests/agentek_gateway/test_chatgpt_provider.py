@@ -13,14 +13,15 @@ from agentek_gateway.subscriptions.providers.base import (
     RequestRejected,
     Unclassified,
 )
-from agentek_gateway.subscriptions.providers.chatgpt import (
+from agentek_gateway.subscriptions.providers.chatgpt_classify import (
     classify_error,
     classify_stream_failure,
-    mask_secrets,
+)
+from agentek_gateway.subscriptions.providers.chatgpt_limits import (
     normalize_headers,
     parse_limits,
-    redact_for_log,
 )
+from agentek_gateway.subscriptions.providers.redact import mask_secrets, redact_for_log
 
 FIXTURES = Path(__file__).parent / "fixtures" / "chatgpt"
 NOW = 1_791_343_500.0

@@ -181,7 +181,7 @@ def _normalize_litellm_params(litellm_params: Optional[Any]) -> dict:
 
 def get_chatgpt_session_id(litellm_params: Optional[Any]) -> Optional[str]:
     params = _normalize_litellm_params(litellm_params)
-    for key in ("litellm_session_id", "session_id"):
+    for key in ("chatgpt_session_id", "litellm_session_id", "session_id"):
         value = params.get(key)
         if value:
             return str(value)
@@ -255,6 +255,7 @@ CHATGPT_DEPLOYMENT_PARAM_KEYS = (
     "chatgpt_token_dir",
     "chatgpt_auth_file",
     "chatgpt_auth",
+    "chatgpt_session_id",
 )
 
 

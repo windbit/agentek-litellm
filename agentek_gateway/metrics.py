@@ -1,26 +1,27 @@
 from collections.abc import Sequence
 from typing import Literal
 
-from prometheus_client import REGISTRY, Counter, Gauge, Histogram
+from prometheus_client import Counter, Gauge, Histogram
 
 MetricKind = Literal["counter", "gauge", "histogram"]
 Metric = Counter | Gauge | Histogram
-COUNTER_SUFFIX = "_total"
+
+_CREATED: dict[str, Metric] = {}
 
 
 def get_or_create_metric(
     kind: MetricKind, name: str, documentation: str, labels: Sequence[str] = ()
 ) -> Metric:
     """Registers the metric once per process; a repeated call returns the registered collector."""
-    existing = REGISTRY._names_to_collectors.get(
-        name
-    ) or REGISTRY._names_to_collectors.get(name + COUNTER_SUFFIX)
-    if isinstance(existing, (Counter, Gauge, Histogram)):
+    existing = _CREATED.get(name)
+    if existing is not None:
         return existing
     match kind:
         case "counter":
-            return Counter(name, documentation, labels)
+            metric: Metric = Counter(name, documentation, labels)
         case "gauge":
-            return Gauge(name, documentation, labels)
+            metric = Gauge(name, documentation, labels)
         case "histogram":
-            return Histogram(name, documentation, labels)
+            metric = Histogram(name, documentation, labels)
+    _CREATED[name] = metric
+    return metric

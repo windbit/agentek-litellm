@@ -23,6 +23,7 @@ from agentek_gateway.subscriptions.providers.chatgpt import (
 
 from .test_chatgpt_provider import FIXTURES, NOW, fixture
 
+PROBE_MODEL = "model-from-config"
 AUTH = ChatgptAuth(access_token="at-1", refresh_token="rt-1", account_id="acct-1")
 
 
@@ -47,7 +48,7 @@ def provider(
     status: int, body: str, headers: Mapping[str, str] | None = None
 ) -> tuple[ChatGPTProvider, ScriptedTransport]:
     transport = ScriptedTransport(HttpReply(status, headers or {}, body))
-    return ChatGPTProvider(transport), transport
+    return ChatGPTProvider(transport, PROBE_MODEL), transport
 
 
 def sse(*events: Mapping[str, object]) -> str:

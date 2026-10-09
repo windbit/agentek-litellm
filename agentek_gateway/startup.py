@@ -74,9 +74,15 @@ def register_callbacks(
     registered: list[object], factories: Sequence[CallbackFactory]
 ) -> None:
     for factory in factories:
-        callback = factory()
-        if not any(type(existing) is type(callback) for existing in registered):
-            registered.append(callback)
+        if not any(type(existing) is factory for existing in registered):
+            registered.append(factory())
+
+
+def _log_failure(task: asyncio.Task[None]) -> None:
+    if not task.cancelled() and task.exception() is not None:
+        verbose_proxy_logger.error(
+            "agentek_gateway readiness task failed", exc_info=task.exception()
+        )
 
 
 async def wait_until_ready(
@@ -90,7 +96,7 @@ async def _run_when_ready(
     host: GatewayHost, handlers: Sequence[ReadyHandler], state: GatewayState
 ) -> None:
     await wait_until_ready(host)
-    state.ready.set()
     for handler in handlers:
         await handler()
+    state.ready.set()
     verbose_proxy_logger.info("agentek_gateway ready")

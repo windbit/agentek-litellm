@@ -59,7 +59,5 @@ def weekly_reset(at: float) -> UsageRecord:
     return UsageRecord(Limits(weekly=Window(10.0, at)), NOW)
 
 
-def deployments_for(*sub_ids: str, order: int | None = None) -> tuple[Candidate, ...]:
-    return tuple(
-        Candidate(f"sub:{sub_id}:{MODEL}", sub_id, order) for sub_id in sub_ids
-    )
+def deployments_for(*sub_ids: str) -> tuple[Candidate, ...]:
+    return tuple(Candidate(f"sub:{sub_id}:{MODEL}", sub_id) for sub_id in sub_ids)

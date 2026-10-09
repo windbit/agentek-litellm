@@ -1,7 +1,10 @@
+import contextlib
 import contextvars
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Protocol
+
+from litellm._logging import verbose_proxy_logger
 
 from .base import ErrorClass, ModelNotSupported
 
@@ -32,6 +35,15 @@ current_attempt: contextvars.ContextVar[AttemptContext | None] = contextvars.Con
 )
 
 
+@contextlib.contextmanager
+def attempt_scope(context: AttemptContext) -> Iterator[None]:
+    token = current_attempt.set(context)
+    try:
+        yield
+    finally:
+        current_attempt.reset(token)
+
+
 class FailureSink(Protocol):
     def __call__(self, failure: ObservedFailure) -> None: ...
 
@@ -55,11 +67,20 @@ def wrap_get_error_class(
         context = current_attempt.get()
         if context is None:
             return original(self, error_message, status_code, headers)
-        error = classify(status_code, headers, error_message)
-        sink(ObservedFailure(context, status_code, dict(headers), error_message, error))
-        return original(
-            self, error_message, status_for_client(error, status_code, context), headers
-        )
+        rewritten = status_code
+        try:
+            error = classify(status_code, headers, error_message)
+            sink(
+                ObservedFailure(
+                    context, status_code, dict(headers), error_message, error
+                )
+            )
+            rewritten = status_for_client(error, status_code, context)
+        except (
+            Exception
+        ):  # noqa: BLE001  # observer failure must not replace the provider error
+            verbose_proxy_logger.exception("agentek_gateway error observer failed")
+        return original(self, error_message, rewritten, headers)
 
     return wrapped
 

@@ -38,7 +38,6 @@ class Snapshot:
 class Candidate:
     deployment_id: str
     subscription_id: SubscriptionId | None = None
-    order: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,7 +46,6 @@ class SelectionRequest:
     subjects: KeySubjects | None = None
     sticky_subscription_id: SubscriptionId | None = None
     excluded_deployment_ids: frozenset[str] = frozenset()
-    target_order: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,7 +73,7 @@ def candidate_of(deployment: Mapping[str, object], snapshot: Snapshot) -> Candid
         else ""
     )
     subscription_id = _subscription_of(deployment_id, params, snapshot)
-    return Candidate(deployment_id, subscription_id, _order_of(params))
+    return Candidate(deployment_id, subscription_id)
 
 
 def select(
@@ -96,19 +94,18 @@ def select(
     ):
         return Kept(candidates, None, 0, sticky_hit=False)
 
-    usable = _restrict_to_order(
-        _not_excluded(request, subscription_candidates), request.target_order
-    )
     usable = tuple(
         candidate
-        for candidate in usable
+        for candidate in _not_excluded(request, subscription_candidates)
         if not _model_unsupported(candidate, request.model, snapshot)
     )
-    working = _working_in_best_tier(request, usable, snapshot, now)
-    if not working:
+    tiers = _working_by_tier(request, usable, snapshot, now)
+    if not tiers:
         if shared_candidates:
             return Kept(shared_candidates, None, 0, sticky_hit=False)
         return Exhausted(_recovery_at(request, subscription_candidates, snapshot, now))
+    working = tiers[0]
+    unexcluded_shared = len(_not_excluded(request, shared_candidates))
 
     sticky = next(
         (
@@ -124,7 +121,7 @@ def select(
     return Kept(
         (*shared_candidates, chosen),
         chosen,
-        len(working) - 1,
+        sum(len(tier) for tier in tiers) - 1 + unexcluded_shared,
         sticky_hit=sticky is not None,
     )
 
@@ -142,14 +139,6 @@ def _subscription_of(
     return None
 
 
-def _order_of(params: object) -> int | None:
-    if isinstance(params, Mapping):
-        order = params.get("order")
-        if isinstance(order, int) and not isinstance(order, bool):
-            return order
-    return None
-
-
 def _not_excluded(
     request: SelectionRequest, candidates: tuple[Candidate, ...]
 ) -> tuple[Candidate, ...]:
@@ -160,50 +149,34 @@ def _not_excluded(
     )
 
 
-def _restrict_to_order(
-    candidates: tuple[Candidate, ...], target_order: int | None
-) -> tuple[Candidate, ...]:
-    if target_order is not None:
-        matching = tuple(
-            candidate for candidate in candidates if candidate.order == target_order
-        )
-        return matching or candidates
-    orders = [
-        candidate.order for candidate in candidates if candidate.order is not None
-    ]
-    if not orders:
-        return candidates
-    return tuple(
-        candidate for candidate in candidates if candidate.order == min(orders)
-    )
-
-
 def _model_unsupported(candidate: Candidate, model: str, snapshot: Snapshot) -> bool:
     return (candidate.subscription_id, model) in snapshot.unsupported
 
 
-def _working_in_best_tier(
+def _working_by_tier(
     request: SelectionRequest,
     usable: tuple[Candidate, ...],
     snapshot: Snapshot,
     now: float,
-) -> tuple[Candidate, ...]:
+) -> tuple[tuple[Candidate, ...], ...]:
+    """Non-empty groups of working candidates, the tier the request is served from first."""
     present = frozenset(
         candidate.subscription_id for candidate in usable if candidate.subscription_id
     )
     own, shared = eligible_tiers(
         snapshot.policy, frozenset(snapshot.subscriptions), request.subjects
     )
-    for tier in (own, shared):
+    groups = []
+    for tier in (own & present, shared & present):
         working = tuple(
             candidate
             for candidate in usable
-            if candidate.subscription_id in tier & present
+            if candidate.subscription_id in tier
             and _is_working(candidate.subscription_id, snapshot, now)
         )
         if working:
-            return working
-    return ()
+            groups.append(working)
+    return tuple(groups)
 
 
 def _is_working(
@@ -264,6 +237,8 @@ def _recovery_at(
         record = snapshot.states.get(subscription_id)
         subscription = snapshot.subscriptions.get(subscription_id)
         if record is None or subscription is None or not subscription.enabled:
+            continue
+        if is_working(effective_state(record, now)):
             continue
         if record.until is not None and record.until > now:
             deadlines.append(record.until)

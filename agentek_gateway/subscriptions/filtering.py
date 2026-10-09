@@ -53,7 +53,6 @@ def filter_deployments(
         sticky_subscription_id=context.sticky_subscription_id,
         excluded_deployment_ids=context.attempted
         | _router_excluded(context.request_kwargs),
-        target_order=_target_order(context.request_kwargs),
     )
     outcome = select(request, candidates, snapshot, context.now)
     match outcome:
@@ -83,8 +82,3 @@ def _router_excluded(request_kwargs: Mapping[str, object]) -> frozenset[str]:
     if isinstance(value, (list, tuple, set, frozenset)):
         return frozenset(str(item) for item in value)
     return frozenset()
-
-
-def _target_order(request_kwargs: Mapping[str, object]) -> int | None:
-    value = request_kwargs.get("_target_order")
-    return value if isinstance(value, int) and not isinstance(value, bool) else None

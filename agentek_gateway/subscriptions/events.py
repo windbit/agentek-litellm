@@ -1,6 +1,6 @@
 from dataclasses import dataclass
-from enum import StrEnum
 
+from .compat import StrEnum
 from .model import Limits
 
 
@@ -14,6 +14,16 @@ class LimitWindow(StrEnum):
 class LimitExhausted:
     window: LimitWindow
     reset_at: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class Succeeded:
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class SeriesCleared:
+    since: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +94,8 @@ class Restored:
 Event = (
     LimitExhausted
     | LimitsObserved
+    | Succeeded
+    | SeriesCleared
     | Overloaded
     | ProbeFailed
     | ProbeSucceeded

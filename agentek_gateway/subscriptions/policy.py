@@ -1,7 +1,7 @@
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from enum import StrEnum
 
+from .compat import StrEnum
 from .model import SubscriptionId
 
 
@@ -74,7 +74,7 @@ def key_subjects_from_metadata(key_metadata: object) -> KeySubjects | None:
 
 def _subject(labels: Mapping[object, object], kind: SubjectKind) -> Subject | None:
     value = labels.get(kind.value)
-    if isinstance(value, (str, int)) and str(value):
+    if isinstance(value, (str, int)) and not isinstance(value, bool) and str(value):
         return Subject(kind, str(value))
     return None
 

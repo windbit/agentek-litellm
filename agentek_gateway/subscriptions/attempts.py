@@ -1,3 +1,4 @@
+import heapq
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -18,6 +19,22 @@ def request_metadata(request_kwargs: Mapping[str, object]) -> Mapping[str, objec
         if isinstance(value, Mapping):
             return value
     return {}
+
+
+def stamp_request_id(request_data: dict[str, object]) -> str:
+    """Writes a fresh server-side id into the request metadata, replacing any client-supplied value."""
+    name = (
+        "litellm_metadata"
+        if isinstance(request_data.get("litellm_metadata"), dict)
+        else "metadata"
+    )
+    container = request_data.get(name)
+    if not isinstance(container, dict):
+        container = {}
+        request_data[name] = container
+    request_id = issue_request_id()
+    container[REQUEST_ID_FIELD] = request_id
+    return request_id
 
 
 def read_request_id(request_kwargs: Mapping[str, object]) -> str | None:
@@ -45,6 +62,7 @@ class AttemptTracker:
         self._ttl_s = ttl_s
         self._max_requests = max_requests
         self._records: dict[str, AttemptRecord] = {}
+        self._expiry: list[tuple[float, str]] = []
 
     def attempted(self, request_id: str | None) -> frozenset[str]:
         record = self._live(request_id)
@@ -58,11 +76,13 @@ class AttemptTracker:
         self.sweep()
         previous = self._live(request_id)
         tried = previous.deployment_ids if previous else frozenset()
+        expires_at = self._clock.now() + self._ttl_s
         self._records[request_id] = AttemptRecord(
             deployment_ids=tried | {deployment_id},
             alternatives=alternatives,
-            expires_at=self._clock.now() + self._ttl_s,
+            expires_at=expires_at,
         )
+        heapq.heappush(self._expiry, (expires_at, request_id))
         self._evict_overflow()
 
     def finish(self, request_id: str | None) -> None:

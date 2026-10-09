@@ -34,6 +34,7 @@ class InMemoryStateStore:
         self._clock = clock
         self._states: dict[SubscriptionId, StateRecord] = {}
         self._errors: dict[SubscriptionId, list[float]] = {}
+        self._series: dict[SubscriptionId, list[float]] = {}
         self._degraded: dict[Route, float] = {}
         self._sticky: dict[str, tuple[SubscriptionId, float]] = {}
         self._unsupported: dict[tuple[SubscriptionId, str], float] = {}
@@ -62,14 +63,18 @@ class InMemoryStateStore:
         self, subscription_id: SubscriptionId, window_s: float
     ) -> int:
         now = self._clock.now()
-        fresh = [
+        self._errors[subscription_id] = [
             stamp
             for stamp in self._errors.get(subscription_id, [])
             if now - stamp < window_s
-        ]
-        fresh.append(now)
-        self._errors[subscription_id] = fresh
-        return len(fresh)
+        ] + [now]
+        series = [
+            stamp
+            for stamp in self._series.get(subscription_id, [])
+            if now - stamp < window_s
+        ] + [now]
+        self._series[subscription_id] = series
+        return len(series)
 
     async def unclassified_counts(
         self, subscription_ids: Sequence[SubscriptionId], window_s: float
@@ -82,8 +87,8 @@ class InMemoryStateStore:
             for sub_id in subscription_ids
         }
 
-    async def clear_unclassified(self, subscription_id: SubscriptionId) -> None:
-        self._errors.pop(subscription_id, None)
+    async def reset_series(self, subscription_id: SubscriptionId) -> None:
+        self._series.pop(subscription_id, None)
 
     async def mark_route_degraded(self, route: Route, window_s: float) -> None:
         self._degraded[route] = self._clock.now() + window_s

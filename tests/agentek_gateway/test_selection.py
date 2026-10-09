@@ -273,44 +273,14 @@ def test_exhausted_without_any_deadline_has_no_recovery_time() -> None:
     assert pick(plain(), deployments_for("a"), snapshot) == Exhausted(None)
 
 
-def test_target_order_limits_the_candidates() -> None:
-    subs = [make_subscription("a", priority=1), make_subscription("b")]
-    candidates = (
-        Candidate(f"sub:a:{MODEL}", "a", order=1),
-        Candidate(f"sub:b:{MODEL}", "b", order=2),
-    )
-
-    assert chosen_id(pick(plain(target_order=2), candidates, snapshot_of(subs))) == "b"
-
-
-def test_lowest_order_group_wins_without_a_target() -> None:
-    subs = [make_subscription("a", priority=90), make_subscription("b", priority=1)]
-    candidates = (
-        Candidate(f"sub:a:{MODEL}", "a", order=1),
-        Candidate(f"sub:b:{MODEL}", "b", order=2),
-    )
-
-    assert chosen_id(pick(plain(), candidates, snapshot_of(subs))) == "a"
-
-
-def test_unknown_target_order_keeps_all_candidates() -> None:
-    subs = [make_subscription("a"), make_subscription("b")]
-    candidates = (
-        Candidate(f"sub:a:{MODEL}", "a", order=1),
-        Candidate(f"sub:b:{MODEL}", "b", order=2),
-    )
-
-    assert chosen_id(pick(plain(target_order=9), candidates, snapshot_of(subs))) == "a"
-
-
 def test_credential_name_maps_a_console_made_deployment_to_its_subscription() -> None:
     snapshot = snapshot_of([make_subscription("a", credential_name="cred-a")])
     deployment = {
         "model_info": {"id": "dep-1"},
-        "litellm_params": {"litellm_credential_name": "cred-a", "order": 3},
+        "litellm_params": {"litellm_credential_name": "cred-a"},
     }
 
-    assert candidate_of(deployment, snapshot) == Candidate("dep-1", "a", 3)
+    assert candidate_of(deployment, snapshot) == Candidate("dep-1", "a")
 
 
 def test_deployment_with_another_credential_is_not_a_subscription() -> None:
@@ -320,7 +290,7 @@ def test_deployment_with_another_credential_is_not_a_subscription() -> None:
     }
 
     assert candidate_of(deployment, snapshot_of([make_subscription("a")])) == Candidate(
-        "dep-1", None, None
+        "dep-1", None
     )
 
 

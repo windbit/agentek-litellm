@@ -7,7 +7,7 @@ from agentek_gateway.subscriptions.providers.base import (
     ModelNotSupported,
     Unclassified,
 )
-from agentek_gateway.subscriptions.providers.chatgpt import classify_error
+from agentek_gateway.subscriptions.providers.chatgpt_classify import classify_error
 from agentek_gateway.subscriptions.providers.observer import (
     AttemptContext,
     ObservedFailure,

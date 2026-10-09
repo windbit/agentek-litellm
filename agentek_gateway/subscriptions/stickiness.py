@@ -3,7 +3,7 @@ import uuid
 from collections.abc import Mapping
 
 PROMPT_CACHE_KEY = "prompt_cache_key"
-SESSION_ID_PARAM = "litellm_session_id"
+SESSION_ID_PARAM = "chatgpt_session_id"
 SESSION_NAMESPACE = uuid.UUID("5c1ad3a0-6b0e-5d5f-9f55-0a6a9c1e7a11")
 
 

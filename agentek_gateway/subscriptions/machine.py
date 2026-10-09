@@ -1,6 +1,6 @@
-from dataclasses import dataclass
-from typing import assert_never
+from dataclasses import dataclass, replace
 
+from .compat import assert_never
 from .config import ProviderTuning
 from .events import (
     AccountDeactivated,
@@ -17,6 +17,8 @@ from .events import (
     Reauthorized,
     RefreshSucceeded,
     Restored,
+    SeriesCleared,
+    Succeeded,
     TokenRevoked,
     Unauthorized,
 )
@@ -77,6 +79,10 @@ def transition(
             return _expire(current, now)
         case ProbeSucceeded(limits=limits):
             return _probe_succeeded(current, now, limits, tuning)
+        case Succeeded():
+            return _succeeded(current, now)
+        case SeriesCleared(since=since):
+            return _series_cleared(current, now, since)
         case LimitsObserved(limits=limits):
             return _limits_observed(current, now, limits, tuning)
         case LimitExhausted():
@@ -217,6 +223,39 @@ def soft_limit_until(
     if remaining <= 0 or remaining > tuning.implausible_reset_max_s:
         return now + tuning.implausible_block_s
     return reset_at
+
+
+def _succeeded(current: StateRecord, now: float) -> Transition:
+    if current.overload_streak == 0 or current.state not in {
+        State.ACTIVE,
+        State.SOFT_LIMITED,
+        State.OVERLOADED,
+    }:
+        return _unchanged(current)
+    return Transition(
+        replace(
+            current,
+            version=current.version + 1,
+            entered_at=current.entered_at,
+            overload_streak=0,
+        ),
+        changed=True,
+    )
+
+
+def _series_cleared(current: StateRecord, now: float, since: float) -> Transition:
+    if (
+        current.state is not State.OVERLOADED
+        or current.source is not SignalSource.SERIES
+        or current.entered_at < since
+    ):
+        return _unchanged(current)
+    streak = max(0, current.overload_streak - 1)
+    return _enter(
+        current,
+        now,
+        Entry(State.ACTIVE, StateReason.NONE, SignalSource.SERIES, streak=streak),
+    )
 
 
 def _unchanged(current: StateRecord) -> Transition:

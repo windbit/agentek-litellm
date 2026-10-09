@@ -1,6 +1,7 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
-from enum import StrEnum
+
+from .compat import StrEnum
 
 SubscriptionId = str
 

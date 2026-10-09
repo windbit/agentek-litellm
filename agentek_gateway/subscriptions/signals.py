@@ -3,7 +3,7 @@ from math import ceil
 
 from .clock import Clock
 from .config import GatewayConfig
-from .events import LimitsObserved, Overloaded
+from .events import LimitsObserved, Overloaded, SeriesCleared, Succeeded
 from .model import (
     Limits,
     Route,
@@ -60,41 +60,59 @@ class SignalProcessor:
     async def on_unclassified_error(
         self, subscription: Subscription, *, immediate: bool
     ) -> UnclassifiedOutcome:
+        """Records the error; on a shared cause lifts the series blocks of the route's subscriptions instead of blocking."""
         tuning = self._config.tuning_for(subscription.provider)
         count = await self._store.record_unclassified(
             subscription.id, tuning.series_window_s
         )
-        if not immediate and count < tuning.series_threshold:
-            return Recorded(count)
         route = Route(subscription.provider, subscription.egress)
-        failed, working = await self._route_picture(route, tuning.series_window_s)
+        peers, failed, working = await self._route_picture(
+            route, tuning.series_window_s
+        )
         if failed >= common_cause_threshold(working):
             await self._store.mark_route_degraded(route, tuning.series_window_s)
+            since = self._clock.now() - tuning.series_window_s
+            for peer in peers:
+                await self._states.apply(peer, SeriesCleared(since))
             return CommonCause(route, failed, working)
+        if not immediate and count < tuning.series_threshold:
+            return Recorded(count)
         await self._states.apply(subscription, Overloaded())
         return Blocked()
 
     async def on_success(
         self, subscription: Subscription, limits: Limits | None = None
     ) -> None:
-        await self._store.clear_unclassified(subscription.id)
-        await self._states.apply(subscription, LimitsObserved(limits or Limits()))
+        await self._store.reset_series(subscription.id)
+        await self._states.apply(subscription, Succeeded())
+        if limits and (limits.five_hour or limits.weekly):
+            await self._states.apply(subscription, LimitsObserved(limits))
 
-    async def _route_picture(self, route: Route, window_s: float) -> tuple[int, int]:
+    async def _route_picture(
+        self, route: Route, window_s: float
+    ) -> tuple[list[Subscription], int, int]:
         now = self._clock.now()
         peers = [
             peer
             for peer in await self._repo.list_subscriptions()
-            if peer.provider == route.provider and peer.egress == route.egress
+            if peer.provider == route.provider
+            and peer.egress == route.egress
+            and peer.enabled
         ]
         states = await self._store.read_all_states()
         counts = await self._store.unclassified_counts(
             [peer.id for peer in peers], window_s
         )
-        failing = {peer.id for peer in peers if counts.get(peer.id, 0) > 0}
+        enabled = [
+            peer
+            for peer in peers
+            if peer.id not in states
+            or states[peer.id].state is not SubscriptionState.DISABLED
+        ]
+        failing = {peer.id for peer in enabled if counts.get(peer.id, 0) > 0}
         working = {
             peer.id
-            for peer in peers
+            for peer in enabled
             if peer.id in failing
             or is_working(
                 effective_state(states[peer.id], now)
@@ -102,4 +120,4 @@ class SignalProcessor:
                 else SubscriptionState.ACTIVE
             )
         }
-        return len(failing), len(working)
+        return enabled, len(failing), len(working)

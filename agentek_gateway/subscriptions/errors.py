@@ -1,3 +1,5 @@
+import httpx
+
 import litellm
 
 INTERNAL_ATTRIBUTE = "agentek_internal"
@@ -14,7 +16,12 @@ class NoAvailableSubscriptionsError(litellm.NotFoundError):
         self, model: str, recovery_in_s: float | None, retry_after_s: int
     ) -> None:
         text = no_capacity_message(recovery_in_s)
-        super().__init__(message=text, model=model, llm_provider="agentek")
+        response = httpx.Response(
+            NO_CAPACITY_STATUS, request=httpx.Request("POST", "http://agentek")
+        )
+        super().__init__(
+            message=text, model=model, llm_provider="agentek", response=response
+        )
         self.message = text
         self.status_code = NO_CAPACITY_STATUS
         self.headers = {RETRY_AFTER_HEADER: str(retry_after_s)}
