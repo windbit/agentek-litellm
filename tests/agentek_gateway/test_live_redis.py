@@ -330,3 +330,32 @@ async def test_degraded_route_and_unsupported_model_marks_live_in_sorted_sets() 
             frozenset(),
             frozenset(),
         )
+
+
+async def test_lease_key_lives_for_the_ttl_after_acquiring_and_after_each_renewal() -> (
+    None
+):
+    async with live_redis() as redis:
+        lease = LeaderLease(redis, KEYS.leader, ttl_s=30)
+
+        await lease.hold()
+        acquired_ttl = await redis.pttl(KEYS.leader)
+        await redis.pexpire(KEYS.leader, 1_000)
+        await lease.hold()
+        renewed_ttl = await redis.pttl(KEYS.leader)
+
+        assert 25_000 < acquired_ttl <= 30_000
+        assert 25_000 < renewed_ttl <= 30_000
+
+
+async def test_renewed_lease_still_expires_after_its_ttl_without_further_renewal() -> (
+    None
+):
+    async with live_redis() as redis:
+        lease = LeaderLease(redis, KEYS.leader, ttl_s=1)
+        await lease.hold()
+        await lease.hold()
+
+        await asyncio.sleep(1.3)
+
+        assert await redis.exists(KEYS.leader) == 0

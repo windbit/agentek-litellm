@@ -134,6 +134,9 @@ class ProbeLoop:
         now = deps.clock.now()
         record = await deps.store.read_state(subscription.id)
         state = effective_state(record, now) if record else SubscriptionState.ACTIVE
+        if state not in PROBED_STATES:
+            self._due.pop(subscription.id, None)
+            return
         interval = (
             tuning.broken_probe_interval_s
             if state is SubscriptionState.BROKEN

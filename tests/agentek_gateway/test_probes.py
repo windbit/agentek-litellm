@@ -270,3 +270,80 @@ async def test_lease_is_checked_before_each_probe_and_a_lost_lease_stops_the_pas
     await replica.probes.tick()
 
     assert (len(checks), len(upkeep.provider.probes)) == (2, 1)
+
+
+async def test_subscription_that_recovers_and_breaks_again_is_probed_on_its_new_schedule() -> (
+    None
+):
+    upkeep, _ = build_upkeep(["a"])
+    replica = upkeep.replica()
+    await half_open_since_a_minute(upkeep, replica, "a")
+    await replica.probes.tick()
+    upkeep.clock.advance(HALF_OPEN_JITTER_S + 1)
+    await replica.probes.tick()
+    assert await current(replica) == S.ACTIVE
+    await replica.probes.tick()
+    probes_before = len(upkeep.provider.probes)
+
+    await half_open_since_a_minute(upkeep, replica, "a")
+    await replica.probes.tick()
+
+    assert len(upkeep.provider.probes) == probes_before
+
+
+async def test_broken_again_after_a_recovery_waits_the_full_broken_interval() -> None:
+    upkeep, _ = build_upkeep(["a"])
+    replica = upkeep.replica()
+    await half_open_since_a_minute(upkeep, replica, "a")
+    await replica.probes.tick()
+    upkeep.clock.advance(HALF_OPEN_JITTER_S + 1)
+    await replica.probes.tick()
+    await replica.probes.tick()
+    probes_before = len(upkeep.provider.probes)
+    current_record = await replica.store.read_state("a")
+    broken = StateRecord(
+        S.BROKEN,
+        current_record.version + 1,  # type: ignore[union-attr]
+        upkeep.clock.now(),
+        None,
+        StateReason.UNHEALTHY,
+        SignalSource.PROBE,
+        5,
+    )
+    await replica.store.compare_and_set_state("a", current_record.version, broken)  # type: ignore[union-attr]
+
+    await replica.probes.tick()
+    upkeep.clock.advance(BROKEN_INTERVAL_S - 60)
+    await replica.probes.tick()
+
+    assert len(upkeep.provider.probes) == probes_before
+
+
+async def test_breaking_right_after_a_good_probe_does_not_inherit_the_old_schedule() -> (
+    None
+):
+    upkeep, _ = build_upkeep(["a"])
+    replica = upkeep.replica()
+    await half_open_since_a_minute(upkeep, replica, "a")
+    await replica.probes.tick()
+    upkeep.clock.advance(HALF_OPEN_JITTER_S + 1)
+    await replica.probes.tick()
+    probes_before = len(upkeep.provider.probes)
+    record = await replica.store.read_state("a")
+    broken = StateRecord(
+        S.BROKEN,
+        record.version + 1,
+        upkeep.clock.now(),
+        None,  # type: ignore[union-attr]
+        StateReason.UNHEALTHY,
+        SignalSource.PROBE,
+        5,
+    )
+    await replica.store.compare_and_set_state("a", record.version, broken)  # type: ignore[union-attr]
+
+    upkeep.clock.advance(HALF_OPEN_INTERVAL_S + 1)
+    await replica.probes.tick()
+    upkeep.clock.advance(HALF_OPEN_INTERVAL_S + 1)
+    await replica.probes.tick()
+
+    assert len(upkeep.provider.probes) == probes_before
