@@ -1,0 +1,3695 @@
+{
+ "json_oneline_code.txt": [],
+ "json_oneline_contacts.txt": [],
+ "json_oneline_names.txt": [
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 7391,
+   "end": 7406,
+   "text": "8 900 380 23 16",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 14462,
+   "end": 14472,
+   "text": "5297932593",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 22600,
+   "end": 22616,
+   "text": "Алексей Васильев",
+   "detector": "analyzer",
+   "ru2_detects_isolated": true
+  },
+  {
+   "entity_type": "RU_SNILS",
+   "start": 29439,
+   "end": 29453,
+   "text": "914-176-500 96",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 43384,
+   "end": 43412,
+   "text": "anna.sidorova704@example.org",
+   "detector": "rules"
+  }
+ ],
+ "json_oneline_nested_130k.json": [
+  {
+   "entity_type": "PERSON",
+   "start": 1459,
+   "end": 1472,
+   "text": "Сергей Иванов",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 1483,
+   "end": 1512,
+   "text": "d.tikhonov503@corp.example.ru",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 1523,
+   "end": 1541,
+   "text": "+7 (900) 458-21-07",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 1550,
+   "end": 1560,
+   "text": "8911319526",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 3931,
+   "end": 3947,
+   "text": "Алексей Васильев",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 3958,
+   "end": 3986,
+   "text": "olga.kovaleva506@example.org",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 3997,
+   "end": 4009,
+   "text": "+79004387885",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 4018,
+   "end": 4030,
+   "text": "115650916127",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 5995,
+   "end": 6011,
+   "text": "Алексей Васильев",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 6022,
+   "end": 6041,
+   "text": "info509@example.org",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 6052,
+   "end": 6064,
+   "text": "+79006028892",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 6073,
+   "end": 6083,
+   "text": "4940726134",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 8655,
+   "end": 8671,
+   "text": "Алексей Васильев",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 8682,
+   "end": 8714,
+   "text": "olga.kovaleva512@corp.example.ru",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 8725,
+   "end": 8737,
+   "text": "+79002423103",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 8746,
+   "end": 8758,
+   "text": "605433895406",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 11589,
+   "end": 11601,
+   "text": "Елена Попова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 11612,
+   "end": 11640,
+   "text": "olga.kovaleva515@example.com",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 11651,
+   "end": 11668,
+   "text": "8 (900) 620-31-37",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 11677,
+   "end": 11687,
+   "text": "3231581799",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 13985,
+   "end": 13997,
+   "text": "Елена Попова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 14008,
+   "end": 14036,
+   "text": "olga.kovaleva518@example.com",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 14047,
+   "end": 14065,
+   "text": "+7 (900) 252-95-96",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 14074,
+   "end": 14086,
+   "text": "692225059385",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 16281,
+   "end": 16303,
+   "text": "Сергей Петрович Иванов",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 16314,
+   "end": 16339,
+   "text": "sales.dept521@example.org",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 16350,
+   "end": 16368,
+   "text": "+7 (900) 513-78-66",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 16377,
+   "end": 16387,
+   "text": "6064657650",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 18904,
+   "end": 18926,
+   "text": "Сергей Петрович Иванов",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 18937,
+   "end": 18956,
+   "text": "info524@example.org",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 18967,
+   "end": 18979,
+   "text": "+79006997457",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 18988,
+   "end": 19000,
+   "text": "434201470780",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 21076,
+   "end": 21091,
+   "text": "Дмитрий Соколов",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 21102,
+   "end": 21131,
+   "text": "k.belyaeva527@corp.example.ru",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 21142,
+   "end": 21157,
+   "text": "8 900 428 61 62",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 21166,
+   "end": 21176,
+   "text": "4723022902",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 23026,
+   "end": 23041,
+   "text": "Мария Кузнецова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 23052,
+   "end": 23077,
+   "text": "k.belyaeva530@example.org",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 23088,
+   "end": 23103,
+   "text": "8 900 286 41 69",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 23112,
+   "end": 23124,
+   "text": "250276293344",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 24922,
+   "end": 24944,
+   "text": "Сергей Петрович Иванов",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 24955,
+   "end": 24975,
+   "text": "info533@mail.example",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 24986,
+   "end": 25001,
+   "text": "8 900 663 78 82",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 25010,
+   "end": 25020,
+   "text": "5392036879",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 26954,
+   "end": 26974,
+   "text": "Иванов Иван Иванович",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 26985,
+   "end": 27011,
+   "text": "k.belyaeva536@mail.example",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 27022,
+   "end": 27034,
+   "text": "+79007332806",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 27043,
+   "end": 27055,
+   "text": "236925524406",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 29703,
+   "end": 29725,
+   "text": "Сергей Петрович Иванов",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 29736,
+   "end": 29768,
+   "text": "anna.sidorova539@corp.example.ru",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 29779,
+   "end": 29797,
+   "text": "+7 (900) 767-79-60",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 29806,
+   "end": 29816,
+   "text": "5712746895",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 31745,
+   "end": 31758,
+   "text": "Анна Смирнова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 31769,
+   "end": 31794,
+   "text": "d.tikhonov542@example.org",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 31805,
+   "end": 31820,
+   "text": "8 900 829 63 34",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 31829,
+   "end": 31841,
+   "text": "220615005820",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 34164,
+   "end": 34179,
+   "text": "Мария Кузнецова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 34190,
+   "end": 34215,
+   "text": "sales.dept545@example.com",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 34226,
+   "end": 34244,
+   "text": "+7 (900) 247-08-65",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 34253,
+   "end": 34263,
+   "text": "9235986902",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 36055,
+   "end": 36068,
+   "text": "Анна Смирнова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 36079,
+   "end": 36105,
+   "text": "sales.dept548@mail.example",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 36116,
+   "end": 36128,
+   "text": "+79001112448",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 36137,
+   "end": 36149,
+   "text": "493581603711",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 38063,
+   "end": 38078,
+   "text": "Дмитрий Соколов",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 38089,
+   "end": 38114,
+   "text": "sales.dept551@example.com",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 38125,
+   "end": 38137,
+   "text": "+79006493838",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 38146,
+   "end": 38156,
+   "text": "3625776917",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 40879,
+   "end": 40894,
+   "text": "Дмитрий Соколов",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 40905,
+   "end": 40930,
+   "text": "d.tikhonov554@example.org",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 40941,
+   "end": 40959,
+   "text": "+7 (900) 776-29-01",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 40968,
+   "end": 40980,
+   "text": "142448131706",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 43056,
+   "end": 43071,
+   "text": "Мария Кузнецова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 43082,
+   "end": 43110,
+   "text": "anna.sidorova557@example.org",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 43121,
+   "end": 43138,
+   "text": "8 (900) 310-62-62",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 43147,
+   "end": 43157,
+   "text": "4181415940",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 45397,
+   "end": 45412,
+   "text": "Дмитрий Соколов",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 45423,
+   "end": 45451,
+   "text": "olga.kovaleva560@example.com",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 45462,
+   "end": 45477,
+   "text": "8 900 721 39 76",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 45486,
+   "end": 45498,
+   "text": "614695393408",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 47322,
+   "end": 47337,
+   "text": "Мария Кузнецова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 47348,
+   "end": 47373,
+   "text": "k.belyaeva563@example.com",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 47384,
+   "end": 47401,
+   "text": "8 (900) 514-41-39",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 47410,
+   "end": 47420,
+   "text": "3263441875",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 49187,
+   "end": 49200,
+   "text": "Анна Смирнова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 49211,
+   "end": 49230,
+   "text": "info566@example.org",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 49241,
+   "end": 49258,
+   "text": "8 (900) 634-99-63",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 49267,
+   "end": 49279,
+   "text": "627824972687",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 51359,
+   "end": 51374,
+   "text": "Ольга Михайлова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 51385,
+   "end": 51411,
+   "text": "d.tikhonov569@mail.example",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 51422,
+   "end": 51439,
+   "text": "8 (900) 955-46-51",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 51448,
+   "end": 51458,
+   "text": "6472250372",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 53698,
+   "end": 53714,
+   "text": "Алексей Васильев",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 53725,
+   "end": 53749,
+   "text": "i.petrov572@mail.example",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 53760,
+   "end": 53772,
+   "text": "+79004431623",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 53781,
+   "end": 53793,
+   "text": "842917025920",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 55849,
+   "end": 55862,
+   "text": "Анна Смирнова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 55873,
+   "end": 55893,
+   "text": "info575@mail.example",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 55904,
+   "end": 55919,
+   "text": "8 900 575 66 20",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 55928,
+   "end": 55938,
+   "text": "7939648790",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 58522,
+   "end": 58546,
+   "text": "Андрей Борисович Ковалев",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 58557,
+   "end": 58584,
+   "text": "i.petrov578@corp.example.ru",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 58595,
+   "end": 58610,
+   "text": "8 900 366 44 36",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 58619,
+   "end": 58631,
+   "text": "151270123169",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 61055,
+   "end": 61067,
+   "text": "Елена Попова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 61078,
+   "end": 61101,
+   "text": "i.petrov581@example.com",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 61112,
+   "end": 61129,
+   "text": "8 (900) 482-03-73",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 61138,
+   "end": 61148,
+   "text": "7868193960",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 63205,
+   "end": 63229,
+   "text": "Андрей Борисович Ковалев",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 63240,
+   "end": 63272,
+   "text": "olga.kovaleva584@corp.example.ru",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 63283,
+   "end": 63300,
+   "text": "8 (900) 870-93-49",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 63309,
+   "end": 63321,
+   "text": "504575323103",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 65900,
+   "end": 65915,
+   "text": "Дмитрий Соколов",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 65926,
+   "end": 65955,
+   "text": "anna.sidorova587@mail.example",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 65966,
+   "end": 65978,
+   "text": "+79008707164",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 65987,
+   "end": 65997,
+   "text": "6232627804",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 68845,
+   "end": 68860,
+   "text": "Мария Кузнецова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 68871,
+   "end": 68900,
+   "text": "sales.dept590@corp.example.ru",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 68911,
+   "end": 68926,
+   "text": "8 900 934 49 40",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 68935,
+   "end": 68947,
+   "text": "813906951182",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 71234,
+   "end": 71246,
+   "text": "Елена Попова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 71257,
+   "end": 71285,
+   "text": "olga.kovaleva593@example.org",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 71296,
+   "end": 71308,
+   "text": "+79006275510",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 71317,
+   "end": 71327,
+   "text": "6060918910",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 73640,
+   "end": 73662,
+   "text": "Сергей Петрович Иванов",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 73673,
+   "end": 73701,
+   "text": "anna.sidorova596@example.org",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 73712,
+   "end": 73724,
+   "text": "+79008084449",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 73733,
+   "end": 73745,
+   "text": "407394933981",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 75778,
+   "end": 75793,
+   "text": "Дмитрий Соколов",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 75804,
+   "end": 75829,
+   "text": "d.tikhonov599@example.com",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 75840,
+   "end": 75858,
+   "text": "+7 (900) 770-15-63",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 75867,
+   "end": 75877,
+   "text": "8933040091",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 77910,
+   "end": 77930,
+   "text": "Иванов Иван Иванович",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 77941,
+   "end": 77966,
+   "text": "d.tikhonov602@example.org",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 77977,
+   "end": 77992,
+   "text": "8 900 767 32 33",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 78001,
+   "end": 78013,
+   "text": "263515518113",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 80068,
+   "end": 80090,
+   "text": "Сергей Петрович Иванов",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 80101,
+   "end": 80129,
+   "text": "olga.kovaleva605@example.com",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 80140,
+   "end": 80155,
+   "text": "8 900 100 67 11",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 80164,
+   "end": 80174,
+   "text": "2350329638",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 82633,
+   "end": 82648,
+   "text": "Дмитрий Соколов",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 82659,
+   "end": 82688,
+   "text": "k.belyaeva608@corp.example.ru",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 82699,
+   "end": 82711,
+   "text": "+79004615648",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 82720,
+   "end": 82732,
+   "text": "913921181519",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 85099,
+   "end": 85112,
+   "text": "Сергей Иванов",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 85123,
+   "end": 85152,
+   "text": "anna.sidorova611@mail.example",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 85163,
+   "end": 85178,
+   "text": "8 900 730 99 56",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 85187,
+   "end": 85197,
+   "text": "2099917372",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 87179,
+   "end": 87194,
+   "text": "Мария Кузнецова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 87205,
+   "end": 87229,
+   "text": "i.petrov614@mail.example",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 87240,
+   "end": 87257,
+   "text": "8 (900) 741-46-18",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 87266,
+   "end": 87278,
+   "text": "977160515105",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 89430,
+   "end": 89452,
+   "text": "Сергей Петрович Иванов",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 89463,
+   "end": 89495,
+   "text": "anna.sidorova617@corp.example.ru",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 89506,
+   "end": 89518,
+   "text": "+79004634909",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 89527,
+   "end": 89537,
+   "text": "3117764557",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 91872,
+   "end": 91892,
+   "text": "Иванов Иван Иванович",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 91903,
+   "end": 91931,
+   "text": "anna.sidorova620@example.com",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 91942,
+   "end": 91954,
+   "text": "+79006368228",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 91963,
+   "end": 91975,
+   "text": "603301108031",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 94415,
+   "end": 94437,
+   "text": "Сергей Петрович Иванов",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 94448,
+   "end": 94467,
+   "text": "info623@example.com",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 94478,
+   "end": 94496,
+   "text": "+7 (900) 384-04-97",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 94505,
+   "end": 94515,
+   "text": "9973012134",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 96948,
+   "end": 96963,
+   "text": "Ольга Михайлова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 96974,
+   "end": 96997,
+   "text": "i.petrov626@example.org",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 97008,
+   "end": 97025,
+   "text": "8 (900) 118-17-07",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 97034,
+   "end": 97046,
+   "text": "487817695273",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 99197,
+   "end": 99217,
+   "text": "Иванов Иван Иванович",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 99228,
+   "end": 99256,
+   "text": "olga.kovaleva629@example.org",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 99267,
+   "end": 99284,
+   "text": "8 (900) 577-27-08",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 99293,
+   "end": 99303,
+   "text": "3436439507",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 101579,
+   "end": 101592,
+   "text": "Сергей Иванов",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 101603,
+   "end": 101632,
+   "text": "anna.sidorova632@mail.example",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 101643,
+   "end": 101655,
+   "text": "+79007304289",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 101664,
+   "end": 101676,
+   "text": "670670642702",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 103425,
+   "end": 103445,
+   "text": "Иванов Иван Иванович",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 103456,
+   "end": 103479,
+   "text": "i.petrov635@example.com",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 103490,
+   "end": 103508,
+   "text": "+7 (900) 962-26-02",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 103517,
+   "end": 103527,
+   "text": "1502360016",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 105398,
+   "end": 105413,
+   "text": "Ольга Михайлова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 105424,
+   "end": 105447,
+   "text": "i.petrov638@example.org",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 105458,
+   "end": 105470,
+   "text": "+79002842677",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 105479,
+   "end": 105491,
+   "text": "658851226689",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 107425,
+   "end": 107436,
+   "text": "Иван Петров",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 107447,
+   "end": 107472,
+   "text": "sales.dept641@example.org",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 107483,
+   "end": 107500,
+   "text": "8 (900) 785-50-95",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 107509,
+   "end": 107519,
+   "text": "2561764527",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 109664,
+   "end": 109676,
+   "text": "Елена Попова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 109687,
+   "end": 109712,
+   "text": "d.tikhonov644@example.org",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 109723,
+   "end": 109738,
+   "text": "8 900 607 30 47",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 109747,
+   "end": 109759,
+   "text": "837579186933",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 112397,
+   "end": 112421,
+   "text": "Андрей Борисович Ковалев",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 112432,
+   "end": 112455,
+   "text": "info647@corp.example.ru",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 112466,
+   "end": 112478,
+   "text": "+79007006807",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 112487,
+   "end": 112497,
+   "text": "6817515512",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 115015,
+   "end": 115030,
+   "text": "Дмитрий Соколов",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 115041,
+   "end": 115061,
+   "text": "info650@mail.example",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 115072,
+   "end": 115087,
+   "text": "8 900 271 80 54",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 115096,
+   "end": 115108,
+   "text": "717835905216",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 116985,
+   "end": 116998,
+   "text": "Сергей Иванов",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 117009,
+   "end": 117033,
+   "text": "i.petrov653@mail.example",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 117044,
+   "end": 117061,
+   "text": "8 (900) 631-99-39",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 117070,
+   "end": 117080,
+   "text": "6000239022",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 118979,
+   "end": 118994,
+   "text": "Дмитрий Соколов",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 119005,
+   "end": 119033,
+   "text": "anna.sidorova656@example.org",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 119044,
+   "end": 119059,
+   "text": "8 900 810 49 81",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 119068,
+   "end": 119080,
+   "text": "256624164047",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 121328,
+   "end": 121350,
+   "text": "Сергей Петрович Иванов",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 121361,
+   "end": 121386,
+   "text": "k.belyaeva659@example.org",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 121397,
+   "end": 121415,
+   "text": "+7 (900) 838-62-44",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 121424,
+   "end": 121434,
+   "text": "2913434097",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 123288,
+   "end": 123310,
+   "text": "Сергей Петрович Иванов",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 123321,
+   "end": 123346,
+   "text": "d.tikhonov662@example.org",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 123357,
+   "end": 123375,
+   "text": "+7 (900) 585-89-56",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 123384,
+   "end": 123396,
+   "text": "141951405470",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 125610,
+   "end": 125630,
+   "text": "Иванов Иван Иванович",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 125641,
+   "end": 125664,
+   "text": "info665@corp.example.ru",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 125675,
+   "end": 125687,
+   "text": "+79006428413",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 125696,
+   "end": 125706,
+   "text": "8253336969",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 128142,
+   "end": 128157,
+   "text": "Ольга Михайлова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 128168,
+   "end": 128193,
+   "text": "k.belyaeva668@example.org",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 128204,
+   "end": 128219,
+   "text": "8 900 871 83 69",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 128228,
+   "end": 128240,
+   "text": "654112283698",
+   "detector": "rules"
+  }
+ ],
+ "json_oneline_tables.txt": [
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 7296,
+   "end": 7308,
+   "text": "+79005027608",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 14309,
+   "end": 14319,
+   "text": "6341775249",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 22313,
+   "end": 22326,
+   "text": "Анна Смирнова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_SNILS",
+   "start": 31287,
+   "end": 31301,
+   "text": "511-424-055 24",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 47294,
+   "end": 47314,
+   "text": "info704@mail.example",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 63297,
+   "end": 63312,
+   "text": "Мария Кузнецова",
+   "detector": "rules"
+  }
+ ],
+ "json_oneline_u_escapes.txt": [],
+ "ladder_prose_48k.txt": [
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 289,
+   "end": 312,
+   "text": "d.tikhonov0@example.com",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 539,
+   "end": 561,
+   "text": "Сергей Петрович Иванов",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 791,
+   "end": 809,
+   "text": "+7 (900) 652-34-17",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 1045,
+   "end": 1055,
+   "text": "3445427113",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 1294,
+   "end": 1307,
+   "text": "Сергей Иванов",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_SNILS",
+   "start": 1543,
+   "end": 1557,
+   "text": "298-059-819 40",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 1789,
+   "end": 1812,
+   "text": "d.tikhonov6@example.org",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 2044,
+   "end": 2056,
+   "text": "Елена Попова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 2294,
+   "end": 2306,
+   "text": "+79005893266",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 2545,
+   "end": 2555,
+   "text": "4092630494",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 2795,
+   "end": 2806,
+   "text": "Иван Петров",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_SNILS",
+   "start": 3043,
+   "end": 3057,
+   "text": "402-599-203 69",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 3286,
+   "end": 3314,
+   "text": "anna.sidorova12@mail.example",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 3544,
+   "end": 3557,
+   "text": "Сергей Иванов",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 3791,
+   "end": 3809,
+   "text": "+7 (900) 760-07-64",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 4045,
+   "end": 4055,
+   "text": "5169162765",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 4289,
+   "end": 4311,
+   "text": "Сергей Петрович Иванов",
+   "detector": "analyzer",
+   "ru2_detects_isolated": true
+  },
+  {
+   "entity_type": "RU_SNILS",
+   "start": 4543,
+   "end": 4557,
+   "text": "205-099-265 56",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 4786,
+   "end": 4814,
+   "text": "k.belyaeva18@corp.example.ru",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 5044,
+   "end": 5057,
+   "text": "Сергей Иванов",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 5293,
+   "end": 5308,
+   "text": "8 900 179 17 41",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 5545,
+   "end": 5555,
+   "text": "4844951232",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 5795,
+   "end": 5806,
+   "text": "Иван Петров",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_SNILS",
+   "start": 6043,
+   "end": 6057,
+   "text": "736-208-116 83",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 6288,
+   "end": 6313,
+   "text": "sales.dept24@mail.example",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 6542,
+   "end": 6558,
+   "text": "Алексей Васильев",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 6794,
+   "end": 6806,
+   "text": "+79007719835",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 7045,
+   "end": 7055,
+   "text": "3997056644",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 7290,
+   "end": 7310,
+   "text": "Иванов Иван Иванович",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_SNILS",
+   "start": 7543,
+   "end": 7557,
+   "text": "578-900-599 51",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 7788,
+   "end": 7812,
+   "text": "k.belyaeva30@example.com",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 8043,
+   "end": 8058,
+   "text": "Ольга Михайлова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 8291,
+   "end": 8309,
+   "text": "+7 (900) 641-56-37",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 8545,
+   "end": 8555,
+   "text": "1480018960",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 8794,
+   "end": 8807,
+   "text": "Анна Смирнова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_SNILS",
+   "start": 9043,
+   "end": 9057,
+   "text": "432-699-336 10",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 9287,
+   "end": 9314,
+   "text": "olga.kovaleva36@example.org",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 9545,
+   "end": 9556,
+   "text": "Иван Петров",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 9793,
+   "end": 9808,
+   "text": "8 900 400 52 11",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 10045,
+   "end": 10055,
+   "text": "7815925473",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 10294,
+   "end": 10307,
+   "text": "Анна Смирнова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_SNILS",
+   "start": 10543,
+   "end": 10557,
+   "text": "197-320-356 82",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 10786,
+   "end": 10814,
+   "text": "d.tikhonov42@corp.example.ru",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 11043,
+   "end": 11058,
+   "text": "Мария Кузнецова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 11291,
+   "end": 11309,
+   "text": "+7 (900) 354-02-04",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 11545,
+   "end": 11555,
+   "text": "4743107174",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 11795,
+   "end": 11806,
+   "text": "Иван Петров",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_SNILS",
+   "start": 12043,
+   "end": 12057,
+   "text": "832-603-972 00",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 12287,
+   "end": 12313,
+   "text": "i.petrov48@corp.example.ru",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 12545,
+   "end": 12556,
+   "text": "Иван Петров",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 12794,
+   "end": 12806,
+   "text": "+79002306093",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 13045,
+   "end": 13055,
+   "text": "8274820271",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 13290,
+   "end": 13310,
+   "text": "Иванов Иван Иванович",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_SNILS",
+   "start": 13543,
+   "end": 13557,
+   "text": "875-891-586 95",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 13788,
+   "end": 13812,
+   "text": "sales.dept54@example.org",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 14042,
+   "end": 14058,
+   "text": "Алексей Васильев",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 14293,
+   "end": 14308,
+   "text": "8 900 137 37 78",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 14545,
+   "end": 14555,
+   "text": "1039399163",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 14792,
+   "end": 14808,
+   "text": "Алексей Васильев",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_SNILS",
+   "start": 15043,
+   "end": 15057,
+   "text": "074-580-161 69",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 15288,
+   "end": 15313,
+   "text": "k.belyaeva60@mail.example",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 15544,
+   "end": 15557,
+   "text": "Анна Смирнова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 15792,
+   "end": 15809,
+   "text": "8 (900) 587-86-21",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 16045,
+   "end": 16055,
+   "text": "1101876484",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 16294,
+   "end": 16307,
+   "text": "Анна Смирнова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_SNILS",
+   "start": 16543,
+   "end": 16557,
+   "text": "112-778-440 59",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 16787,
+   "end": 16814,
+   "text": "olga.kovaleva66@example.com",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 17043,
+   "end": 17058,
+   "text": "Мария Кузнецова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 17292,
+   "end": 17309,
+   "text": "8 (900) 531-45-02",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 17545,
+   "end": 17555,
+   "text": "5266827528",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 17794,
+   "end": 17807,
+   "text": "Сергей Иванов",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_SNILS",
+   "start": 18043,
+   "end": 18057,
+   "text": "395-516-105 00",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 18287,
+   "end": 18313,
+   "text": "i.petrov72@corp.example.ru",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 18543,
+   "end": 18558,
+   "text": "Мария Кузнецова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 18794,
+   "end": 18806,
+   "text": "+79008364009",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 19045,
+   "end": 19055,
+   "text": "6083416201",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 19295,
+   "end": 19306,
+   "text": "Иван Петров",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_SNILS",
+   "start": 19543,
+   "end": 19557,
+   "text": "958-238-348 59",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 19787,
+   "end": 19814,
+   "text": "olga.kovaleva78@example.org",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 20040,
+   "end": 20060,
+   "text": "Иванов Иван Иванович",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 20294,
+   "end": 20306,
+   "text": "+79008046147",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 20545,
+   "end": 20555,
+   "text": "8868036230",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 20794,
+   "end": 20806,
+   "text": "Елена Попова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_SNILS",
+   "start": 21043,
+   "end": 21057,
+   "text": "336-863-661 12",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 21286,
+   "end": 21314,
+   "text": "k.belyaeva84@corp.example.ru",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 21538,
+   "end": 21562,
+   "text": "Андрей Борисович Ковалев",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 21794,
+   "end": 21806,
+   "text": "+79003301940",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 22045,
+   "end": 22055,
+   "text": "5041241942",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 22294,
+   "end": 22307,
+   "text": "Анна Смирнова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_SNILS",
+   "start": 22543,
+   "end": 22557,
+   "text": "358-711-015 80",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 22789,
+   "end": 22811,
+   "text": "i.petrov90@example.org",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 23044,
+   "end": 23057,
+   "text": "Сергей Иванов",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 23293,
+   "end": 23308,
+   "text": "8 900 339 49 85",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 23545,
+   "end": 23555,
+   "text": "2173605245",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 23793,
+   "end": 23808,
+   "text": "Ольга Михайлова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_SNILS",
+   "start": 24043,
+   "end": 24057,
+   "text": "857-226-694 45",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 24288,
+   "end": 24312,
+   "text": "sales.dept96@example.org",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 24543,
+   "end": 24558,
+   "text": "Мария Кузнецова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 24792,
+   "end": 24809,
+   "text": "8 (900) 243-84-19",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 25045,
+   "end": 25055,
+   "text": "3312612879",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 25288,
+   "end": 25312,
+   "text": "Андрей Борисович Ковалев",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_SNILS",
+   "start": 25543,
+   "end": 25557,
+   "text": "217-875-259 01",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 25788,
+   "end": 25813,
+   "text": "d.tikhonov102@example.com",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 26044,
+   "end": 26057,
+   "text": "Сергей Иванов",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 26292,
+   "end": 26309,
+   "text": "8 (900) 812-37-53",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 26545,
+   "end": 26555,
+   "text": "4042913923",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 26789,
+   "end": 26811,
+   "text": "Сергей Петрович Иванов",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_SNILS",
+   "start": 27043,
+   "end": 27057,
+   "text": "738-215-165 99",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 27286,
+   "end": 27314,
+   "text": "anna.sidorova108@example.org",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 27542,
+   "end": 27558,
+   "text": "Алексей Васильев",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 27794,
+   "end": 27806,
+   "text": "+79004851851",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 28045,
+   "end": 28055,
+   "text": "6151225857",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 28290,
+   "end": 28310,
+   "text": "Иванов Иван Иванович",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_SNILS",
+   "start": 28543,
+   "end": 28557,
+   "text": "791-622-526 19",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 28790,
+   "end": 28810,
+   "text": "info114@mail.example",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 29039,
+   "end": 29061,
+   "text": "Сергей Петрович Иванов",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 29293,
+   "end": 29308,
+   "text": "8 900 511 40 01",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 29545,
+   "end": 29555,
+   "text": "8989637299",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 29792,
+   "end": 29808,
+   "text": "Алексей Васильев",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_SNILS",
+   "start": 30043,
+   "end": 30057,
+   "text": "018-429-889 82",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 30288,
+   "end": 30313,
+   "text": "d.tikhonov120@example.org",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 30540,
+   "end": 30560,
+   "text": "Иванов Иван Иванович",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 30794,
+   "end": 30806,
+   "text": "+79002230020",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 31045,
+   "end": 31055,
+   "text": "3974701908",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 31288,
+   "end": 31312,
+   "text": "Андрей Борисович Ковалев",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_SNILS",
+   "start": 31543,
+   "end": 31557,
+   "text": "450-948-289 11",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 31787,
+   "end": 31813,
+   "text": "d.tikhonov126@mail.example",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 32043,
+   "end": 32058,
+   "text": "Ольга Михайлова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 32291,
+   "end": 32309,
+   "text": "+7 (900) 580-23-13",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 32545,
+   "end": 32555,
+   "text": "2427136455",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 32793,
+   "end": 32808,
+   "text": "Ольга Михайлова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_SNILS",
+   "start": 33043,
+   "end": 33057,
+   "text": "814-392-059 97",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 33286,
+   "end": 33315,
+   "text": "sales.dept132@corp.example.ru",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 33544,
+   "end": 33557,
+   "text": "Сергей Иванов",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 33792,
+   "end": 33809,
+   "text": "8 (900) 195-44-67",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 34045,
+   "end": 34055,
+   "text": "9566044211",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 34290,
+   "end": 34310,
+   "text": "Иванов Иван Иванович",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_SNILS",
+   "start": 34543,
+   "end": 34557,
+   "text": "505-165-109 47",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 34788,
+   "end": 34813,
+   "text": "d.tikhonov138@example.com",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 35043,
+   "end": 35058,
+   "text": "Дмитрий Соколов",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 35292,
+   "end": 35309,
+   "text": "8 (900) 677-09-32",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 35545,
+   "end": 35555,
+   "text": "2862255731",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 35790,
+   "end": 35810,
+   "text": "Иванов Иван Иванович",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_SNILS",
+   "start": 36043,
+   "end": 36057,
+   "text": "709-974-488 65",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 36288,
+   "end": 36313,
+   "text": "k.belyaeva144@example.com",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 36543,
+   "end": 36558,
+   "text": "Ольга Михайлова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 36792,
+   "end": 36809,
+   "text": "8 (900) 780-40-84",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 37045,
+   "end": 37055,
+   "text": "8165060246",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 37289,
+   "end": 37311,
+   "text": "Сергей Петрович Иванов",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_SNILS",
+   "start": 37543,
+   "end": 37557,
+   "text": "021-329-373 12",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 37790,
+   "end": 37810,
+   "text": "info150@mail.example",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 38045,
+   "end": 38056,
+   "text": "Иван Петров",
+   "detector": "analyzer",
+   "ru2_detects_isolated": true
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 38291,
+   "end": 38309,
+   "text": "+7 (900) 448-61-35",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 38545,
+   "end": 38555,
+   "text": "1129363436",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 38792,
+   "end": 38808,
+   "text": "Алексей Васильев",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_SNILS",
+   "start": 39043,
+   "end": 39057,
+   "text": "019-159-469 70",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 39284,
+   "end": 39316,
+   "text": "olga.kovaleva156@corp.example.ru",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 39538,
+   "end": 39562,
+   "text": "Андрей Борисович Ковалев",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 39792,
+   "end": 39809,
+   "text": "8 (900) 219-23-58",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 40045,
+   "end": 40055,
+   "text": "5832411925",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 40294,
+   "end": 40307,
+   "text": "Анна Смирнова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_SNILS",
+   "start": 40543,
+   "end": 40557,
+   "text": "785-077-983 69",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 40789,
+   "end": 40812,
+   "text": "info162@corp.example.ru",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 41044,
+   "end": 41057,
+   "text": "Анна Смирнова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 41292,
+   "end": 41309,
+   "text": "8 (900) 463-37-36",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 41545,
+   "end": 41555,
+   "text": "9982229214",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 41794,
+   "end": 41807,
+   "text": "Сергей Иванов",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_SNILS",
+   "start": 42043,
+   "end": 42057,
+   "text": "594-016-006 79",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 42288,
+   "end": 42313,
+   "text": "sales.dept168@example.org",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 42545,
+   "end": 42556,
+   "text": "Иван Петров",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 42792,
+   "end": 42809,
+   "text": "8 (900) 283-63-19",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 43045,
+   "end": 43055,
+   "text": "2560926045",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 43289,
+   "end": 43311,
+   "text": "Сергей Петрович Иванов",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_SNILS",
+   "start": 43543,
+   "end": 43557,
+   "text": "243-988-201 02",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 43786,
+   "end": 43814,
+   "text": "anna.sidorova174@example.com",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 44044,
+   "end": 44056,
+   "text": "Елена Попова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 44292,
+   "end": 44309,
+   "text": "8 (900) 280-70-37",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 44545,
+   "end": 44555,
+   "text": "4785172224",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 44793,
+   "end": 44808,
+   "text": "Ольга Михайлова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_SNILS",
+   "start": 45043,
+   "end": 45057,
+   "text": "383-238-686 09",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 45286,
+   "end": 45315,
+   "text": "sales.dept180@corp.example.ru",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 45543,
+   "end": 45558,
+   "text": "Мария Кузнецова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 45791,
+   "end": 45809,
+   "text": "+7 (900) 725-60-68",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 46045,
+   "end": 46055,
+   "text": "5182149523",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 46294,
+   "end": 46307,
+   "text": "Анна Смирнова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_SNILS",
+   "start": 46543,
+   "end": 46557,
+   "text": "188-247-972 30",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 46789,
+   "end": 46812,
+   "text": "i.petrov186@example.org",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 47039,
+   "end": 47061,
+   "text": "Сергей Петрович Иванов",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 47293,
+   "end": 47308,
+   "text": "8 900 169 36 98",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 47545,
+   "end": 47555,
+   "text": "9551232614",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 47794,
+   "end": 47807,
+   "text": "Сергей Иванов",
+   "detector": "rules"
+  }
+ ],
+ "price_table_pipe_39k.txt": [
+  {
+   "entity_type": "PERSON",
+   "start": 4515,
+   "end": 4526,
+   "text": "Иван Петров",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 4529,
+   "end": 4547,
+   "text": "+7 (900) 535-26-94",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 4550,
+   "end": 4574,
+   "text": "d.tikhonov1@mail.example",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 9056,
+   "end": 9071,
+   "text": "Мария Кузнецова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 9074,
+   "end": 9092,
+   "text": "+7 (900) 361-08-75",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 9095,
+   "end": 9122,
+   "text": "d.tikhonov2@corp.example.ru",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 13494,
+   "end": 13506,
+   "text": "Елена Попова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 13509,
+   "end": 13527,
+   "text": "+7 (900) 711-20-02",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 13530,
+   "end": 13554,
+   "text": "k.belyaeva3@mail.example",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 17962,
+   "end": 17975,
+   "text": "Сергей Иванов",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 17978,
+   "end": 17996,
+   "text": "+7 (900) 231-73-71",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 17999,
+   "end": 18023,
+   "text": "sales.dept4@mail.example",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 22660,
+   "end": 22676,
+   "text": "Алексей Васильев",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 22679,
+   "end": 22697,
+   "text": "+7 (900) 398-03-02",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 22700,
+   "end": 22724,
+   "text": "k.belyaeva5@mail.example",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 27171,
+   "end": 27184,
+   "text": "Сергей Иванов",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 27187,
+   "end": 27205,
+   "text": "+7 (900) 839-97-83",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 27208,
+   "end": 27225,
+   "text": "info6@example.org",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 31780,
+   "end": 31796,
+   "text": "Алексей Васильев",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 31799,
+   "end": 31817,
+   "text": "+7 (900) 678-75-83",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 31820,
+   "end": 31838,
+   "text": "info7@mail.example",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 36255,
+   "end": 36268,
+   "text": "Анна Смирнова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 36271,
+   "end": 36289,
+   "text": "+7 (900) 106-41-36",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 36292,
+   "end": 36314,
+   "text": "i.petrov8@mail.example",
+   "detector": "rules"
+  }
+ ],
+ "seam_crlf_cut_30k.txt": [
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 7888,
+   "end": 7915,
+   "text": "anna.sidorova1@mail.example",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 7917,
+   "end": 7928,
+   "text": "Иван Петров",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 14746,
+   "end": 14773,
+   "text": "k.belyaeva2@corp.example.ru",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 14775,
+   "end": 14786,
+   "text": "Иван Петров",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 21663,
+   "end": 21686,
+   "text": "d.tikhonov3@example.org",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 21688,
+   "end": 21700,
+   "text": "Елена Попова",
+   "detector": "rules"
+  }
+ ],
+ "seam_hard_cut_blob_40k.txt": [
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 6971,
+   "end": 6998,
+   "text": "olga.kovaleva2@mail.example",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 7991,
+   "end": 8021,
+   "text": "olga.kovaleva1@corp.example.ru",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 14965,
+   "end": 14980,
+   "text": "Дмитрий Соколов",
+   "detector": "rules"
+  }
+ ],
+ "seam_json_u_escapes_28k.json": [
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 37234,
+   "end": 37258,
+   "decoded_start": 6969,
+   "decoded_end": 6993,
+   "text": "sales.dept1@mail.example",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 39852,
+   "end": 39869,
+   "decoded_start": 7482,
+   "decoded_end": 7499,
+   "text": "info2@example.org",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 42479,
+   "end": 42564,
+   "decoded_start": 7989,
+   "decoded_end": 8004,
+   "text": "Дмитрий Соколов",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 74391,
+   "end": 74417,
+   "decoded_start": 13941,
+   "decoded_end": 13967,
+   "text": "olga.kovaleva3@example.org",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 77018,
+   "end": 77042,
+   "decoded_start": 14453,
+   "decoded_end": 14477,
+   "text": "k.belyaeva4@mail.example",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 79571,
+   "end": 79589,
+   "decoded_start": 14956,
+   "decoded_end": 14974,
+   "text": "+7 (900) 148-44-67",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 111488,
+   "end": 111511,
+   "decoded_start": 20913,
+   "decoded_end": 20936,
+   "text": "k.belyaeva5@example.org",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 114130,
+   "end": 114156,
+   "decoded_start": 21425,
+   "decoded_end": 21451,
+   "text": "anna.sidorova6@example.com",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_SNILS",
+   "start": 116693,
+   "end": 116707,
+   "decoded_start": 21928,
+   "decoded_end": 21942,
+   "text": "767-743-102 37",
+   "detector": "rules"
+  }
+ ],
+ "seam_window_ends_56k.txt": [
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 6970,
+   "end": 6997,
+   "text": "olga.kovaleva1@mail.example",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 7482,
+   "end": 7499,
+   "text": "info2@example.org",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 7988,
+   "end": 8004,
+   "text": "Алексей Васильев",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 13935,
+   "end": 13961,
+   "text": "anna.sidorova3@example.com",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 14450,
+   "end": 14474,
+   "text": "k.belyaeva4@mail.example",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 14957,
+   "end": 14975,
+   "text": "+7 (900) 170-89-88",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 20908,
+   "end": 20932,
+   "text": "sales.dept5@mail.example",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 21420,
+   "end": 21441,
+   "text": "i.petrov6@example.com",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_SNILS",
+   "start": 21922,
+   "end": 21936,
+   "text": "802-448-873 01",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 27881,
+   "end": 27902,
+   "text": "i.petrov7@example.org",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 28393,
+   "end": 28417,
+   "text": "d.tikhonov8@mail.example",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 28900,
+   "end": 28911,
+   "text": "Иван Петров",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 34852,
+   "end": 34875,
+   "text": "sales.dept9@example.com",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 35363,
+   "end": 35386,
+   "text": "i.petrov10@mail.example",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 35868,
+   "end": 35886,
+   "text": "+7 (900) 790-51-57",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 41821,
+   "end": 41840,
+   "text": "info11@mail.example",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 42336,
+   "end": 42358,
+   "text": "i.petrov12@example.com",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_SNILS",
+   "start": 42839,
+   "end": 42853,
+   "text": "590-281-609 99",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 48788,
+   "end": 48816,
+   "text": "d.tikhonov13@corp.example.ru",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 49302,
+   "end": 49327,
+   "text": "d.tikhonov14@mail.example",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 49811,
+   "end": 49824,
+   "text": "Сергей Иванов",
+   "detector": "rules"
+  }
+ ],
+ "seam_wrapped_address_60k.txt": [
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 7470,
+   "end": 7493,
+   "text": "d.tikhonov1@example.org",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "LOCATION",
+   "start": 7973,
+   "end": 8012,
+   "text": "г. Заозёрск,\nул. Садовая, д. 96, кв. 55",
+   "detector": "analyzer",
+   "ru2_detects_isolated": false
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 14430,
+   "end": 14457,
+   "text": "sales.dept2@corp.example.ru",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "LOCATION",
+   "start": 14930,
+   "end": 14969,
+   "text": "г. Заозёрск,\nул. Озёрная, д. 49, кв. 26",
+   "detector": "analyzer",
+   "ru2_detects_isolated": false
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 21389,
+   "end": 21419,
+   "text": "olga.kovaleva3@corp.example.ru",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "LOCATION",
+   "start": 21890,
+   "end": 21928,
+   "text": "г. Заозёрск,\nул. Лесная, д. 77, кв. 36",
+   "detector": "analyzer",
+   "ru2_detects_isolated": false
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 28349,
+   "end": 28376,
+   "text": "anna.sidorova4@mail.example",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "LOCATION",
+   "start": 28845,
+   "end": 28888,
+   "text": "г. Северореченск,\nул. Лесная, д. 11, кв. 33",
+   "detector": "analyzer",
+   "ru2_detects_isolated": false
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 35306,
+   "end": 35329,
+   "text": "k.belyaeva5@example.com",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "LOCATION",
+   "start": 35808,
+   "end": 35847,
+   "text": "г. Лугоград,\nул. Садовая, д. 30, кв. 31",
+   "detector": "analyzer",
+   "ru2_detects_isolated": false
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 42267,
+   "end": 42294,
+   "text": "d.tikhonov6@corp.example.ru",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "LOCATION",
+   "start": 42767,
+   "end": 42805,
+   "text": "г. Лугоград,\nул. Озёрная, д. 37, кв. 6",
+   "detector": "analyzer",
+   "ru2_detects_isolated": false
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 49227,
+   "end": 49251,
+   "text": "sales.dept7@mail.example",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "LOCATION",
+   "start": 49722,
+   "end": 49767,
+   "text": "г. Северореченск,\nул. Парковая, д. 61, кв. 64",
+   "detector": "analyzer",
+   "ru2_detects_isolated": false
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 56189,
+   "end": 56216,
+   "text": "d.tikhonov8@corp.example.ru",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "LOCATION",
+   "start": 56684,
+   "end": 56727,
+   "text": "г. Северореченск,\nул. Лесная, д. 31, кв. 23",
+   "detector": "analyzer",
+   "ru2_detects_isolated": false
+  }
+ ],
+ "text_console_dump.txt": [],
+ "text_issue_card.txt": [
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 7632,
+   "end": 7647,
+   "text": "8 900 262 09 64",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 14549,
+   "end": 14559,
+   "text": "5422282779",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 22557,
+   "end": 22572,
+   "text": "Мария Кузнецова",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_SNILS",
+   "start": 30559,
+   "end": 30573,
+   "text": "767-766-721 80",
+   "detector": "rules"
+  }
+ ],
+ "text_user_long.txt": [
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 7249,
+   "end": 7266,
+   "text": "8 (900) 445-63-47",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 14265,
+   "end": 14275,
+   "text": "8294300665",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 22245,
+   "end": 22269,
+   "text": "Андрей Борисович Ковалев",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_SNILS",
+   "start": 39268,
+   "end": 39282,
+   "text": "743-351-113 70",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "EMAIL_ADDRESS",
+   "start": 79283,
+   "end": 79312,
+   "text": "anna.sidorova704@mail.example",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 99259,
+   "end": 99283,
+   "text": "Андрей Борисович Ковалев",
+   "detector": "rules"
+  }
+ ],
+ "text_user_message.txt": [],
+ "text_wrapped_document.txt": [
+  {
+   "entity_type": "RU_PHONE_NUMBER",
+   "start": 7647,
+   "end": 7664,
+   "text": "8 (900) 491-37-23",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_INN",
+   "start": 15629,
+   "end": 15639,
+   "text": "3705765822",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "PERSON",
+   "start": 23636,
+   "end": 23652,
+   "text": "Алексей Васильев",
+   "detector": "rules"
+  },
+  {
+   "entity_type": "RU_SNILS",
+   "start": 31637,
+   "end": 31651,
+   "text": "678-136-491 40",
+   "detector": "rules"
+  }
+ ]
+}
