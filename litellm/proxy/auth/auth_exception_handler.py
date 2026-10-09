@@ -156,6 +156,7 @@ class UserAPIKeyAuthExceptionHandler:
                 raise ProxyException(
                     message=e.message,
                     type=ProxyErrorTypes.budget_exceeded,
+                    provider_specific_fields=getattr(e, "provider_specific_fields", None),
                     param=None,
                     code=getattr(e, "status_code", status.HTTP_429_TOO_MANY_REQUESTS),
                 )

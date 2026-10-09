@@ -992,7 +992,9 @@ class BudgetExceededError(Exception):
         max_budget: float,
         message: Optional[str] = None,
         llm_provider: Optional[str] = None,
+        provider_specific_fields: Optional[dict[str, object]] = None,
     ):
+        self.provider_specific_fields = provider_specific_fields
         self.current_cost = current_cost
         self.max_budget = max_budget
         self.status_code = 429

@@ -4064,39 +4064,25 @@ async def _team_multi_budget_check(
     if team_object is None or not team_object.budget_limits:
         return
 
-    from litellm.proxy.proxy_server import (
-        _ensure_window_spend_counter_initialized,
-        get_current_spend,
-    )
-    from litellm.proxy.spend_tracking.budget_reservation import get_budget_window_start
+    from litellm.proxy.auth.team_budget import budget_failure_fields, rejected_budget_state, team_budget_readings
 
-    for window in team_object.budget_limits:
-        w: dict = window if isinstance(window, dict) else window.model_dump()
-        counter_key = f"spend:team:{team_object.team_id}:window:{w['budget_duration']}"
-        # A cold counter (Redis TTL, pod restart, manual reset) must be seeded from the
-        # spend logs of the running window: without this the check falls back to zero and
-        # the cap silently stops applying until the first write path seeds the counter.
-        window_start = get_budget_window_start(w)
-        if window_start is not None and team_object.team_id is not None:
-            await _ensure_window_spend_counter_initialized(
-                counter_key=counter_key,
-                entity_type="Team",
-                entity_id=team_object.team_id,
-                window_start=window_start,
-            )
-        window_spend = await get_current_spend(
-            counter_key=counter_key,
-            fallback_spend=0.0,
-        )
-        if math.isfinite(w["max_budget"]) and window_spend >= w["max_budget"]:
-            raise litellm.BudgetExceededError(
-                current_cost=window_spend,
-                max_budget=w["max_budget"],
-                message=(
-                    f"ExceededBudget: Team={team_object.team_id} over {w['budget_duration']} budget. "
-                    f"Spend=${window_spend:.4f}, Limit=${w['max_budget']:.2f}"
-                ),
-            )
+    readings = await team_budget_readings(team_object)
+    exceeded = next((reading for reading in readings if reading.exceeded), None)
+    if exceeded is None:
+        failed = next((reading.error for reading in readings if reading.error is not None), None)
+        if failed is not None:
+            raise failed
+        return
+    window = exceeded.window
+    raise litellm.BudgetExceededError(
+        current_cost=exceeded.spend,
+        max_budget=window.max_budget,
+        message=(
+            f"ExceededBudget: Team={team_object.team_id} over {window.budget_duration} budget. "
+            f"Spend=${exceeded.spend:.4f}, Limit=${window.max_budget:.2f}"
+        ),
+        provider_specific_fields=budget_failure_fields(team_object, rejected_budget_state(readings)),
+    )
 
 
 async def _team_soft_budget_check(
