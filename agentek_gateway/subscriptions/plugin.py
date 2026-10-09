@@ -19,9 +19,9 @@ from .credentials import CredentialStore, PrismaCredentialStore
 from .duties import LeaderDuties
 from .egress import EgressWatcher
 from .leader import LeaderLease
-from .memory import InMemoryPolicyRepo, InMemorySubscriptionRepo
 from .notify import RedisListener, RedisNotifier
 from .ports import PolicyRepo, SubscriptionRepo
+from .prisma_repos import PrismaPolicyRepo, PrismaSubscriptionRepo
 from .probes import ProbeDeps, ProbeLoop
 from .prometheus_telemetry import PrometheusTelemetry, TelemetryLoop
 from .providers.chatgpt import PROVIDER_ID, ChatGPTProvider
@@ -104,8 +104,8 @@ async def start_subscription_runtime() -> None:
         redis=redis_from_env(environ),
         sync_redis=sync_redis_from_env(environ),
         credentials=PrismaCredentialStore(host.credentials_table),
-        repo=InMemorySubscriptionRepo(),
-        policy=InMemoryPolicyRepo(),
+        repo=PrismaSubscriptionRepo(host.subscription_table),
+        policy=PrismaPolicyRepo(host.policy_table),
     )
     GLOBAL_SLOT.runtime = await build_proxy_runtime(
         host, environ, SystemClock(), connections

@@ -2,6 +2,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 
 from redis.asyncio import Redis
+from redis.exceptions import WatchError
 
 LEASE_TTL_S = 30
 
@@ -26,10 +27,13 @@ class LeaderLease:
         if await self._redis.set(self._key, self._holder, nx=True, ex=self._ttl_s):
             return True
         async with self._redis.pipeline(transaction=True) as pipe:
-            await pipe.watch(self._key)
-            if await pipe.get(self._key) != self._holder:
+            try:
+                await pipe.watch(self._key)
+                if await pipe.get(self._key) != self._holder:
+                    return False
+                pipe.multi()
+                pipe.expire(self._key, self._ttl_s)
+                await pipe.execute()
+            except WatchError:
                 return False
-            pipe.multi()
-            pipe.expire(self._key, self._ttl_s)
-            await pipe.execute()
         return True

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from redis import Redis as SyncRedis
 from redis.asyncio import Redis
+from redis.exceptions import WatchError
 
 from .credentials import auth_from_mapping, auth_to_mapping
 from .providers.chatgpt import ChatgptAuth
@@ -57,11 +58,14 @@ class TokenCoordinator:
     async def release(self, credential_name: str, token: str) -> None:
         key = self._keys.refresh_lock(credential_name)
         async with self._redis.pipeline(transaction=True) as pipe:
-            await pipe.watch(key)
-            if await pipe.get(key) == token:
-                pipe.multi()
-                pipe.delete(key)
-                await pipe.execute()
+            try:
+                await pipe.watch(key)
+                if await pipe.get(key) == token:
+                    pipe.multi()
+                    pipe.delete(key)
+                    await pipe.execute()
+            except WatchError:
+                return
 
     async def clear_latest(self, credential_name: str) -> None:
         await self._redis.delete(self._keys.latest_auth(credential_name))
@@ -107,11 +111,14 @@ class SyncTokenCoordinator:
     def release(self, credential_name: str, token: str) -> None:
         key = self._keys.refresh_lock(credential_name)
         with self._redis.pipeline(transaction=True) as pipe:
-            pipe.watch(key)
-            if pipe.get(key) == token:
-                pipe.multi()
-                pipe.delete(key)
-                pipe.execute()
+            try:
+                pipe.watch(key)
+                if pipe.get(key) == token:
+                    pipe.multi()
+                    pipe.delete(key)
+                    pipe.execute()
+            except WatchError:
+                return
 
     def save_latest(self, credential_name: str, latest: LatestAuth) -> None:
         self._redis.set(

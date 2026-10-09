@@ -5,6 +5,7 @@ from fastapi import APIRouter
 import litellm
 
 from .subscriptions.credentials import CredentialTable
+from .subscriptions.prisma_repos import PolicyTable, SubscriptionTable
 from .subscriptions.state_db import StateTable
 
 
@@ -44,3 +45,13 @@ class ProxyHost:
         from litellm.proxy import proxy_server
 
         return proxy_server.prisma_client.db.litellm_credentialstable  # type: ignore[union-attr,return-value]
+
+    def subscription_table(self) -> SubscriptionTable:
+        from litellm.proxy import proxy_server
+
+        return proxy_server.prisma_client.db.litellm_agenteksubscription  # type: ignore[union-attr,return-value]
+
+    def policy_table(self) -> PolicyTable:
+        from litellm.proxy import proxy_server
+
+        return proxy_server.prisma_client.db.litellm_agenteksubscriptionpolicy  # type: ignore[union-attr,return-value]
