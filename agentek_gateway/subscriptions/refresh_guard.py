@@ -39,9 +39,7 @@ class RefreshGuard:
             if newer is not None:
                 return newer
             tokens = refresh()
-            self._coordinator.save_latest(
-                credential_name, LatestAuth(_auth_of(tokens), persisted=False)
-            )
+            self._coordinator.save_latest(credential_name, LatestAuth(_auth_of(tokens)))
             self._coordinator.mark_refreshed(credential_name, RECENT_REFRESH_WINDOW_S)
             return tokens
         finally:

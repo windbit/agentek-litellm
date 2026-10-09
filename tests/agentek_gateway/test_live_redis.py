@@ -391,11 +391,17 @@ async def test_refresh_mark_and_sticky_binding_expire_in_real_time() -> None:
         store = store_on(redis, FakeClock())
         await store.mark_refreshed(CREDENTIAL, 1)
         await store.write_sticky("chat-1", "a", 1)
-        before = (await store.recently_refreshed(CREDENTIAL), await store.read_sticky("chat-1"))
+        before = (
+            await store.recently_refreshed(CREDENTIAL),
+            await store.read_sticky("chat-1"),
+        )
 
         await asyncio.sleep(1.3)
 
-        after = (await store.recently_refreshed(CREDENTIAL), await store.read_sticky("chat-1"))
+        after = (
+            await store.recently_refreshed(CREDENTIAL),
+            await store.read_sticky("chat-1"),
+        )
         assert (before, after) == ((True, "a"), (False, None))
 
 

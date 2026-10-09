@@ -131,7 +131,6 @@ class ProbeLoop:
             verbose_proxy_logger.exception(
                 "agentek_gateway probe of %s failed", subscription.name
             )
-            await self._record_failed_probe(subscription)
         now = deps.clock.now()
         record = await deps.store.read_state(subscription.id)
         state = effective_state(record, now) if record else SubscriptionState.ACTIVE
@@ -144,15 +143,6 @@ class ProbeLoop:
             else tuning.half_open_probe_interval_s
         )
         self._due[subscription.id] = now + interval
-
-    async def _record_failed_probe(self, subscription: Subscription) -> None:
-        try:
-            await self._deps.states.apply(subscription, ProbeFailed())
-        except Exception:  # noqa: BLE001
-            verbose_proxy_logger.exception(
-                "agentek_gateway could not record the failed probe of %s",
-                subscription.name,
-            )
 
     async def _probe(self, subscription: Subscription) -> None:
         deps = self._deps

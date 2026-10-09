@@ -21,16 +21,13 @@ LOCK_WAIT_S = 1.0
 
 @dataclass(frozen=True, slots=True)
 class LatestAuth:
-    """Newest token pair a refresh produced; persisted=False until it is written to the database."""
+    """Newest token pair a refresh produced that the database has not received yet."""
 
     auth: ChatgptAuth
-    persisted: bool
 
 
 def encode_latest(latest: LatestAuth) -> str:
-    return json.dumps(
-        {"auth": auth_to_mapping(latest.auth), "persisted": latest.persisted}
-    )
+    return json.dumps({"auth": auth_to_mapping(latest.auth)})
 
 
 def decode_latest(raw: str | None) -> LatestAuth | None:
@@ -38,7 +35,7 @@ def decode_latest(raw: str | None) -> LatestAuth | None:
         return None
     fields = json.loads(raw)
     auth = auth_from_mapping(fields.get("auth"))
-    return LatestAuth(auth, bool(fields.get("persisted"))) if auth else None
+    return LatestAuth(auth) if auth else None
 
 
 class TokenCoordinator:

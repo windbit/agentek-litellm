@@ -89,7 +89,7 @@ class TokenRefresher:
         """A pair a refresh produced but the database never received (crash, outage) is written first."""
         deps, name = self._deps, subscription.credential_name
         latest = await deps.coordinator.read_latest(name)
-        if latest is None or latest.persisted:
+        if latest is None:
             return stored
         if not same_tokens(latest.auth, stored.auth):
             await deps.credentials.write_auth_if_unchanged(name, stored, latest.auth)
@@ -104,7 +104,7 @@ class TokenRefresher:
         try:
             stored = await deps.credentials.read_auth(name)
             latest = await deps.coordinator.read_latest(name)
-            if stored is None or (latest and not latest.persisted):
+            if stored is None or latest:
                 return
             outcome = await asyncio.wait_for(
                 deps.providers[subscription.provider].refresh(
@@ -123,14 +123,10 @@ class TokenRefresher:
         match outcome:
             case RefreshedTokens() as tokens:
                 renewed = renewed_auth(stored.auth, tokens)
-                await deps.coordinator.save_latest(name, LatestAuth(renewed, False))
+                await deps.coordinator.save_latest(name, LatestAuth(renewed))
                 await deps.store.mark_refreshed(name, RECENT_REFRESH_WINDOW_S)
-                if await deps.credentials.write_auth_if_unchanged(
-                    name, stored, renewed
-                ):
-                    await deps.coordinator.save_latest(name, LatestAuth(renewed, True))
-                else:
-                    await deps.coordinator.clear_latest(name)
+                await deps.credentials.write_auth_if_unchanged(name, stored, renewed)
+                await deps.coordinator.clear_latest(name)
                 await deps.states.apply(subscription, RefreshSucceeded())
             case RefreshRejected(permanent=True):
                 await deps.states.apply(subscription, TokenRevoked())

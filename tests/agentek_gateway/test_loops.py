@@ -4,7 +4,6 @@ import asyncio
 import time
 
 import fakeredis
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -12,7 +11,6 @@ from litellm.proxy._types import LitellmUserRoles, UserAPIKeyAuth
 from litellm.proxy.auth.user_api_key_auth import user_api_key_auth
 from litellm.llms.chatgpt.responses.transformation import ChatGPTResponsesAPIConfig
 
-from agentek_gateway.subscriptions import prometheus_telemetry
 from agentek_gateway.api import build_api_router
 from agentek_gateway.subscriptions.credentials import InMemoryCredentialStore
 from agentek_gateway.subscriptions.memory import (
@@ -26,9 +24,10 @@ from agentek_gateway.subscriptions.prometheus_telemetry import (
 )
 from agentek_gateway.subscriptions.providers.observer import uninstall_error_observer
 from agentek_gateway.subscriptions.refresh_guard import uninstall_refresh_guard
+from agentek_gateway.subscriptions.model import Subscription
 from agentek_gateway.subscriptions.snapshot import SnapshotTiming
 
-from .conftest import FakeClock
+from .conftest import FakeClock, make_subscription
 from .plain import plain_runtime
 from .test_plugin import FakeHost
 
@@ -77,7 +76,7 @@ async def test_runtime_starts_every_background_loop() -> None:
     try:
         started = {
             task.get_coro().__qualname__  # type: ignore[union-attr]
-            for task in runtime.parts.tasks._running  # noqa: SLF001
+            for task in runtime.parts.tasks.running
         }
     finally:
         uninstall_error_observer(ChatGPTResponsesAPIConfig)
@@ -88,20 +87,36 @@ async def test_runtime_starts_every_background_loop() -> None:
     assert started == LOOP_COROUTINES
 
 
-async def test_snapshot_loop_keeps_running_after_one_failed_refresh() -> None:
-    plain = plain_runtime(
-        ["a", "b"], timing=SnapshotTiming(interval_s=FAST_INTERVAL_S, directory_ttl_s=0)
-    )
-    real_list = plain.repo.list_subscriptions
-    failures = {"left": 1}
+class FlakyOnceRepo(InMemorySubscriptionRepo):
+    def __init__(self, subscriptions: list[Subscription]) -> None:
+        super().__init__(subscriptions)
+        self.failures_left = 1
 
-    async def flaky_list():  # noqa: ANN202
-        if failures["left"]:
-            failures["left"] -= 1
+    async def list_subscriptions(self) -> list[Subscription]:
+        if self.failures_left:
+            self.failures_left -= 1
             raise ConnectionError("database blip")
-        return await real_list()
+        return await super().list_subscriptions()
 
-    plain.repo.list_subscriptions = flaky_list  # type: ignore[method-assign]
+
+class FlakyOncePublisher(TelemetryLoop):
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+        self.calls = 0
+
+    async def publish_once(self) -> None:
+        self.calls += 1
+        if self.calls == 1:
+            raise ConnectionError("redis blip")
+
+
+async def test_snapshot_loop_keeps_running_after_one_failed_refresh() -> None:
+    repo = FlakyOnceRepo([make_subscription("a"), make_subscription("b")])
+    plain = plain_runtime(
+        ["a", "b"],
+        timing=SnapshotTiming(interval_s=FAST_INTERVAL_S, directory_ttl_s=0),
+        repo=repo,
+    )
     snapshot = plain.runtime.parts.snapshot
     runner = asyncio.get_running_loop().create_task(snapshot.run())
     try:
@@ -112,35 +127,25 @@ async def test_snapshot_loop_keeps_running_after_one_failed_refresh() -> None:
     finally:
         runner.cancel()
 
-    assert (failures["left"], loaded) == (0, True)
+    assert (repo.failures_left, loaded) == (0, True)
 
 
-async def test_metrics_loop_keeps_running_after_one_failed_publish(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(prometheus_telemetry, "PUBLISH_INTERVAL_S", FAST_INTERVAL_S)
+async def test_metrics_loop_keeps_running_after_one_failed_publish() -> None:
     plain = plain_runtime(["a"])
-    loop = TelemetryLoop(
+    loop = FlakyOncePublisher(
         plain.runtime.parts.snapshot,
         plain.store,
         plain.runtime.parts.egress,
         PrometheusTelemetry(),
         plain.clock,
+        interval_s=FAST_INTERVAL_S,
     )
-    calls: list[int] = []
-
-    async def flaky_publish() -> None:
-        calls.append(len(calls))
-        if len(calls) == 1:
-            raise ConnectionError("redis blip")
-
-    loop.publish_once = flaky_publish  # type: ignore[method-assign]
     runner = asyncio.get_running_loop().create_task(loop.run())
     try:
         started = time.monotonic()
-        while len(calls) < 3 and time.monotonic() - started < 2:
+        while loop.calls < 3 and time.monotonic() - started < 2:
             await asyncio.sleep(FAST_INTERVAL_S)
     finally:
         runner.cancel()
 
-    assert len(calls) >= 3
+    assert loop.calls >= 3

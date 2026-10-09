@@ -95,7 +95,7 @@ def test_guard_publishes_the_new_pair_before_it_is_persisted(coordinator) -> Non
     expired_authenticator().get_access_token()
 
     latest = coordinator.read_latest(CREDENTIAL)
-    assert (latest.auth.refresh_token, latest.persisted) == ("rt-new1", False)  # type: ignore[union-attr]
+    assert latest.auth.refresh_token == "rt-new1"  # type: ignore[union-attr]
 
 
 def test_guard_marks_the_refresh_so_that_a_following_401_is_forgiven(coordinator) -> None:  # type: ignore[no-untyped-def]
@@ -111,9 +111,7 @@ def test_guard_marks_the_refresh_so_that_a_following_401_is_forgiven(coordinator
 def test_newer_pair_from_another_replica_is_used_without_calling_the_provider(coordinator) -> None:  # type: ignore[no-untyped-def]
     coordinator.save_latest(
         CREDENTIAL,
-        LatestAuth(
-            ChatgptAuth("at-peer", "rt-peer", id_token="id-peer"), persisted=True
-        ),
+        LatestAuth(ChatgptAuth("at-peer", "rt-peer", id_token="id-peer")),
     )
     install_refresh_guard(RefreshGuard(coordinator))
 
@@ -123,9 +121,7 @@ def test_newer_pair_from_another_replica_is_used_without_calling_the_provider(co
 
 
 def test_pair_equal_to_the_stale_one_is_not_treated_as_newer(coordinator) -> None:  # type: ignore[no-untyped-def]
-    coordinator.save_latest(
-        CREDENTIAL, LatestAuth(ChatgptAuth("at-old", "rt-old"), persisted=True)
-    )
+    coordinator.save_latest(CREDENTIAL, LatestAuth(ChatgptAuth("at-old", "rt-old")))
     install_refresh_guard(RefreshGuard(coordinator))
 
     expired_authenticator().get_access_token()
@@ -172,9 +168,7 @@ def test_waiting_for_a_lock_held_in_the_same_loop_ends_quickly(coordinator) -> N
 
 
 def test_pair_with_an_unchanged_refresh_token_is_used_when_it_was_just_refreshed(coordinator) -> None:  # type: ignore[no-untyped-def]
-    coordinator.save_latest(
-        CREDENTIAL, LatestAuth(ChatgptAuth("at-fresh", "rt-old"), persisted=False)
-    )
+    coordinator.save_latest(CREDENTIAL, LatestAuth(ChatgptAuth("at-fresh", "rt-old")))
     coordinator.mark_refreshed(CREDENTIAL, 60)
     install_refresh_guard(RefreshGuard(coordinator))
 

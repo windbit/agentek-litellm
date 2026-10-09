@@ -1,8 +1,15 @@
 import asyncio
 import time
 
-from agentek_gateway.subscriptions.model import SubscriptionState as S
+import pytest
 
+from agentek_gateway.subscriptions.memory import InMemorySubscriptionRepo
+from agentek_gateway.subscriptions.model import SubscriptionState as S
+from agentek_gateway.subscriptions.service import StateService
+from agentek_gateway.subscriptions.toggle import SubscriptionToggle
+
+from .conftest import make_subscription
+from .plain import plain_runtime
 from .stack import MODEL, Shared, Stack, account_of, running_stack
 
 PROPAGATION_BUDGET_S = 1.0
@@ -157,3 +164,31 @@ async def test_database_value_applies_once_redis_forgot_the_flag_and_the_directo
         await stack.refresh()
 
         assert visible_ids(stack) == ["b"]
+
+
+class RefusingRepo(InMemorySubscriptionRepo):
+    async def set_enabled(self, subscription_id: str, enabled: bool) -> None:
+        raise ConnectionError("database down")
+
+
+async def test_a_refused_database_write_leaves_no_flag_behind_to_outlive_a_flushall() -> (
+    None
+):
+    plain = plain_runtime(["a"])
+    subscription = make_subscription("a")
+    toggle = SubscriptionToggle(
+        plain.store,
+        RefusingRepo([subscription]),
+        StateService(plain.store, plain.clock, plain.runtime.parts.config),
+    )
+
+    with pytest.raises(ConnectionError):
+        await toggle.set_enabled(subscription, False)
+
+    assert (
+        await plain.store.read_enabled_flags(),
+        await plain.store.read_state("a"),
+    ) == (
+        {},
+        None,
+    )
