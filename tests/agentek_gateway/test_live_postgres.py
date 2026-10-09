@@ -391,3 +391,51 @@ async def test_toggle_reaches_the_database_the_flag_and_the_state() -> None:
             "DISABLED",
             {"a": False},
         )
+
+
+class DatabaseDown(PrismaStateDb):
+    """Refuses writes while ``down`` is set, like a database that went away between two state changes."""
+
+    down = True
+
+    async def write_state(self, subscription_id, record):  # type: ignore[no-untyped-def]
+        if self.down:
+            raise ConnectionError("database down")
+        await super().write_state(subscription_id, record)
+
+
+@needs_redis
+async def test_reconcile_writes_the_state_the_database_missed_into_a_real_row() -> None:
+    async with live_db() as db, live_redis() as redis:
+        await add_subscription(db, "a")
+        clock = FakeClock(start=datetime.now(timezone.utc).timestamp())
+        state_db = DatabaseDown(lambda: db.litellm_agenteksubscriptionstate)
+        store = RedisStateStore(redis, state_db, clock, Keys("live:"))
+        await store.compare_and_set_state("a", None, record(S.BANNED, 1))
+        rows_while_down = await db.litellm_agenteksubscriptionstate.count()
+        state_db.down = False
+
+        await store.reconcile(["a"])
+
+        row = await db.litellm_agenteksubscriptionstate.find_unique(
+            where={"subscription_id": "a"}
+        )
+        assert (rows_while_down, row.state if row else None) == (0, "BANNED")
+
+
+@needs_redis
+async def test_reconcile_restores_a_durable_state_from_the_database_after_flushall() -> (
+    None
+):
+    async with live_db() as db, live_redis() as redis:
+        await add_subscription(db, "a")
+        clock = FakeClock(start=datetime.now(timezone.utc).timestamp())
+        state_db = DatabaseDown(lambda: db.litellm_agenteksubscriptionstate)
+        state_db.down = False
+        store = RedisStateStore(redis, state_db, clock, Keys("live:"))
+        await store.compare_and_set_state("a", None, record(S.BROKEN, 1))
+        await redis.flushall()
+
+        await store.reconcile(["a"])
+
+        assert (await redis.get(Keys("live:").state("a"))) is not None
