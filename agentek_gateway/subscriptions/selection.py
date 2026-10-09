@@ -27,6 +27,7 @@ class Snapshot:
     policy: Policy
     unsupported: frozenset[tuple[SubscriptionId, str]]
     subscription_models: frozenset[str]
+    closed: bool = False
     by_credential: Mapping[str, SubscriptionId] = field(init=False)
 
     def __post_init__(self) -> None:
@@ -72,7 +73,7 @@ def candidate_of(deployment: Mapping[str, object], snapshot: Snapshot) -> Candid
         if isinstance(model_info, Mapping) and model_info.get("id")
         else ""
     )
-    subscription_id = _subscription_of(deployment_id, params, snapshot)
+    subscription_id = subscription_of(deployment_id, params, snapshot)
     return Candidate(deployment_id, subscription_id)
 
 
@@ -126,7 +127,7 @@ def select(
     )
 
 
-def _subscription_of(
+def subscription_of(
     deployment_id: str, params: object, snapshot: Snapshot
 ) -> SubscriptionId | None:
     if deployment_id.startswith(DEPLOYMENT_ID_PREFIX):
@@ -185,7 +186,7 @@ def _is_working(
     if subscription_id is None:
         return False
     subscription = snapshot.subscriptions.get(subscription_id)
-    if subscription is None or not subscription.enabled:
+    if snapshot.closed or subscription is None or not subscription.enabled:
         return False
     record = snapshot.states.get(subscription_id)
     if record is None:

@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from .clock import Clock
@@ -22,10 +23,17 @@ class Applied:
 
 
 class StateService:
-    def __init__(self, store: StateStore, clock: Clock, config: GatewayConfig) -> None:
+    def __init__(
+        self,
+        store: StateStore,
+        clock: Clock,
+        config: GatewayConfig,
+        on_changed: Callable[[], None] | None = None,
+    ) -> None:
         self._store = store
         self._clock = clock
         self._config = config
+        self._on_changed = on_changed
 
     async def apply(self, subscription: Subscription, event: Event) -> Applied:
         tuning = self._config.tuning_for(subscription.provider)
@@ -40,6 +48,8 @@ class StateService:
             if await self._store.compare_and_set_state(
                 subscription.id, stored.version if stored else None, result.record
             ):
+                if self._on_changed:
+                    self._on_changed()
                 return Applied(result.record, changed=True, notes=result.notes)
         raise StateConflictError(
             f"state of {subscription.id} kept changing during {MAX_CAS_ATTEMPTS} attempts"

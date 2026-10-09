@@ -25,7 +25,11 @@ class NoAvailableSubscriptionsError(litellm.NotFoundError):
         self.message = text
         self.status_code = NO_CAPACITY_STATUS
         self.headers = {RETRY_AFTER_HEADER: str(retry_after_s)}
-        setattr(self, INTERNAL_ATTRIBUTE, True)
+        mark_internal(self)
+
+
+def mark_internal(error: BaseException) -> None:
+    setattr(error, INTERNAL_ATTRIBUTE, True)
 
 
 def is_internal_error(error: BaseException) -> bool:

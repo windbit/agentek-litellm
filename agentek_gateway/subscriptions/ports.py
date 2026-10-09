@@ -60,3 +60,33 @@ class StateStore(Protocol):
     ) -> None: ...
 
     async def read_all_usage(self) -> Mapping[SubscriptionId, UsageRecord]: ...
+
+
+class SlotStore(Protocol):
+    async def reserve(
+        self,
+        subscription_id: SubscriptionId,
+        token: str,
+        limit: int | None,
+        ttl_s: float,
+    ) -> bool: ...
+
+    async def release(self, subscription_id: SubscriptionId, token: str) -> bool: ...
+
+    async def in_flight(
+        self, subscription_ids: Sequence[SubscriptionId]
+    ) -> Mapping[SubscriptionId, int]: ...
+
+
+class StateDb(Protocol):
+    async def read_state(
+        self, subscription_id: SubscriptionId
+    ) -> StateRecord | None: ...
+
+    async def read_all_states(self) -> Mapping[SubscriptionId, StateRecord]: ...
+
+    async def write_state(
+        self, subscription_id: SubscriptionId, record: StateRecord
+    ) -> None: ...
+
+    async def delete_state(self, subscription_id: SubscriptionId) -> None: ...
