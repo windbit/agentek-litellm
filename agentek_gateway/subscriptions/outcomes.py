@@ -27,6 +27,8 @@ class OutcomeTracker:
         """Sink of the provider error observer; sync because get_error_class is sync."""
         context = failure.context
         key = (context.request_id, context.deployment_id)
+        if self._parts.registry.was_handled(key):
+            return
         self._parts.registry.mark_handled(key)
         self._parts.registry.remember_upstream(
             context.request_id, UpstreamReply(failure.status, dict(failure.headers))

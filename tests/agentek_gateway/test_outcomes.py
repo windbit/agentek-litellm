@@ -1,6 +1,6 @@
 from agentek_gateway.subscriptions.errors import NoAvailableSubscriptionsError
 from agentek_gateway.subscriptions.model import SubscriptionState as S
-from agentek_gateway.subscriptions.providers.base import LimitReached
+from agentek_gateway.subscriptions.providers.base import LimitReached, Unclassified
 from agentek_gateway.subscriptions.events import LimitWindow
 from agentek_gateway.subscriptions.providers.observer import (
     AttemptContext,
@@ -105,3 +105,19 @@ async def test_limit_error_after_the_first_chunk_blocks_the_subscription() -> No
 
         record = await stack.store.read_state("a")
         assert record is not None and record.state is S.RATE_LIMITED
+
+
+async def test_provider_reporting_the_same_reply_twice_is_counted_once() -> None:
+    async with running_stack(["a"]) as stack:
+        await begin_attempt(stack)
+        context = AttemptContext("r1", 1, "a", f"sub:a:{MODEL}", 0)
+        failure = ObservedFailure(
+            context, 503, {}, "", Unclassified(immediate=False, recognized=True)
+        )
+
+        stack.runtime.outcomes.on_observed(failure)
+        stack.runtime.outcomes.on_observed(failure)
+        await stack.settle()
+
+        counts = await stack.store.unclassified_counts(["a"], 120.0)
+        assert dict(counts) == {"a": 1}
