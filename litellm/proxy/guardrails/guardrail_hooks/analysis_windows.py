@@ -10,6 +10,7 @@
 """
 
 import asyncio
+import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TypeVar
@@ -21,9 +22,17 @@ OVERLAP = 1024
 MAX_WINDOWS = 128
 SNAP_BACK = 256
 
-SENTENCE_END = frozenset(".!?…。！？")
-STRUCTURAL = frozenset(',;:"}])/&=')
 LINE_BREAKS = ("\n\n", "\n")
+SENTENCE_END = ".!?…。！？"
+STRUCTURAL = ',;:"}])/&='
+
+# `.*` жадный, поэтому match находит последнее вхождение за один проход в C, без цикла по символам.
+_NOT_CRLF_SPACE = r"(?!\r\n)\s"
+_AFTER_SENTENCE = re.compile(
+    rf".*[{re.escape(SENTENCE_END)}]{_NOT_CRLF_SPACE}", re.DOTALL
+)
+_AFTER_SPACE = re.compile(rf".*{_NOT_CRLF_SPACE}", re.DOTALL)
+_AFTER_STRUCTURAL = re.compile(rf".*[{re.escape(STRUCTURAL)}]", re.DOTALL)
 
 T = TypeVar("T")
 
@@ -194,22 +203,21 @@ def _splits_crlf(text: str, cut: int) -> bool:
 
 def _cut_before(text: str, lo: int, hi: int) -> int:
     """Позиция разреза в `(lo, hi]` — сразу после разделителя самого высокого уровня."""
+    if _splits_crlf(text, hi):
+        hi -= 1
     for line_break in LINE_BREAKS:
         found = text.rfind(line_break, lo, hi)
         if found >= 0:
             return found + len(line_break)
-    after_space = after_structural = 0
-    for cut in range(hi, lo, -1):
-        if _splits_crlf(text, cut):
-            continue
-        previous = text[cut - 1]
-        if previous.isspace():
-            if text[cut - 2] in SENTENCE_END:
-                return cut
-            after_space = after_space or cut
-        elif previous in STRUCTURAL:
-            after_structural = after_structural or cut
-    return after_space or after_structural or (hi - 1 if _splits_crlf(text, hi) else hi)
+    for pattern, first in (
+        (_AFTER_SENTENCE, lo - 1),
+        (_AFTER_SPACE, lo),
+        (_AFTER_STRUCTURAL, lo),
+    ):
+        match = pattern.match(text, first, hi)
+        if match:
+            return match.end()
+    return hi
 
 
 def _snap_start(text: str, target: int, floor: int) -> int:
