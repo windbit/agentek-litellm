@@ -13,7 +13,6 @@
 import asyncio
 import functools
 import hashlib
-from collections import OrderedDict
 from dataclasses import dataclass, field
 import os
 from typing import (
@@ -30,6 +29,14 @@ from typing import (
 
 from litellm._logging import verbose_logger
 from litellm.constants import LOGGING_WORKER_MAX_TIME_PER_COROUTINE
+from litellm.proxy.guardrails.guardrail_hooks.analysis_windows import (
+    InvalidWindowResponse,
+    OversizeError,
+    SpanLRU,
+    merge_windows,
+    plan_windows,
+    run_windows,
+)
 from litellm.proxy.guardrails.guardrail_hooks.pii_rules import (
     PiiRuleEngine,
     RulebookError,
@@ -80,8 +87,12 @@ MAX_TEXT_CHARS = _env_number("LITELLM_TELEMETRY_MAX_TEXT_CHARS", 200_000, int)
 # Колбэк получает всю переписку на каждом ходу: без кэша старые сообщения уходят
 # в анализатор заново столько раз, сколько было ходов.
 SPAN_CACHE_SIZE = _env_number("LITELLM_TELEMETRY_SPAN_CACHE", 5000, int)
+SPAN_CACHE_MAX_SPANS = 200_000
 MAX_INFLIGHT_SPANS = _env_number("LITELLM_TELEMETRY_MAX_INFLIGHT_SPANS", 32, int)
 MAX_INFLIGHT_CHARS = _env_number("LITELLM_TELEMETRY_MAX_INFLIGHT_CHARS", 16_000_000, int)
+# Выделенный анализатор телеметрии держит три воркера: больше окон одного спана ему не нужно,
+# а остальной бюджет процесса остаётся другим спанам.
+WINDOWS_PER_SPAN_CONCURRENCY = 3
 # Дедлайн спана обязан истекать раньше таймаута LoggingWorker: иначе спан снимает внешняя
 # отмена, и дроп не попадает в счётчик со своей причиной.
 MASK_DEADLINE_SECONDS = min(
@@ -208,7 +219,7 @@ class TelemetryMasker:
         )
         self._engine = rule_engine
         self._analyze_request_fn = analyze_request
-        self._span_cache: "OrderedDict[str, List[Dict[str, Any]]]" = OrderedDict()
+        self._span_cache = SpanLRU(SPAN_CACHE_SIZE, SPAN_CACHE_MAX_SPANS)
         self._broken = False
         if self.rulebook_path and self._engine is None:
             try:
@@ -349,6 +360,32 @@ class TelemetryMasker:
         return self._replace(text, spans)
 
     async def _analyze(self, text: str) -> List[Dict[str, Any]]:
+        try:
+            windows = plan_windows(text)
+        except OversizeError as err:
+            raise TelemetryTextTooLarge(
+                f"text length {len(text)} needs too many analysis windows"
+            ) from err
+        if len(windows) == 1:
+            return await self._analyze_window(text)
+        per_window = await run_windows(
+            windows,
+            lambda window: self._analyze_window(text[window.start : window.end]),
+            gate=asyncio.Semaphore(
+                min(WINDOWS_PER_SPAN_CONCURRENCY, ANALYZE_MAX_CONCURRENCY)
+            ),
+            timeout=None,
+        )
+        try:
+            return merge_windows(windows, per_window)
+        except InvalidWindowResponse as err:
+            raise TelemetryMaskingUnavailable(
+                "analyzer returned an invalid span"
+            ) from err
+
+    async def _analyze_window(self, text: str) -> List[Dict[str, Any]]:
+        if not text.strip():
+            return []
         # Колбэк логирования litellm оборачивает маскировку в свой wait_for и отменяет её
         # на полуслове, когда analyzer медленный. Если отмена прилетает во время чтения
         # ответа, aiohttp не успевает подчистить протокол соединения — ResponseHandler и
@@ -360,8 +397,7 @@ class TelemetryMasker:
         key = self._span_cache_key(text)
         cached = self._span_cache.get(key)
         if cached is not None:
-            self._span_cache.move_to_end(key)
-            return list(cached)
+            return cached
         budget = _loop_budget()
         exchange = budget.pending.get(key)
         if exchange is None:
@@ -372,7 +408,7 @@ class TelemetryMasker:
             if cached is not None or exchange is not None:
                 budget.sem.release()
                 if cached is not None:
-                    return list(cached)
+                    return cached
             else:
                 exchange = asyncio.ensure_future(request(text))
                 budget.pending[key] = exchange
@@ -395,9 +431,7 @@ class TelemetryMasker:
         _publish_budget(budget)
         if exchange.cancelled() or exchange.exception() is not None:
             return
-        self._span_cache[key] = list(exchange.result())
-        while len(self._span_cache) > SPAN_CACHE_SIZE:
-            self._span_cache.popitem(last=False)
+        self._span_cache.put(key, exchange.result())
 
     def _span_cache_key(self, text: str) -> str:
         # Язык и состав сущностей — часть ключа: с другим набором тот же текст разбирается иначе.
