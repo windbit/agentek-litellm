@@ -10,6 +10,7 @@ from litellm._logging import verbose_proxy_logger
 from .clock import Clock
 from .model import (
     DURABLE_STATES,
+    EgressInfo,
     Limits,
     Route,
     StateRecord,
@@ -241,6 +242,26 @@ class RedisStateStore:
 
     async def recently_refreshed(self, credential_name: str) -> bool:
         return bool(await self._redis.exists(self._keys.refreshed(credential_name)))
+
+    async def mark_probed(self, provider: str, at: float) -> None:
+        await self._redis.hset(self._keys.probed, provider, str(at))
+
+    async def read_probe_times(self) -> Mapping[str, float]:
+        raw = await self._redis.hgetall(self._keys.probed)
+        return {provider: float(value) for provider, value in raw.items()}
+
+    async def write_egress(self, route: Route, info: EgressInfo) -> None:
+        payload = json.dumps(
+            {"ip": info.ip, "colo": info.colo, "observed_at": info.observed_at}
+        )
+        await self._redis.hset(self._keys.egress, route_member(route), payload)
+
+    async def read_egress(self) -> Mapping[Route, EgressInfo]:
+        raw = await self._redis.hgetall(self._keys.egress)
+        return {
+            route_from_member(member): EgressInfo(**json.loads(payload))
+            for member, payload in raw.items()
+        }
 
     async def _redis_states(self) -> dict[SubscriptionId, StateRecord]:
         keys = [

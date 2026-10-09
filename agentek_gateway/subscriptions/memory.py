@@ -2,7 +2,14 @@ from collections.abc import Mapping, Sequence
 from dataclasses import replace
 
 from .clock import Clock
-from .model import Route, StateRecord, Subscription, SubscriptionId, UsageRecord
+from .model import (
+    EgressInfo,
+    Route,
+    StateRecord,
+    Subscription,
+    SubscriptionId,
+    UsageRecord,
+)
 from .policy import Policy
 
 
@@ -47,6 +54,8 @@ class InMemoryStateStore:
         self._usage: dict[SubscriptionId, UsageRecord] = {}
         self._flags: dict[SubscriptionId, bool] = {}
         self._refreshed: dict[str, float] = {}
+        self._probed: dict[str, float] = {}
+        self._egress: dict[Route, EgressInfo] = {}
 
     async def read_state(self, subscription_id: SubscriptionId) -> StateRecord | None:
         return self._states.get(subscription_id)
@@ -154,3 +163,15 @@ class InMemoryStateStore:
 
     async def recently_refreshed(self, credential_name: str) -> bool:
         return self._refreshed.get(credential_name, 0.0) > self._clock.now()
+
+    async def mark_probed(self, provider: str, at: float) -> None:
+        self._probed[provider] = at
+
+    async def read_probe_times(self) -> Mapping[str, float]:
+        return dict(self._probed)
+
+    async def write_egress(self, route: Route, info: EgressInfo) -> None:
+        self._egress[route] = info
+
+    async def read_egress(self) -> Mapping[Route, EgressInfo]:
+        return dict(self._egress)

@@ -3,12 +3,14 @@ import asyncio
 from litellm._logging import verbose_proxy_logger
 
 from .clock import Clock
+from .egress import EgressWatcher
 from .leader import LeaderLease
 from .probes import ProbeLoop
 from .refresher import TokenRefresher
 
 DUTY_TICK_S = 5.0
 REFRESH_CYCLE_S = 60.0
+EGRESS_CYCLE_S = 10 * 60.0
 
 
 class LeaderDuties:
@@ -19,13 +21,16 @@ class LeaderDuties:
         lease: LeaderLease,
         probes: ProbeLoop,
         refresher: TokenRefresher,
+        egress: EgressWatcher,
         clock: Clock,
     ) -> None:
         self._lease = lease
         self._probes = probes
         self._refresher = refresher
+        self._egress = egress
         self._clock = clock
         self._last_refresh_at = float("-inf")
+        self._last_egress_at = float("-inf")
 
     async def run(self) -> None:
         while True:
@@ -42,6 +47,9 @@ class LeaderDuties:
             if now - self._last_refresh_at >= REFRESH_CYCLE_S:
                 self._last_refresh_at = now
                 await self._refresher.tick()
+            if now - self._last_egress_at >= EGRESS_CYCLE_S:
+                self._last_egress_at = now
+                await self._egress.tick()
         except Exception:  # noqa: BLE001
             verbose_proxy_logger.exception("agentek_gateway leader duties failed")
         return True

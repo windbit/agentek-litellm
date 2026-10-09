@@ -6,7 +6,7 @@ from .errors import is_internal_error, retry_after_for_upstream
 from .failures import FailedAttempt
 from .gateway import GatewayParts, call_id_of, deployment_id_of, request_key_of
 from .guard import guarded
-from .model import Subscription
+from .model import Route, Subscription
 from .providers.base import ErrorClass, SubscriptionProvider, Unclassified
 from .providers.observer import ObservedFailure
 from .registry import UpstreamReply
@@ -126,7 +126,12 @@ class OutcomeTracker:
         subscription = self._subscription(reservation)
         if reservation and subscription:
             attempt = FailedAttempt(
-                subscription, reservation, failure.status, failure.headers, failure.body
+                subscription,
+                reservation,
+                failure.status,
+                failure.headers,
+                failure.body,
+                self._egress_note(subscription),
             )
             await self._apply_attempt(attempt, failure.error)
 
@@ -162,7 +167,12 @@ class OutcomeTracker:
         reply: UpstreamReply,
     ) -> None:
         attempt = FailedAttempt(
-            subscription, reservation, reply.status, reply.headers, ""
+            subscription,
+            reservation,
+            reply.status,
+            reply.headers,
+            "",
+            self._egress_note(subscription),
         )
         await self._apply_attempt(attempt, error)
 
@@ -200,6 +210,11 @@ class OutcomeTracker:
         deployment_id = next(filter(None, map(deployment_id_of, sources)), None)
         found = self._parts.ledger.find(request_id, deployment_id)
         return request_id, found or self._parts.ledger.active(request_id)
+
+    def _egress_note(self, subscription: Subscription) -> str:
+        return self._parts.egress.note(
+            Route(subscription.provider, subscription.egress)
+        )
 
     def _classify(self, subscription: Subscription, error: object) -> ErrorClass:
         provider = self._provider(subscription)

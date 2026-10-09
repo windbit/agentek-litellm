@@ -1,11 +1,12 @@
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import litellm
 
 from .attempts import AttemptTracker, read_request_id, request_metadata
 from .clock import Clock
 from .config import GatewayConfig
+from .egress import EgressBook
 from .errors import NoAvailableSubscriptionsError, mark_internal
 from .failures import FailureRouter, SwitchReason
 from .filtering import Deployment, FilterContext, filter_deployments
@@ -40,6 +41,7 @@ class GatewayParts:
     registry: AttemptRegistry
     telemetry: Telemetry
     tasks: BackgroundTasks
+    egress: EgressBook = field(default_factory=EgressBook)
 
 
 class SubscriptionBusyError(litellm.APIError):

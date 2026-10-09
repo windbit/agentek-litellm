@@ -17,11 +17,13 @@ from .clock import Clock, SystemClock
 from .config import config_from_env
 from .credentials import CredentialStore, PrismaCredentialStore
 from .duties import LeaderDuties
+from .egress import EgressWatcher
 from .leader import LeaderLease
 from .memory import InMemoryPolicyRepo, InMemorySubscriptionRepo
 from .notify import RedisListener, RedisNotifier
 from .ports import PolicyRepo, SubscriptionRepo
 from .probes import ProbeDeps, ProbeLoop
+from .prometheus_telemetry import PrometheusTelemetry, TelemetryLoop
 from .providers.chatgpt import PROVIDER_ID, ChatGPTProvider
 from .providers.observer import install_error_observer
 from .providers.transport import HttpxProbeTransport
@@ -113,9 +115,9 @@ async def build_proxy_runtime(
         RedisNotifier(redis, keys.changes),
     )
     await store.load_durable()
-    provider = ChatGPTProvider(
-        HttpxProbeTransport(), config.tuning_for(PROVIDER_ID).probe_model
-    )
+    transport = HttpxProbeTransport()
+    provider = ChatGPTProvider(transport, config.tuning_for(PROVIDER_ID).probe_model)
+    telemetry = PrometheusTelemetry()
     repo = connections.repo
     runtime = build_runtime(
         RuntimeDeps(
@@ -127,41 +129,21 @@ async def build_proxy_runtime(
             policy=connections.policy,
             providers={PROVIDER_ID: provider},
             model_list=host.model_list,
+            telemetry=telemetry,
         )
     )
     await runtime.parts.snapshot.refresh()
-    duties = LeaderDuties(
-        LeaderLease(redis, keys.leader),
-        ProbeLoop(
-            ProbeDeps(
-                clock,
-                config,
-                repo,
-                connections.credentials,
-                store,
-                runtime.states,
-                {PROVIDER_ID: provider},
-            )
+    background = Background(
+        listener=RedisListener(
+            redis, keys.changes, runtime.parts.snapshot.request_refresh
         ),
-        TokenRefresher(
-            RefreshDeps(
-                clock,
-                repo,
-                connections.credentials,
-                TokenCoordinator(redis, keys),
-                store,
-                runtime.states,
-                {PROVIDER_ID: provider},
-            )
+        duties=_leader_duties(runtime, store, connections, keys, transport),
+        telemetry=TelemetryLoop(
+            runtime.parts.snapshot, store, runtime.parts.egress, telemetry, clock
         ),
-        clock,
+        store=store,
     )
-    _start_loops(
-        runtime,
-        store,
-        RedisListener(redis, keys.changes, runtime.parts.snapshot.request_refresh),
-        duties,
-    )
+    _start_loops(runtime, background)
     install_refresh_guard(
         RefreshGuard(SyncTokenCoordinator(connections.sync_redis, keys))
     )
@@ -175,17 +157,60 @@ async def build_proxy_runtime(
     return runtime
 
 
-def _start_loops(
+def _leader_duties(
     runtime: SubscriptionRuntime,
     store: RedisStateStore,
-    listener: RedisListener,
-    duties: LeaderDuties,
-) -> None:
+    connections: Connections,
+    keys: Keys,
+    transport: HttpxProbeTransport,
+) -> LeaderDuties:
+    parts = runtime.parts
+    providers = {PROVIDER_ID: parts.providers[PROVIDER_ID]}
+    repo, credentials = connections.repo, connections.credentials
+    return LeaderDuties(
+        LeaderLease(connections.redis, keys.leader),
+        ProbeLoop(
+            ProbeDeps(
+                parts.clock,
+                parts.config,
+                repo,
+                credentials,
+                store,
+                runtime.states,
+                providers,
+            )
+        ),
+        TokenRefresher(
+            RefreshDeps(
+                parts.clock,
+                repo,
+                credentials,
+                TokenCoordinator(connections.redis, keys),
+                store,
+                runtime.states,
+                providers,
+            )
+        ),
+        EgressWatcher(transport, store, repo, parts.clock),
+        parts.clock,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class Background:
+    listener: RedisListener
+    duties: LeaderDuties
+    telemetry: TelemetryLoop
+    store: RedisStateStore
+
+
+def _start_loops(runtime: SubscriptionRuntime, background: Background) -> None:
     for name, loop in (
         ("snapshot", runtime.parts.snapshot.run()),
-        ("change listener", listener.run()),
-        ("state reconcile", _reconcile_forever(store)),
-        ("leader duties", duties.run()),
+        ("change listener", background.listener.run()),
+        ("state reconcile", _reconcile_forever(background.store)),
+        ("leader duties", background.duties.run()),
+        ("metrics", background.telemetry.run()),
     ):
         verbose_proxy_logger.info("agentek_gateway starting %s loop", name)
         runtime.parts.tasks.spawn(loop)

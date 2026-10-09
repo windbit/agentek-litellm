@@ -87,6 +87,8 @@ class ProbeLoop:
                 continue
             if self._is_due(subscription, record, now):
                 await self._probe_safely(subscription)
+        for provider in {subscription.provider for subscription in subscriptions}:
+            await deps.store.mark_probed(provider, deps.clock.now())
 
     def _forget_recovered(
         self,

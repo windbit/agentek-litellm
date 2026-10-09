@@ -241,3 +241,12 @@ async def test_limits_seen_by_the_usage_check_count_when_the_probe_returns_none(
     await replica.probes.tick()
 
     assert await current(replica) == S.SOFT_LIMITED
+
+
+async def test_probe_pass_leaves_a_heartbeat_even_when_nothing_was_due() -> None:
+    upkeep, _ = build_upkeep(["a"])
+    replica = upkeep.replica()
+
+    await replica.probes.tick()
+
+    assert await replica.store.read_probe_times() == {"chatgpt": upkeep.clock.now()}

@@ -36,6 +36,14 @@ class Keys:
         return f"{self._prefix}changes"
 
     @property
+    def probed(self) -> str:
+        return f"{self._prefix}probed"
+
+    @property
+    def egress(self) -> str:
+        return f"{self._prefix}egress"
+
+    @property
     def leader(self) -> str:
         return f"{self._prefix}leader"
 

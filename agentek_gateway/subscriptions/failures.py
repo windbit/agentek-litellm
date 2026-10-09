@@ -47,6 +47,7 @@ class FailedAttempt:
     status: int
     headers: Headers
     body: str
+    egress_note: str = ""
 
 
 class FailureRouter:
@@ -100,6 +101,12 @@ class FailureRouter:
             case RequestRejected():
                 return None
             case Unclassified(immediate=immediate, recognized=recognized):
+                verbose_proxy_logger.warning(
+                    "agentek_gateway unclassified error subscription=%s status=%s %s",
+                    subscription.name,
+                    attempt.status,
+                    attempt.egress_note,
+                )
                 if not recognized:
                     verbose_proxy_logger.warning(
                         "agentek_gateway unrecognized provider response %s",

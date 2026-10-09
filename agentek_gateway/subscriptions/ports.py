@@ -1,7 +1,14 @@
 from collections.abc import Mapping, Sequence
 from typing import Protocol
 
-from .model import Route, StateRecord, Subscription, SubscriptionId, UsageRecord
+from .model import (
+    EgressInfo,
+    Route,
+    StateRecord,
+    Subscription,
+    SubscriptionId,
+    UsageRecord,
+)
 from .policy import Policy
 
 
@@ -72,6 +79,14 @@ class StateStore(Protocol):
     async def read_enabled_flags(self) -> Mapping[SubscriptionId, bool]: ...
 
     async def mark_refreshed(self, credential_name: str, window_s: float) -> None: ...
+
+    async def mark_probed(self, provider: str, at: float) -> None: ...
+
+    async def read_probe_times(self) -> Mapping[str, float]: ...
+
+    async def write_egress(self, route: Route, info: EgressInfo) -> None: ...
+
+    async def read_egress(self) -> Mapping[Route, EgressInfo]: ...
 
     async def recently_refreshed(self, credential_name: str) -> bool: ...
 
