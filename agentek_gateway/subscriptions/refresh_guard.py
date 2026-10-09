@@ -51,8 +51,7 @@ class RefreshGuard:
         latest = self._coordinator.read_latest(credential_name)
         if latest is None:
             return None
-        same_pair = latest.auth.refresh_token == stale_refresh_token
-        if same_pair and not self._coordinator.recently_refreshed(credential_name):
+        if latest.auth.refresh_token == stale_refresh_token:
             return None
         return {
             "access_token": latest.auth.access_token,

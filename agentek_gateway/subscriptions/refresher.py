@@ -91,9 +91,17 @@ class TokenRefresher:
         latest = await deps.coordinator.read_latest(name)
         if latest is None:
             return stored
-        if not same_tokens(latest.auth, stored.auth):
+        if latest.persisted:
+            if not same_tokens(latest.auth, stored.auth):
+                await deps.coordinator.clear_latest(name)
+            return stored
+        saved = same_tokens(latest.auth, stored.auth) or (
             await deps.credentials.write_auth_if_unchanged(name, stored, latest.auth)
-        await deps.coordinator.clear_latest(name)
+        )
+        if saved:
+            await deps.coordinator.save_latest(name, LatestAuth(latest.auth, True))
+        else:
+            await deps.coordinator.clear_latest(name)
         return await deps.credentials.read_auth(name) or stored
 
     async def refresh(self, subscription: Subscription) -> None:
@@ -104,7 +112,7 @@ class TokenRefresher:
         try:
             stored = await deps.credentials.read_auth(name)
             latest = await deps.coordinator.read_latest(name)
-            if stored is None or latest:
+            if stored is None or (latest and not latest.persisted):
                 return
             outcome = await asyncio.wait_for(
                 deps.providers[subscription.provider].refresh(
@@ -125,8 +133,12 @@ class TokenRefresher:
                 renewed = renewed_auth(stored.auth, tokens)
                 await deps.coordinator.save_latest(name, LatestAuth(renewed))
                 await deps.store.mark_refreshed(name, RECENT_REFRESH_WINDOW_S)
-                await deps.credentials.write_auth_if_unchanged(name, stored, renewed)
-                await deps.coordinator.clear_latest(name)
+                if await deps.credentials.write_auth_if_unchanged(
+                    name, stored, renewed
+                ):
+                    await deps.coordinator.save_latest(name, LatestAuth(renewed, True))
+                else:
+                    await deps.coordinator.clear_latest(name)
                 await deps.states.apply(subscription, RefreshSucceeded())
             case RefreshRejected(permanent=True):
                 await deps.states.apply(subscription, TokenRevoked())

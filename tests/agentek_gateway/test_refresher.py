@@ -1,5 +1,7 @@
 import asyncio
 
+import fakeredis
+
 import pytest
 
 from agentek_gateway.subscriptions.events import Unauthorized
@@ -9,11 +11,16 @@ from agentek_gateway.subscriptions.providers.base import (
     RefreshRejected,
 )
 from agentek_gateway.subscriptions.providers.chatgpt import ChatgptAuth
-from agentek_gateway.subscriptions.token_coordination import LatestAuth
+from agentek_gateway.subscriptions.refresh_guard import RefreshGuard
+from agentek_gateway.subscriptions.token_coordination import (
+    LatestAuth,
+    SyncTokenCoordinator,
+)
 
 from .upkeep import HOUR_S, build_upkeep, tokens
 
 CRED = "cred-a"
+SAVED_PAIR_TTL_S = 60
 
 
 async def state_of(replica, sub_id: str = "a"):  # type: ignore[no-untyped-def]
@@ -101,11 +108,12 @@ async def test_pair_saved_by_a_mid_request_refresh_is_written_to_the_database() 
 
     stored = await upkeep.credentials.read_auth(CRED)
     latest = await replica.coordinator.read_latest(CRED)
-    assert (stored.auth.refresh_token, latest, upkeep.provider.refresh_tokens) == (  # type: ignore[union-attr]
-        "rt-mid",
-        None,
-        [],
-    )
+    assert (
+        stored.auth.refresh_token,
+        latest.auth.refresh_token,  # type: ignore[union-attr]
+        latest.persisted,  # type: ignore[union-attr]
+        upkeep.provider.refresh_tokens,
+    ) == ("rt-mid", "rt-mid", True, [])
 
 
 async def test_pair_older_than_a_reauthorization_is_dropped_not_written_over_it() -> (
@@ -223,7 +231,7 @@ async def test_refresh_is_postponed_while_a_newer_pair_waits_to_be_saved() -> No
     assert upkeep.provider.refresh_tokens == []
 
 
-async def test_pair_written_to_the_database_leaves_nothing_in_the_shared_store() -> (
+async def test_pair_written_to_the_database_stays_briefly_for_replicas_holding_the_old_one() -> (
     None
 ):
     upkeep, _ = build_upkeep(["a"], expires_in_s=60)
@@ -231,12 +239,63 @@ async def test_pair_written_to_the_database_leaves_nothing_in_the_shared_store()
 
     await replica.refresher.tick()
 
+    latest = await replica.coordinator.read_latest(CRED)
+    ttl = await replica.redis.ttl(upkeep.keys.latest_auth(CRED))
+    assert (latest.auth.access_token, latest.persisted, 0 < ttl <= SAVED_PAIR_TTL_S) == (  # type: ignore[union-attr]
+        "at-new1",
+        True,
+        True,
+    )
+
+
+async def test_pair_the_database_has_not_accepted_is_kept_for_a_day() -> None:
+    upkeep, _ = build_upkeep(["a"], expires_in_s=60)
+    upkeep.credentials.failures_left = 1
+    replica = upkeep.replica()
+
+    await replica.refresher.tick()
+
+    ttl = await replica.redis.ttl(upkeep.keys.latest_auth(CRED))
+    assert ttl > HOUR_S
+
+
+async def test_replica_with_the_old_pair_gets_the_new_one_from_redis_not_from_the_provider() -> (
+    None
+):
+    upkeep, _ = build_upkeep(["a"], expires_in_s=60)
+    await upkeep.replica().refresher.tick()
+    guard_calls: list[str] = []
+    guard = RefreshGuard(
+        SyncTokenCoordinator(
+            fakeredis.FakeRedis(server=upkeep.server, decode_responses=True),
+            upkeep.keys,
+        )
+    )
+
+    def refresh_with_the_provider() -> dict[str, str]:
+        guard_calls.append("provider")
+        return {}
+
+    pair = guard(CRED, "rt-0", refresh_with_the_provider)
+
+    assert (pair["refresh_token"], guard_calls) == ("rt-new1", [])
+
+
+async def test_pair_saved_before_a_reauthorization_is_dropped_from_redis() -> None:
+    upkeep, _ = build_upkeep(["a"], expires_in_s=HOUR_S)
+    replica = upkeep.replica()
+    await replica.coordinator.save_latest(
+        CRED, LatestAuth(tokens(HOUR_S, upkeep.clock.now(), "saved"), True)
+    )
+    upkeep.credentials.put(CRED, tokens(HOUR_S, upkeep.clock.now(), "reauth"))
+
+    await replica.refresher.tick()
+
     stored = await upkeep.credentials.read_auth(CRED)
-    assert (
-        stored.auth.access_token,
-        await replica.coordinator.read_latest(CRED),
-        await replica.redis.exists(upkeep.keys.latest_auth(CRED)),
-    ) == ("at-new1", None, 0)
+    assert (stored.auth.refresh_token, await replica.coordinator.read_latest(CRED)) == (  # type: ignore[union-attr]
+        "rt-reauth",
+        None,
+    )
 
 
 async def test_pair_the_database_refused_stays_in_the_shared_store_for_the_next_pass() -> (

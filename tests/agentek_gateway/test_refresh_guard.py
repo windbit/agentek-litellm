@@ -165,13 +165,3 @@ def test_waiting_for_a_lock_held_in_the_same_loop_ends_quickly(coordinator) -> N
         return time.monotonic() - started
 
     assert asyncio.run(scenario()) < 3.0
-
-
-def test_pair_with_an_unchanged_refresh_token_is_used_when_it_was_just_refreshed(coordinator) -> None:  # type: ignore[no-untyped-def]
-    coordinator.save_latest(CREDENTIAL, LatestAuth(ChatgptAuth("at-fresh", "rt-old")))
-    coordinator.mark_refreshed(CREDENTIAL, 60)
-    install_refresh_guard(RefreshGuard(coordinator))
-
-    token = expired_authenticator().get_access_token()
-
-    assert (token, CountingAuthenticator.calls) == ("at-fresh", [])
