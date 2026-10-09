@@ -8,6 +8,10 @@ from .policy import Policy
 class SubscriptionRepo(Protocol):
     async def list_subscriptions(self) -> Sequence[Subscription]: ...
 
+    async def set_enabled(
+        self, subscription_id: SubscriptionId, enabled: bool
+    ) -> None: ...
+
 
 class PolicyRepo(Protocol):
     async def load_policy(self) -> Policy: ...
@@ -60,6 +64,12 @@ class StateStore(Protocol):
     ) -> None: ...
 
     async def read_all_usage(self) -> Mapping[SubscriptionId, UsageRecord]: ...
+
+    async def write_enabled_flag(
+        self, subscription_id: SubscriptionId, enabled: bool
+    ) -> None: ...
+
+    async def read_enabled_flags(self) -> Mapping[SubscriptionId, bool]: ...
 
 
 class SlotStore(Protocol):

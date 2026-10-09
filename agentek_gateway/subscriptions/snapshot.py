@@ -85,14 +85,21 @@ class SnapshotCache:
 
     async def refresh(self) -> Snapshot:
         sources = self._sources
-        subscriptions = await self._subscriptions()
-        ids = [subscription.id for subscription in subscriptions]
-        states, usage, unsupported, in_flight = await asyncio.gather(
+        directory = await self._subscriptions()
+        ids = [subscription.id for subscription in directory]
+        states, usage, unsupported, flags, in_flight = await asyncio.gather(
             sources.store.read_all_states(),
             sources.store.read_all_usage(),
             sources.store.unsupported_pairs(),
+            sources.store.read_enabled_flags(),
             sources.slots.in_flight(ids),
         )
+        subscriptions = [
+            replace(
+                subscription, enabled=flags.get(subscription.id, subscription.enabled)
+            )
+            for subscription in directory
+        ]
         policy = await sources.policy.load_policy()
         draft = Snapshot(
             subscriptions={sub.id: sub for sub in subscriptions},

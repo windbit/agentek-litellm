@@ -17,6 +17,7 @@ from .snapshot import ModelList, SnapshotCache, SnapshotSources, SnapshotTiming
 from .stickiness import StickyBook
 from .tasks import BackgroundTasks
 from .telemetry import NullTelemetry, Telemetry
+from .toggle import SubscriptionToggle
 
 LOCAL_STICKY_TTL_S = 60.0
 
@@ -40,6 +41,7 @@ class SubscriptionRuntime:
     parts: GatewayParts
     gateway: SubscriptionGateway
     outcomes: OutcomeTracker
+    toggle: SubscriptionToggle
 
     def request_key(self, request: dict[str, object]) -> str | None:
         return request_key_of(request)
@@ -81,6 +83,7 @@ def build_runtime(deps: RuntimeDeps) -> SubscriptionRuntime:
         parts=parts,
         gateway=SubscriptionGateway(parts),
         outcomes=OutcomeTracker(parts),
+        toggle=SubscriptionToggle(store, deps.repo, states),
     )
 
 

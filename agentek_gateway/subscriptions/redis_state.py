@@ -23,6 +23,8 @@ from .ports import StateDb
 from .redis_keys import Keys, route_from_member, route_member
 from .state_codec import decode_record, encode_record
 
+ENABLED = "1"
+DISABLED = "0"
 SCAN_COUNT = 500
 EXPIRY_GRACE_S = 60
 ACTIVE_RECORD_TTL_S = 24 * 3600
@@ -219,6 +221,18 @@ class RedisStateStore:
     async def read_all_usage(self) -> Mapping[SubscriptionId, UsageRecord]:
         raw = await self._redis.hgetall(self._keys.usage)
         return {sub_id: decode_usage(payload) for sub_id, payload in raw.items()}
+
+    async def write_enabled_flag(
+        self, subscription_id: SubscriptionId, enabled: bool
+    ) -> None:
+        await self._redis.hset(
+            self._keys.enabled, subscription_id, ENABLED if enabled else DISABLED
+        )
+        await self._notifier.publish()
+
+    async def read_enabled_flags(self) -> Mapping[SubscriptionId, bool]:
+        raw = await self._redis.hgetall(self._keys.enabled)
+        return {sub_id: value == ENABLED for sub_id, value in raw.items()}
 
     async def _redis_states(self) -> dict[SubscriptionId, StateRecord]:
         keys = [

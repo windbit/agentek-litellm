@@ -15,6 +15,12 @@ class BackgroundTasks:
         self._running.add(task)
         task.add_done_callback(self._finished)
 
+    async def cancel_all(self) -> None:
+        running = tuple(self._running)
+        for task in running:
+            task.cancel()
+        await asyncio.gather(*running, return_exceptions=True)
+
     async def drain(self) -> None:
         while self._running:
             await asyncio.gather(*tuple(self._running), return_exceptions=True)

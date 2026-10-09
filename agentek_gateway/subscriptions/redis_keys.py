@@ -24,6 +24,10 @@ class Keys:
         return f"{self._prefix}unsupported"
 
     @property
+    def enabled(self) -> str:
+        return f"{self._prefix}enabled"
+
+    @property
     def usage(self) -> str:
         return f"{self._prefix}usage"
 

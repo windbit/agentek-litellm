@@ -13,9 +13,13 @@ from litellm.llms.chatgpt.responses.transformation import ChatGPTResponsesAPICon
 
 from agentek_gateway.subscriptions.adapter import SubscriptionCallback
 from agentek_gateway.subscriptions.config import GatewayConfig
+from agentek_gateway.subscriptions.notify import RedisListener, RedisNotifier
+from agentek_gateway.subscriptions.redis_keys import Keys
+from agentek_gateway.subscriptions.redis_state import RedisStateStore
+from agentek_gateway.subscriptions.snapshot import SnapshotTiming
+from agentek_gateway.subscriptions.state_db import InMemoryStateDb
 from agentek_gateway.subscriptions.memory import (
     InMemoryPolicyRepo,
-    InMemoryStateStore,
     InMemorySubscriptionRepo,
 )
 from agentek_gateway.subscriptions.model import Subscription
@@ -84,6 +88,15 @@ def deployment_for(
         },
         "model_info": {"id": f"sub:{sub_id}:{model}", "mode": mode},
     }
+
+
+@dataclass
+class Shared:
+    """What replicas of one gateway have in common: Redis, the database and the subscription records."""
+
+    server: fakeredis.FakeServer = field(default_factory=fakeredis.FakeServer)
+    db: InMemoryStateDb = field(default_factory=InMemoryStateDb)
+    repo: InMemorySubscriptionRepo = field(default_factory=InMemorySubscriptionRepo)
 
 
 @dataclass
@@ -185,6 +198,7 @@ class Stack:
         uninstall_error_observer(ChatGPTResponsesAPIConfig)
         for name, items in self.callbacks_before.items():
             setattr(litellm, name, items)
+        await self.runtime.parts.tasks.cancel_all()
         await self.mock.stop()
         await self.redis.aclose()
 
@@ -192,7 +206,10 @@ class Stack:
 async def _build_stack(
     sub_ids: list[str],
     *,
-    store: StateStore | None = None,
+    shared: Shared | None = None,
+    live: bool = False,
+    listen: bool = True,
+    snapshot_interval_s: float = 1.0,
     slot_limit: int | None = None,
     config: GatewayConfig | None = None,
     num_retries: int = 4,
@@ -203,7 +220,9 @@ async def _build_stack(
     await mock.start()
     clock = FakeClock(start=time.time())
     config = config or GatewayConfig()
-    redis = fakeredis.FakeAsyncRedis()
+    shared = shared or Shared()
+    redis = fakeredis.FakeAsyncRedis(server=shared.server, decode_responses=True)
+    keys = Keys("t:")
     subscriptions = {
         sub_id: Subscription(
             id=sub_id,
@@ -215,8 +234,13 @@ async def _build_stack(
         )
         for sub_id in sub_ids
     }
-    state_store = store or InMemoryStateStore(clock)
-    slot_store = RedisSlotStore(redis, clock, "t:")
+    for subscription in subscriptions.values():
+        if subscription.id not in await _known(shared.repo):
+            shared.repo.put(subscription)
+    state_store = RedisStateStore(
+        redis, shared.db, clock, keys, RedisNotifier(redis, keys.changes)
+    )
+    slot_store = RedisSlotStore(redis, clock, keys.prefix)
     router = Router(
         model_list=[deployment_for(sub_id, mock.base_url) for sub_id in sub_ids],
         num_retries=num_retries,
@@ -224,18 +248,18 @@ async def _build_stack(
     )
     provider = ChatGPTProvider(transport=None, probe_model=MODEL)  # type: ignore[arg-type]
     switches = Switches()
-    repo = InMemorySubscriptionRepo(list(subscriptions.values()))
     runtime = build_runtime(
         RuntimeDeps(
             clock=clock,
             config=config,
             state_store=state_store,
             slot_store=slot_store,
-            repo=repo,
+            repo=shared.repo,
             policy=InMemoryPolicyRepo(),
             providers={"chatgpt": provider},
             model_list=lambda: router.model_list,
             telemetry=switches,
+            timing=SnapshotTiming(interval_s=snapshot_interval_s),
         )
     )
     snapshot = runtime.parts.snapshot
@@ -250,6 +274,12 @@ async def _build_stack(
         runtime.outcomes.on_observed,
     )
     await snapshot.refresh()
+    if live:
+        runtime.parts.tasks.spawn(snapshot.run())
+        if listen:
+            runtime.parts.tasks.spawn(
+                RedisListener(redis, keys.changes, snapshot.request_refresh).run()
+            )
     return Stack(
         mock=mock,
         router=router,
@@ -272,3 +302,7 @@ async def running_stack(sub_ids: list[str], **options: object) -> AsyncIterator[
         yield stack
     finally:
         await stack.close()
+
+
+async def _known(repo: InMemorySubscriptionRepo) -> set[str]:
+    return {subscription.id for subscription in await repo.list_subscriptions()}

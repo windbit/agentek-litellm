@@ -1,4 +1,5 @@
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 
 from .clock import Clock
 from .model import Route, StateRecord, Subscription, SubscriptionId, UsageRecord
@@ -13,6 +14,11 @@ class InMemorySubscriptionRepo:
 
     async def list_subscriptions(self) -> Sequence[Subscription]:
         return tuple(self._subscriptions.values())
+
+    async def set_enabled(self, subscription_id: SubscriptionId, enabled: bool) -> None:
+        self._subscriptions[subscription_id] = replace(
+            self._subscriptions[subscription_id], enabled=enabled
+        )
 
     def put(self, subscription: Subscription) -> None:
         self._subscriptions[subscription.id] = subscription
@@ -39,6 +45,7 @@ class InMemoryStateStore:
         self._sticky: dict[str, tuple[SubscriptionId, float]] = {}
         self._unsupported: dict[tuple[SubscriptionId, str], float] = {}
         self._usage: dict[SubscriptionId, UsageRecord] = {}
+        self._flags: dict[SubscriptionId, bool] = {}
 
     async def read_state(self, subscription_id: SubscriptionId) -> StateRecord | None:
         return self._states.get(subscription_id)
@@ -132,3 +139,11 @@ class InMemoryStateStore:
 
     async def read_all_usage(self) -> Mapping[SubscriptionId, UsageRecord]:
         return dict(self._usage)
+
+    async def write_enabled_flag(
+        self, subscription_id: SubscriptionId, enabled: bool
+    ) -> None:
+        self._flags[subscription_id] = enabled
+
+    async def read_enabled_flags(self) -> Mapping[SubscriptionId, bool]:
+        return dict(self._flags)
