@@ -116,16 +116,13 @@ class SubscriptionGateway:
     def without_subscriptions(
         self, model: str, deployments: Sequence[Deployment]
     ) -> list[Deployment]:
-        remaining = [
-            deployment
-            for deployment in deployments
-            if not self._looks_like_subscription(deployment)
-        ]
-        if not remaining:
-            raise NoAvailableSubscriptionsError(
-                model, None, self._parts.config.defaults.no_capacity_retry_after_s
-            )
-        return remaining
+        snapshot = self._parts.snapshot.current
+        return drop_subscription_deployments(
+            model,
+            deployments,
+            self._parts.config.defaults.no_capacity_retry_after_s,
+            snapshot,
+        )
 
     async def before_attempt(
         self, kwargs: dict[str, object]
@@ -183,20 +180,34 @@ class SubscriptionGateway:
         subscription_id = subscription_of(deployment_id, kwargs, snapshot)
         return snapshot.subscriptions.get(subscription_id) if subscription_id else None
 
-    def _looks_like_subscription(self, deployment: Deployment) -> bool:
-        """Cheap identification that needs no healthy state: the plugin's id prefix or a known subscription credential."""
-        model_info = deployment.get("model_info")
-        deployment_id = (
-            model_info.get("id") if isinstance(model_info, Mapping) else None
-        )
-        if isinstance(deployment_id, str) and deployment_id.startswith(
-            SUBSCRIPTION_ID_PREFIX
-        ):
-            return True
-        snapshot = self._parts.snapshot.current
-        return snapshot is not None and (
-            subscription_of("", deployment.get("litellm_params"), snapshot) is not None
-        )
+
+def drop_subscription_deployments(
+    model: str,
+    deployments: Sequence[Deployment],
+    retry_after_s: int,
+    snapshot: Snapshot | None = None,
+) -> list[Deployment]:
+    """What is left when subscriptions cannot be chosen: the plugin's id prefix or a known credential marks one."""
+    remaining = [
+        deployment
+        for deployment in deployments
+        if not _looks_like_subscription(deployment, snapshot)
+    ]
+    if not remaining:
+        raise NoAvailableSubscriptionsError(model, None, retry_after_s)
+    return remaining
+
+
+def _looks_like_subscription(deployment: Deployment, snapshot: Snapshot | None) -> bool:
+    model_info = deployment.get("model_info")
+    deployment_id = model_info.get("id") if isinstance(model_info, Mapping) else None
+    if isinstance(deployment_id, str) and deployment_id.startswith(
+        SUBSCRIPTION_ID_PREFIX
+    ):
+        return True
+    return snapshot is not None and (
+        subscription_of("", deployment.get("litellm_params"), snapshot) is not None
+    )
 
 
 def _model_group(kwargs: Mapping[str, object]) -> str:

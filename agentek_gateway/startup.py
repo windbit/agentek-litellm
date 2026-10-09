@@ -68,6 +68,7 @@ def start_gateway(
         state.ready_task = asyncio.get_running_loop().create_task(
             _run_when_ready(host, handlers, state)
         )
+        state.ready_task.add_done_callback(_log_failure)
 
 
 def register_callbacks(

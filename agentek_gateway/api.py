@@ -5,6 +5,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from litellm.proxy._types import LitellmUserRoles, UserAPIKeyAuth
 from litellm.proxy.auth.user_api_key_auth import user_api_key_auth
 
+from .startup import GATEWAY_STATE
+
 API_PREFIX = "/agentek"
 
 
@@ -21,6 +23,11 @@ def build_api_router() -> APIRouter:
 
     @router.get("/status")
     async def plugin_status() -> dict[str, str]:
-        return {"plugin": "agentek_gateway", "status": "up"}
+        ready = GATEWAY_STATE.ready.is_set()
+        return {
+            "plugin": "agentek_gateway",
+            "status": "up",
+            "ready": str(ready).lower(),
+        }
 
     return router

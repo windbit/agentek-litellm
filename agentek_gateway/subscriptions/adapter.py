@@ -10,12 +10,14 @@ from litellm.proxy._types import UserAPIKeyAuth
 from litellm.types.utils import CallTypes, CallTypesLiteral
 
 from .attempts import stamp_request_id
+from .config import ProviderTuning
 from .errors import NoAvailableSubscriptionsError
-from .gateway import SubscriptionBusyError
+from .gateway import SubscriptionBusyError, drop_subscription_deployments
 from .guard import guarded
 from .runtime import GLOBAL_SLOT, RuntimeSlot
 
 RESPONSES_CALL_TYPES = frozenset({"responses", "aresponses"})
+DEFAULT_RETRY_AFTER_S = ProviderTuning().no_capacity_retry_after_s
 PASSTHROUGH_ERRORS = (NoAvailableSubscriptionsError, SubscriptionBusyError)
 
 Deployment = dict[str, object]
@@ -49,7 +51,9 @@ class SubscriptionCallback(CustomLogger):
     ) -> list[Deployment]:
         runtime = self._slot.runtime
         if runtime is None:
-            return healthy_deployments
+            return drop_subscription_deployments(
+                model, healthy_deployments, DEFAULT_RETRY_AFTER_S
+            )
         try:
             return await runtime.gateway.filter(
                 model, healthy_deployments, request_kwargs or {}

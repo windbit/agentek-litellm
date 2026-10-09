@@ -320,3 +320,35 @@ async def test_deployment_of_a_known_subscription_credential_counts_as_a_subscri
     )
 
     assert kept == plain.deployments
+
+
+async def test_until_the_runtime_is_ready_subscription_deployments_are_not_offered() -> (
+    None
+):
+    from agentek_gateway.subscriptions.runtime import RuntimeSlot
+
+    plain = plain_runtime(["a"], shared=True)
+    callback = SubscriptionCallback(RuntimeSlot())
+
+    offered = await callback.async_filter_deployments(
+        PLAIN_MODEL, plain.deployments, None, {}
+    )
+
+    assert [item["model_info"]["id"] for item in offered] == ["deepseek-1"]  # type: ignore[index]
+
+
+async def test_until_the_runtime_is_ready_a_subscription_only_group_gets_the_pool_429() -> (
+    None
+):
+    from agentek_gateway.subscriptions.errors import NoAvailableSubscriptionsError
+    from agentek_gateway.subscriptions.runtime import RuntimeSlot
+
+    plain = plain_runtime(["a"])
+    callback = SubscriptionCallback(RuntimeSlot())
+
+    with pytest.raises(NoAvailableSubscriptionsError) as raised:
+        await callback.async_filter_deployments(
+            PLAIN_MODEL, plain.deployments, None, {}
+        )
+
+    assert raised.value.headers == {"retry-after": "10"}
