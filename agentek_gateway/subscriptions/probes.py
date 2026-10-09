@@ -17,6 +17,7 @@ from .events import (
     ProbeSucceeded,
     Unauthorized,
 )
+from .leader import StillLeader, always_leader
 from .model import (
     Limits,
     StateRecord,
@@ -56,6 +57,7 @@ class ProbeDeps:
     store: StateStore
     states: StateService
     providers: Mapping[str, ProbingProvider]
+    still_leader: StillLeader = always_leader
 
 
 def random_jitter(limit_s: float) -> float:
@@ -86,6 +88,8 @@ class ProbeLoop:
             if record is None or not subscription.enabled:
                 continue
             if self._is_due(subscription, record, now):
+                if not await deps.still_leader():
+                    return
                 await self._probe_safely(subscription)
         for provider in {subscription.provider for subscription in subscriptions}:
             await deps.store.mark_probed(provider, deps.clock.now())

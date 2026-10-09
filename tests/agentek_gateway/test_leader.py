@@ -36,15 +36,6 @@ async def test_only_one_replica_holds_the_lease_and_renews_it() -> None:
     assert results == [True, False, True, False]
 
 
-async def test_lease_passes_on_after_the_leader_releases_it() -> None:
-    (first, second), _ = leases(2)
-    await first.hold()
-
-    await first.release()
-
-    assert (await second.hold(), await first.hold()) == (True, False)
-
-
 async def test_lease_of_a_dead_leader_expires() -> None:
     (first, second), server = leases(2)
     await first.hold()

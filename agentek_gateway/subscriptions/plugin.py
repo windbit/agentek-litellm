@@ -45,6 +45,7 @@ ENV_REDIS_URL = "AGENTEK_GATEWAY_REDIS_URL"
 ENV_REDIS_PREFIX = "AGENTEK_GATEWAY_REDIS_PREFIX"
 DEFAULT_REDIS_PREFIX = "agentek:"
 RECONCILE_INTERVAL_S = 30.0
+REDIS_TIMEOUT_S = 2.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,7 +71,21 @@ def redis_url_from_env(environ: Mapping[str, str]) -> str:
 
 
 def redis_from_env(environ: Mapping[str, str]) -> Redis:
-    return Redis.from_url(redis_url_from_env(environ), decode_responses=True)
+    return Redis.from_url(
+        redis_url_from_env(environ),
+        decode_responses=True,
+        socket_timeout=REDIS_TIMEOUT_S,
+        socket_connect_timeout=REDIS_TIMEOUT_S,
+    )
+
+
+def sync_redis_from_env(environ: Mapping[str, str]) -> SyncRedis:
+    return SyncRedis.from_url(
+        redis_url_from_env(environ),
+        decode_responses=True,
+        socket_timeout=REDIS_TIMEOUT_S,
+        socket_connect_timeout=REDIS_TIMEOUT_S,
+    )
 
 
 def default_plugins() -> Sequence[Plugin]:
@@ -86,9 +101,7 @@ async def start_subscription_runtime() -> None:
     host, environ = ProxyHost(), os.environ
     connections = Connections(
         redis=redis_from_env(environ),
-        sync_redis=SyncRedis.from_url(
-            redis_url_from_env(environ), decode_responses=True
-        ),
+        sync_redis=sync_redis_from_env(environ),
         credentials=PrismaCredentialStore(host.credentials_table),
         repo=InMemorySubscriptionRepo(),
         policy=InMemoryPolicyRepo(),
@@ -167,8 +180,9 @@ def _leader_duties(
     parts = runtime.parts
     providers = {PROVIDER_ID: parts.providers[PROVIDER_ID]}
     repo, credentials = connections.repo, connections.credentials
+    lease = LeaderLease(connections.redis, keys.leader)
     return LeaderDuties(
-        LeaderLease(connections.redis, keys.leader),
+        lease,
         ProbeLoop(
             ProbeDeps(
                 parts.clock,
@@ -178,6 +192,7 @@ def _leader_duties(
                 store,
                 runtime.states,
                 providers,
+                lease.hold,
             )
         ),
         TokenRefresher(
@@ -189,6 +204,7 @@ def _leader_duties(
                 store,
                 runtime.states,
                 providers,
+                lease.hold,
             )
         ),
         EgressWatcher(transport, store, repo, parts.clock),

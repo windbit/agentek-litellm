@@ -8,6 +8,7 @@ from agentek_gateway.subscriptions.providers.base import (
     RefreshedTokens,
     RefreshRejected,
 )
+from agentek_gateway.subscriptions.providers.chatgpt import ChatgptAuth
 from agentek_gateway.subscriptions.token_coordination import LatestAuth
 
 from .upkeep import HOUR_S, build_upkeep, tokens
@@ -241,3 +242,67 @@ async def test_pair_already_saved_is_never_written_over_a_later_reauthorization(
 
     stored = await upkeep.credentials.read_auth(CRED)
     assert stored.auth.refresh_token == "rt-reauth"  # type: ignore[union-attr]
+
+
+async def test_refresh_that_outlasts_its_deadline_is_abandoned_and_frees_the_lock() -> (
+    None
+):
+    upkeep, _ = build_upkeep(["a"], expires_in_s=60)
+    upkeep.provider.delay_s = 3.0
+    replica = upkeep.replica(deadline_s=0.05)
+
+    await replica.refresher.tick()
+
+    stored = await upkeep.credentials.read_auth(CRED)
+    assert (
+        await replica.redis.exists(upkeep.keys.refresh_lock(CRED)),
+        stored.auth.access_token,  # type: ignore[union-attr]
+    ) == (0, "at-0")
+
+
+async def test_replica_that_lost_the_lease_refreshes_nothing() -> None:
+    upkeep, _ = build_upkeep(["a"], expires_in_s=60)
+
+    async def lost() -> bool:
+        return False
+
+    await upkeep.replica(still_leader=lost).refresher.tick()
+
+    assert upkeep.provider.refresh_tokens == []
+
+
+async def test_lease_is_checked_before_every_subscription() -> None:
+    upkeep, _ = build_upkeep(["a", "b", "c"], expires_in_s=HOUR_S)
+    checks = []
+
+    async def counting() -> bool:
+        checks.append(1)
+        return True
+
+    await upkeep.replica(still_leader=counting).refresher.tick()
+
+    assert len(checks) == 3
+
+
+async def test_new_access_token_without_a_new_refresh_token_is_written_to_the_database() -> (
+    None
+):
+    upkeep, _ = build_upkeep(["a"], expires_in_s=HOUR_S)
+    replica = upkeep.replica()
+    same_refresh = tokens(HOUR_S, upkeep.clock.now(), "0")
+    await replica.coordinator.save_latest(
+        CRED,
+        LatestAuth(
+            ChatgptAuth(
+                "at-fresh",
+                same_refresh.refresh_token,
+                expires_at=same_refresh.expires_at,
+            ),
+            persisted=False,
+        ),
+    )
+
+    await replica.refresher.tick()
+
+    stored = await upkeep.credentials.read_auth(CRED)
+    assert stored.auth.access_token == "at-fresh"  # type: ignore[union-attr]

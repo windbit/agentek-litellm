@@ -250,3 +250,23 @@ async def test_probe_pass_leaves_a_heartbeat_even_when_nothing_was_due() -> None
     await replica.probes.tick()
 
     assert await replica.store.read_probe_times() == {"chatgpt": upkeep.clock.now()}
+
+
+async def test_lease_is_checked_before_each_probe_and_a_lost_lease_stops_the_pass() -> (
+    None
+):
+    upkeep, _ = build_upkeep(["a", "b"])
+    checks = []
+
+    async def lose_after_first() -> bool:
+        checks.append(1)
+        return len(checks) == 1
+
+    replica = upkeep.replica(still_leader=lose_after_first)
+    await half_open_since_a_minute(upkeep, replica, "a", "b")
+    await replica.probes.tick()
+    upkeep.clock.advance(HALF_OPEN_JITTER_S + 1)
+
+    await replica.probes.tick()
+
+    assert (len(checks), len(upkeep.provider.probes)) == (2, 1)

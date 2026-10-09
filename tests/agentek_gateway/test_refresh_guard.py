@@ -150,3 +150,34 @@ def test_unobtainable_lock_fails_the_refresh_instead_of_calling_the_provider(coo
 
 def test_authenticator_exposes_the_hook_the_plugin_installs() -> None:
     assert hasattr(authenticator, "REFRESH_GUARD")
+
+
+def test_waiting_for_a_lock_held_in_the_same_loop_ends_quickly(coordinator) -> None:  # type: ignore[no-untyped-def]
+    import asyncio
+
+    async def scenario() -> float:
+        holder = coordinator.acquire(CREDENTIAL)
+        assert holder is not None
+        install_refresh_guard(
+            RefreshGuard(
+                SyncTokenCoordinator(coordinator._redis, Keys("t:"))
+            )  # noqa: SLF001
+        )
+        started = time.monotonic()
+        with pytest.raises(RefreshAccessTokenError):
+            expired_authenticator()._refresh_tokens("rt-old")  # noqa: SLF001
+        return time.monotonic() - started
+
+    assert asyncio.run(scenario()) < 3.0
+
+
+def test_pair_with_an_unchanged_refresh_token_is_used_when_it_was_just_refreshed(coordinator) -> None:  # type: ignore[no-untyped-def]
+    coordinator.save_latest(
+        CREDENTIAL, LatestAuth(ChatgptAuth("at-fresh", "rt-old"), persisted=False)
+    )
+    coordinator.mark_refreshed(CREDENTIAL, 60)
+    install_refresh_guard(RefreshGuard(coordinator))
+
+    token = expired_authenticator().get_access_token()
+
+    assert (token, CountingAuthenticator.calls) == ("at-fresh", [])

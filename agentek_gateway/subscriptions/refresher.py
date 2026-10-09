@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Protocol
@@ -7,6 +8,7 @@ from litellm._logging import verbose_proxy_logger
 from .clock import Clock
 from .credentials import CredentialStore, StoredAuth
 from .events import RefreshSucceeded, TokenRevoked
+from .leader import StillLeader, always_leader
 from .model import StateRecord, Subscription, SubscriptionState, effective_state
 from .ports import StateStore, SubscriptionRepo
 from .providers.base import RefreshedTokens, RefreshOutcome, RefreshRejected
@@ -16,6 +18,7 @@ from .token_coordination import LatestAuth, TokenCoordinator
 
 REFRESH_LEAD_S = 10 * 60
 RECENT_REFRESH_WINDOW_S = 60.0
+REFRESH_DEADLINE_S = 40.0
 
 
 class RefreshingProvider(Protocol):
@@ -31,6 +34,8 @@ class RefreshDeps:
     store: StateStore
     states: StateService
     providers: Mapping[str, RefreshingProvider]
+    still_leader: StillLeader = always_leader
+    deadline_s: float = REFRESH_DEADLINE_S
 
 
 class TokenRefresher:
@@ -45,6 +50,8 @@ class TokenRefresher:
         for subscription in await deps.repo.list_subscriptions():
             if not subscription.enabled or subscription.provider not in deps.providers:
                 continue
+            if not await deps.still_leader():
+                return
             try:
                 await self._upkeep(subscription, states.get(subscription.id))
             except Exception:  # noqa: BLE001
@@ -80,7 +87,7 @@ class TokenRefresher:
         latest = await deps.coordinator.read_latest(name)
         if latest is None or latest.persisted:
             return stored
-        if latest.auth.refresh_token == stored.auth.refresh_token:
+        if same_tokens(latest.auth, stored.auth):
             await deps.coordinator.save_latest(name, LatestAuth(latest.auth, True))
             return stored
         if await deps.credentials.write_auth_if_unchanged(name, stored, latest.auth):
@@ -99,8 +106,11 @@ class TokenRefresher:
             latest = await deps.coordinator.read_latest(name)
             if stored is None or (latest and not latest.persisted):
                 return
-            outcome = await deps.providers[subscription.provider].refresh(
-                stored.auth.refresh_token, now=deps.clock.now()
+            outcome = await asyncio.wait_for(
+                deps.providers[subscription.provider].refresh(
+                    stored.auth.refresh_token, now=deps.clock.now()
+                ),
+                deps.deadline_s,
             )
             await self._apply_outcome(subscription, stored, outcome)
         finally:
@@ -138,4 +148,11 @@ def renewed_auth(previous: ChatgptAuth, tokens: RefreshedTokens) -> ChatgptAuth:
         account_id=previous.account_id,
         id_token=tokens.id_token or previous.id_token,
         expires_at=tokens.expires_at,
+    )
+
+
+def same_tokens(first: ChatgptAuth, second: ChatgptAuth) -> bool:
+    return (
+        first.access_token == second.access_token
+        and first.refresh_token == second.refresh_token
     )

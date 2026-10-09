@@ -7,6 +7,7 @@ import fakeredis
 
 from agentek_gateway.subscriptions.config import GatewayConfig
 from agentek_gateway.subscriptions.credentials import InMemoryCredentialStore
+from agentek_gateway.subscriptions.leader import StillLeader, always_leader
 from agentek_gateway.subscriptions.memory import InMemorySubscriptionRepo
 from agentek_gateway.subscriptions.model import Limits, Subscription
 from agentek_gateway.subscriptions.probes import Jitter, ProbeDeps, ProbeLoop
@@ -79,7 +80,12 @@ class Upkeep:
     keys: Keys
     config: GatewayConfig
 
-    def replica(self, jitter: Jitter = half_of_limit) -> "Replica":
+    def replica(
+        self,
+        jitter: Jitter = half_of_limit,
+        still_leader: StillLeader = always_leader,
+        deadline_s: float = 40.0,
+    ) -> "Replica":
         redis = fakeredis.FakeAsyncRedis(server=self.server, decode_responses=True)
         store = RedisStateStore(redis, self.db, self.clock, self.keys)
         states = StateService(store, self.clock, self.config)
@@ -99,6 +105,8 @@ class Upkeep:
                     store,
                     states,
                     providers,
+                    still_leader,
+                    deadline_s,
                 )
             ),
             probes=ProbeLoop(
@@ -110,6 +118,7 @@ class Upkeep:
                     store,
                     states,
                     providers,
+                    still_leader,
                 ),
                 jitter=jitter,
             ),

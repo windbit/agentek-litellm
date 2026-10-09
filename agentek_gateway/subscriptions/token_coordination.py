@@ -14,7 +14,7 @@ from .redis_keys import Keys
 LOCK_TTL_S = 60
 LATEST_TTL_S = 24 * 3600
 LOCK_POLL_S = 0.05
-LOCK_WAIT_S = 30.0
+LOCK_WAIT_S = 1.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,6 +121,9 @@ class SyncTokenCoordinator:
 
     def read_latest(self, credential_name: str) -> LatestAuth | None:
         return decode_latest(self._redis.get(self._keys.latest_auth(credential_name)))
+
+    def recently_refreshed(self, credential_name: str) -> bool:
+        return bool(self._redis.exists(self._keys.refreshed(credential_name)))
 
     def mark_refreshed(self, credential_name: str, window_s: float) -> None:
         self._redis.set(self._keys.refreshed(credential_name), "1", ex=int(window_s))

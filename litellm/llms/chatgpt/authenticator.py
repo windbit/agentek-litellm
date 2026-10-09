@@ -537,13 +537,18 @@ class Authenticator:
 def refresh_chatgpt_credential_values(
     credential_values: Dict[str, Any],
     lead_seconds: int,
+    credential_name: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """Return credential_values with a refreshed chatgpt_auth when its access token
     expires within lead_seconds; None when there is nothing to refresh."""
     auth = credential_values.get("chatgpt_auth")
     if not isinstance(auth, dict):
         return None
-    authenticator = Authenticator(auth_inline=auth, credential_required=True)
+    authenticator = Authenticator(
+        auth_inline=auth,
+        credential_required=True,
+        credential_name=credential_name,
+    )
     try:
         refreshed = authenticator.refresh_if_expiring(lead_seconds)
     except RefreshAccessTokenError as exc:

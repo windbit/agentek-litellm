@@ -221,3 +221,34 @@ class TestRefreshGuard:
             token = authenticator.get_access_token()
 
         assert (token, request.call_args.args) == ("network-access", ("old-refresh",))
+
+    def test_proactive_refresh_goes_through_the_guard_when_given_the_credential_name(
+        self, _reset_guard
+    ):
+        seen = []
+
+        def guard(credential_name, stale_refresh_token, refresh):
+            seen.append(credential_name)
+            return {
+                "access_token": _make_jwt({"exp": time.time() + 3600}),
+                "refresh_token": "guarded-refresh",
+                "id_token": "guarded-id",
+            }
+
+        _reset_guard.REFRESH_GUARD = guard
+        values = {
+            "chatgpt_auth": {
+                "access_token": "old",
+                "refresh_token": "old-refresh",
+                "expires_at": time.time() + 10,
+            }
+        }
+
+        result = refresh_chatgpt_credential_values(
+            values, 600, credential_name="cred-a"
+        )
+
+        assert (seen, result["chatgpt_auth"]["refresh_token"]) == (
+            ["cred-a"],
+            "guarded-refresh",
+        )

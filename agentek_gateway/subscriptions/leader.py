@@ -1,8 +1,15 @@
 import uuid
+from collections.abc import Awaitable, Callable
 
 from redis.asyncio import Redis
 
 LEASE_TTL_S = 30
+
+StillLeader = Callable[[], Awaitable[bool]]
+
+
+async def always_leader() -> bool:
+    return True
 
 
 class LeaderLease:
@@ -26,11 +33,3 @@ class LeaderLease:
             pipe.expire(self._key, self._ttl_s)
             await pipe.execute()
         return True
-
-    async def release(self) -> None:
-        async with self._redis.pipeline(transaction=True) as pipe:
-            await pipe.watch(self._key)
-            if await pipe.get(self._key) == self._holder:
-                pipe.multi()
-                pipe.delete(self._key)
-                await pipe.execute()
