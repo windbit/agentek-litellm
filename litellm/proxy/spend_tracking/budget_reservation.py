@@ -152,11 +152,25 @@ async def reserve_budget_for_request(
                         f"Max budget: {counter.max_budget}"
                     ),
                 )
-    except Exception:
+    except Exception as error:
         await _release_applied_entries_best_effort(
             entries=applied_entries,
             default_reserved_cost=reservation_cost,
         )
+        if (isinstance(error, litellm.BudgetExceededError) and team_object is not None
+                and counter.entity_type == "Team" and ":window:" in counter.counter_key):
+            from litellm.proxy.auth.team_budget import (
+                BudgetState, ExceededWindow, budget_failure_fields, rejected_budget_state, team_budget_readings,
+            )
+
+            readings = await team_budget_readings(team_object)
+            state = rejected_budget_state(readings)
+            if not state.windows:
+                duration = counter.counter_key.rsplit(":window:", 1)[1]
+                reset_at = next((reading.window.reset_at for reading in readings
+                                 if reading.window.budget_duration == duration), None)
+                state = BudgetState(status="exceeded", windows=(ExceededWindow(duration=duration, resetAt=reset_at),))
+            error.provider_specific_fields = budget_failure_fields(team_object, state)
         raise
 
     if not applied_entries:

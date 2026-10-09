@@ -2036,7 +2036,7 @@ def cost_tracking():
         )
 
 
-async def get_current_spend(counter_key: str, fallback_spend: float) -> float:
+async def get_current_spend_reading(counter_key: str, fallback_spend: float) -> tuple[float, bool]:
     """
     Read current spend from the cross-pod spend counter.
 
@@ -2059,7 +2059,7 @@ async def get_current_spend(counter_key: str, fallback_spend: float) -> float:
         try:
             val = await spend_counter_cache.redis_cache.async_get_cache(key=counter_key)
             if val is not None:
-                return float(val)
+                return float(val), True
             redis_clean_miss = True
         except Exception as e:
             verbose_proxy_logger.debug(
@@ -2072,7 +2072,7 @@ async def get_current_spend(counter_key: str, fallback_spend: float) -> float:
     if not redis_clean_miss:
         val = spend_counter_cache.in_memory_cache.get_cache(key=counter_key)
         if val is not None:
-            return float(val)
+            return float(val), spend_counter_cache.redis_cache is None
 
     # 3. Reseed from DB - fallback_spend lags cross-pod, would allow bypass.
     db_spend = await SpendCounterReseed.coalesced(
@@ -2081,10 +2081,23 @@ async def get_current_spend(counter_key: str, fallback_spend: float) -> float:
         counter_key=counter_key,
     )
     if db_spend is not None:
-        return db_spend
+        if spend_counter_cache.redis_cache is None:
+            return db_spend, True
+        try:
+            confirmed = await spend_counter_cache.redis_cache.async_get_cache(key=counter_key)
+            if confirmed is not None:
+                return float(confirmed), True
+        except Exception as error:
+            verbose_proxy_logger.debug("Spend counter confirmation failed for %s: %s", counter_key, error)
+        return db_spend, False
 
     # 4. Caller-supplied fallback (DB unavailable).
-    return fallback_spend
+    return fallback_spend, False
+
+
+async def get_current_spend(counter_key: str, fallback_spend: float) -> float:
+    spend, _ = await get_current_spend_reading(counter_key, fallback_spend)
+    return spend
 
 
 async def increment_spend_counters(

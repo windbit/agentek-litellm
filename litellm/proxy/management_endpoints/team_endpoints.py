@@ -3570,6 +3570,7 @@ async def team_info(
     team_id: str = fastapi.Query(
         default=None, description="Team ID in the request parameters"
     ),
+    budget_only: bool = fastapi.Query(default=False, description="Return only account budget status"),
     key_limit: int | None = fastapi.Query(
         default=None, description="Limit the number of keys returned", gt=0
     ),
@@ -3608,7 +3609,7 @@ async def team_info(
                 prisma_client
             ).table.find_unique(
                 where={"team_id": team_id},
-                include={"object_permission": True},
+                include={} if budget_only is True else {"object_permission": True},
             )
             if team_info is None:
                 raise Exception
@@ -3621,6 +3622,12 @@ async def team_info(
             user_api_key_dict=user_api_key_dict,
             team_table=LiteLLM_TeamTable(**team_info.model_dump()),
         )
+
+        if budget_only is True:
+            from litellm.proxy.auth.team_budget import budget_state, team_budget_readings
+
+            readings = await team_budget_readings(LiteLLM_TeamTable(**team_info.model_dump()))
+            return {"budget_status": budget_state(readings).model_dump(mode="json", exclude_none=True)}
 
         ## GET ALL KEYS ##
         keys = await prisma_client.get_data(
