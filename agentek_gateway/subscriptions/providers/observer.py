@@ -76,9 +76,7 @@ def wrap_get_error_class(
                 )
             )
             rewritten = status_for_client(error, status_code, context)
-        except (
-            Exception
-        ):  # noqa: BLE001  # observer failure must not replace the provider error
+        except Exception:  # noqa: BLE001
             verbose_proxy_logger.exception("agentek_gateway error observer failed")
         return original(self, error_message, rewritten, headers)
 

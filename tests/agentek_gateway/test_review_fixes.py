@@ -334,8 +334,8 @@ def test_alternatives_ignore_shared_deployments_that_already_failed() -> None:
 def test_recovery_time_ignores_the_soft_limit_of_a_working_subscription() -> None:
     subs = [make_subscription("a"), make_subscription("b")]
     states = {
-        "a": state_record(S.SOFT_LIMITED, NOW + 9 * HOUR),
-        "b": state_record(S.RATE_LIMITED, NOW + HOUR),
+        "a": state_record(S.SOFT_LIMITED, NOW + HOUR),
+        "b": state_record(S.RATE_LIMITED, NOW + 9 * HOUR),
     }
     request = SelectionRequest(
         MODEL, excluded_deployment_ids=frozenset({f"sub:a:{MODEL}"})
