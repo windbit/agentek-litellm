@@ -14,9 +14,13 @@ def issue_request_id() -> str:
 
 
 def request_metadata(request_kwargs: Mapping[str, object]) -> Mapping[str, object]:
-    for name in ("litellm_metadata", "metadata"):
+    """The container the router writes into: litellm_metadata when the request carries one, else metadata."""
+    preferred = (
+        "litellm_metadata" if "litellm_metadata" in request_kwargs else "metadata"
+    )
+    for name in (preferred, "metadata", "litellm_metadata"):
         value = request_kwargs.get(name)
-        if isinstance(value, Mapping):
+        if isinstance(value, Mapping) and value:
             return value
     return {}
 

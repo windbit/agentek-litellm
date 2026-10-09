@@ -15,6 +15,7 @@ from .gateway import SubscriptionBusyError
 from .guard import guarded
 from .runtime import GLOBAL_SLOT, RuntimeSlot
 
+RESPONSES_CALL_TYPES = frozenset({"responses", "aresponses"})
 PASSTHROUGH_ERRORS = (NoAvailableSubscriptionsError, SubscriptionBusyError)
 
 Deployment = dict[str, object]
@@ -35,7 +36,7 @@ class SubscriptionCallback(CustomLogger):
         data: Fields,
         call_type: CallTypesLiteral,
     ) -> Fields:
-        await guarded("pre_call", _stamp(data), None)
+        await guarded("pre_call", _prepare(data, call_type), None)
         return data
 
     async def async_filter_deployments(
@@ -145,7 +146,10 @@ class SubscriptionCallback(CustomLogger):
             yield chunk
 
 
-async def _stamp(data: Fields) -> None:
+async def _prepare(data: Fields, call_type: CallTypesLiteral) -> None:
+    """Only Responses requests carry litellm_metadata; on other paths a client-sent one would shadow the router's."""
+    if call_type not in RESPONSES_CALL_TYPES:
+        data.pop("litellm_metadata", None)
     stamp_request_id(data)
 
 
