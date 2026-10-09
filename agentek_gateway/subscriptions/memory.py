@@ -60,8 +60,14 @@ class InMemoryStateStore:
     async def read_state(self, subscription_id: SubscriptionId) -> StateRecord | None:
         return self._states.get(subscription_id)
 
-    async def read_all_states(self) -> Mapping[SubscriptionId, StateRecord]:
-        return dict(self._states)
+    async def read_states(
+        self, subscription_ids: Sequence[SubscriptionId]
+    ) -> Mapping[SubscriptionId, StateRecord]:
+        return {
+            sub_id: self._states[sub_id]
+            for sub_id in subscription_ids
+            if sub_id in self._states
+        }
 
     async def compare_and_set_state(
         self,

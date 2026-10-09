@@ -8,6 +8,7 @@ from redis.exceptions import WatchError
 from litellm._logging import verbose_proxy_logger
 
 from .clock import Clock
+from .expiring import ExpiringMap
 from .model import (
     DURABLE_STATES,
     EgressInfo,
@@ -15,7 +16,6 @@ from .model import (
     Route,
     StateRecord,
     SubscriptionId,
-    SubscriptionState,
     UsageRecord,
     Window,
 )
@@ -26,22 +26,16 @@ from .state_codec import decode_record, encode_record
 
 ENABLED = "1"
 DISABLED = "0"
-SCAN_COUNT = 500
 EXPIRY_GRACE_S = 60
 ACTIVE_RECORD_TTL_S = 24 * 3600
-MIN_DB_REREAD_S = 5.0
+ABSENT_IN_DB_TTL_S = 30.0
 SERIES_KEY_FACTOR = 2
 UNSUPPORTED_SEPARATOR = "\x1f"
 
 
 def needs_durable_row(record: StateRecord) -> bool:
-    """Everything but a clean ACTIVE/SOFT_LIMITED record must survive losing Redis."""
-    if record.overload_streak > 0:
-        return True
-    return record.state not in (
-        SubscriptionState.ACTIVE,
-        SubscriptionState.SOFT_LIMITED,
-    )
+    """The states the spec keeps in the database, and the overload streak whatever the state."""
+    return record.overload_streak > 0 or record.state in DURABLE_STATES
 
 
 class RedisStateStore:
@@ -63,49 +57,48 @@ class RedisStateStore:
         self._clock = clock
         self._keys = keys
         self._notifier = notifier or NullNotifier()
-        self._db_rows: dict[SubscriptionId, StateRecord] = {}
-        self._db_read_at = float("-inf")
+        self._absent_in_db: ExpiringMap[SubscriptionId, bool] = ExpiringMap(
+            clock, ABSENT_IN_DB_TTL_S
+        )
 
     async def load_durable(self) -> None:
-        """Reads the durable rows and puts back whatever Redis lost; call before serving subscriptions."""
-        rows = await self._db.read_all_states()
-        self._db_rows = dict(rows)
-        self._db_read_at = time.monotonic()
-        for subscription_id, record in rows.items():
+        """Puts back whatever Redis lost; call before subscriptions are served."""
+        for subscription_id, record in (await self._db.read_all_states()).items():
             await self._restore(subscription_id, record)
 
-    async def reconcile(self) -> None:
-        """Brings the database and Redis back in line after a missed write on either side."""
-        await self.load_durable()
-        for subscription_id, record in (await self._redis_states()).items():
-            stored = self._db_rows.get(subscription_id)
-            if needs_durable_row(record):
-                if stored is None or stored.version < record.version:
-                    await self._persist(subscription_id, record)
-            elif stored is not None and stored.version <= record.version:
-                await self._persist(subscription_id, record)
+    async def reconcile(self, subscription_ids: Sequence[SubscriptionId]) -> None:
+        """Brings the database and Redis back in line after a write that reached only one of them."""
+        rows = await self._db.read_all_states()
+        in_redis = await self._read_redis(subscription_ids)
+        for subscription_id in {*subscription_ids, *rows}:
+            record, row = in_redis.get(subscription_id), rows.get(subscription_id)
+            if record is None and row is not None:
+                await self._restore(subscription_id, row)
+            elif record is not None and (row is None or row.version < record.version):
+                await self._mirror(subscription_id, record)
 
     async def read_state(self, subscription_id: SubscriptionId) -> StateRecord | None:
-        raw = await self._redis.get(self._keys.state(subscription_id))
-        if raw is not None:
-            return decode_record(raw)
-        stored = self._db_rows.get(subscription_id) or await self._db.read_state(
-            subscription_id
-        )
-        if stored is None:
-            return None
-        await self._restore(subscription_id, stored)
-        return stored
+        return (await self.read_states([subscription_id])).get(subscription_id)
 
-    async def read_all_states(self) -> Mapping[SubscriptionId, StateRecord]:
-        found = await self._redis_states()
-        missing = [sub_id for sub_id in self._db_rows if sub_id not in found]
-        if missing and time.monotonic() - self._db_read_at >= MIN_DB_REREAD_S:
-            await self.load_durable()
-            found = await self._redis_states()
-            missing = [sub_id for sub_id in self._db_rows if sub_id not in found]
+    async def read_states(
+        self, subscription_ids: Sequence[SubscriptionId]
+    ) -> Mapping[SubscriptionId, StateRecord]:
+        found = dict(await self._read_redis(subscription_ids))
+        missing = [
+            sub_id
+            for sub_id in subscription_ids
+            if sub_id not in found and sub_id not in self._absent_in_db
+        ]
+        if not missing:
+            return found
+        rows = await self._db.read_states(missing)
         for subscription_id in missing:
-            found[subscription_id] = self._db_rows[subscription_id]
+            row = rows.get(subscription_id)
+            if row is None:
+                self._absent_in_db.put(subscription_id, True)
+                continue
+            await self._restore(subscription_id, row)
+            found[subscription_id] = row
         return found
 
     async def compare_and_set_state(
@@ -122,7 +115,7 @@ class RedisStateStore:
                 current = (
                     decode_record(raw)
                     if raw is not None
-                    else self._db_rows.get(subscription_id)
+                    else await self._db.read_state(subscription_id)
                 )
                 if (current.version if current else None) != expected_version:
                     return False
@@ -131,6 +124,7 @@ class RedisStateStore:
                 await pipe.execute()
             except WatchError:
                 return False
+        self._absent_in_db.discard(subscription_id)
         await self._after_write(subscription_id, record)
         return True
 
@@ -263,19 +257,17 @@ class RedisStateStore:
             for member, payload in raw.items()
         }
 
-    async def _redis_states(self) -> dict[SubscriptionId, StateRecord]:
-        keys = [
-            key
-            async for key in self._redis.scan_iter(
-                self._keys.state_pattern, count=SCAN_COUNT
-            )
-        ]
-        if not keys:
+    async def _read_redis(
+        self, subscription_ids: Sequence[SubscriptionId]
+    ) -> dict[SubscriptionId, StateRecord]:
+        if not subscription_ids:
             return {}
-        values = await self._redis.mget(keys)
+        values = await self._redis.mget(
+            [self._keys.state(sub_id) for sub_id in subscription_ids]
+        )
         return {
-            self._keys.state_id(key): decode_record(value)
-            for key, value in zip(keys, values, strict=True)
+            sub_id: decode_record(value)
+            for sub_id, value in zip(subscription_ids, values, strict=True)
             if value is not None
         }
 
@@ -293,7 +285,7 @@ class RedisStateStore:
         self, subscription_id: SubscriptionId, record: StateRecord
     ) -> None:
         try:
-            await self._persist(subscription_id, record)
+            await self._mirror(subscription_id, record)
         except Exception:  # noqa: BLE001
             verbose_proxy_logger.exception(
                 "agentek_gateway state of %s was not written to the database",
@@ -301,15 +293,14 @@ class RedisStateStore:
             )
         await self._notifier.publish()
 
-    async def _persist(
+    async def _mirror(
         self, subscription_id: SubscriptionId, record: StateRecord
     ) -> None:
+        """The database ignores a write older than the row it holds, so a late writer cannot undo a newer state."""
         if needs_durable_row(record):
             await self._db.write_state(subscription_id, record)
-            self._db_rows[subscription_id] = record
         else:
-            await self._db.delete_state(subscription_id)
-            self._db_rows.pop(subscription_id, None)
+            await self._db.delete_state(subscription_id, record.version)
 
     def _ttl_for(self, record: StateRecord) -> int | None:
         if record.until is not None:

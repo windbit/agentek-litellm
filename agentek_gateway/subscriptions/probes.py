@@ -76,12 +76,12 @@ class ProbeLoop:
     async def tick(self) -> None:
         deps = self._deps
         now = deps.clock.now()
-        states = await deps.store.read_all_states()
         subscriptions = [
             subscription
             for subscription in await deps.repo.list_subscriptions()
             if subscription.provider in deps.providers
         ]
+        states = await deps.store.read_states([sub.id for sub in subscriptions])
         self._forget_recovered(subscriptions, states, now)
         for subscription in subscriptions:
             record = states.get(subscription.id)

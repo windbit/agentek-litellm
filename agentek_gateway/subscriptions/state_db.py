@@ -27,18 +27,19 @@ class StateRow(Protocol):
 class StateTable(Protocol):
     """The slice of the generated Prisma delegate the repository uses."""
 
-    async def find_many(self) -> Sequence[StateRow]: ...
+    async def find_many(
+        self, *, where: Mapping[str, object] | None = None
+    ) -> Sequence[StateRow]: ...
 
     async def find_unique(self, *, where: Mapping[str, str]) -> StateRow | None: ...
 
-    async def upsert(
-        self,
-        *,
-        where: Mapping[str, str],
-        data: Mapping[str, Mapping[str, object]],
-    ) -> object: ...
+    async def create(self, *, data: Mapping[str, object]) -> object: ...
 
-    async def delete_many(self, *, where: Mapping[str, str]) -> object: ...
+    async def update_many(
+        self, *, where: Mapping[str, object], data: Mapping[str, object]
+    ) -> int: ...
+
+    async def delete_many(self, *, where: Mapping[str, object]) -> object: ...
 
 
 class InMemoryStateDb:
@@ -49,17 +50,31 @@ class InMemoryStateDb:
     async def read_state(self, subscription_id: SubscriptionId) -> StateRecord | None:
         return self.rows.get(subscription_id)
 
+    async def read_states(
+        self, subscription_ids: Sequence[SubscriptionId]
+    ) -> Mapping[SubscriptionId, StateRecord]:
+        return {
+            sub_id: self.rows[sub_id]
+            for sub_id in subscription_ids
+            if sub_id in self.rows
+        }
+
     async def read_all_states(self) -> Mapping[SubscriptionId, StateRecord]:
         return dict(self.rows)
 
     async def write_state(
         self, subscription_id: SubscriptionId, record: StateRecord
     ) -> None:
+        stored = self.rows.get(subscription_id)
+        if stored is not None and stored.version >= record.version:
+            return
         self.writes += 1
         self.rows[subscription_id] = record
 
-    async def delete_state(self, subscription_id: SubscriptionId) -> None:
-        self.rows.pop(subscription_id, None)
+    async def delete_state(self, subscription_id: SubscriptionId, version: int) -> None:
+        stored = self.rows.get(subscription_id)
+        if stored is not None and stored.version <= version:
+            del self.rows[subscription_id]
 
 
 class PrismaStateDb:
@@ -74,6 +89,16 @@ class PrismaStateDb:
         )
         return row_to_record(row) if row else None
 
+    async def read_states(
+        self, subscription_ids: Sequence[SubscriptionId]
+    ) -> Mapping[SubscriptionId, StateRecord]:
+        if not subscription_ids:
+            return {}
+        rows = await self._table().find_many(
+            where={"subscription_id": {"in": list(subscription_ids)}}
+        )
+        return {row.subscription_id: row_to_record(row) for row in rows}
+
     async def read_all_states(self) -> Mapping[SubscriptionId, StateRecord]:
         rows = await self._table().find_many()
         return {row.subscription_id: row_to_record(row) for row in rows}
@@ -81,6 +106,7 @@ class PrismaStateDb:
     async def write_state(
         self, subscription_id: SubscriptionId, record: StateRecord
     ) -> None:
+        table = self._table()
         columns: dict[str, object] = {
             "state": record.state.value,
             "until": _datetime(record.until),
@@ -89,16 +115,30 @@ class PrismaStateDb:
             "overloaded_hits": record.overload_streak,
             "version": record.version,
         }
-        await self._table().upsert(
-            where={"subscription_id": subscription_id},
-            data={
-                "create": {"subscription_id": subscription_id, **columns},
-                "update": columns,
+        changed = await table.update_many(
+            where={
+                "subscription_id": subscription_id,
+                "version": {"lt": record.version},
             },
+            data=columns,
         )
+        if changed or await table.find_unique(
+            where={"subscription_id": subscription_id}
+        ):
+            return
+        try:
+            await table.create(data={"subscription_id": subscription_id, **columns})
+        except Exception:  # noqa: BLE001
+            if (
+                await table.find_unique(where={"subscription_id": subscription_id})
+                is None
+            ):
+                raise
 
-    async def delete_state(self, subscription_id: SubscriptionId) -> None:
-        await self._table().delete_many(where={"subscription_id": subscription_id})
+    async def delete_state(self, subscription_id: SubscriptionId, version: int) -> None:
+        await self._table().delete_many(
+            where={"subscription_id": subscription_id, "version": {"lte": version}}
+        )
 
 
 def row_to_record(row: StateRow) -> StateRecord:

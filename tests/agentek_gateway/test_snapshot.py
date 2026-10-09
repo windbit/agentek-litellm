@@ -17,7 +17,7 @@ from .plain import SHARED_ID, deployment, plain_runtime
 
 HOUR_S = 3600.0
 STALE_AFTER_S = 60.0
-DIRECTORY_TTL_S = 30.0
+DIRECTORY_TTL_S = SnapshotTiming().directory_ttl_s
 
 
 async def test_subscriptions_are_closed_until_the_first_load() -> None:

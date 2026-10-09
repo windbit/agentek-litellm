@@ -1,3 +1,4 @@
+import asyncio
 import fakeredis
 import pytest
 from redis.exceptions import ConnectionError as RedisConnectionError
@@ -178,7 +179,7 @@ async def test_blocked_subscriptions_survive_flushall_without_a_restart(harness)
     await store.compare_and_set_state("b", None, record(S.BANNED, 1))
     await harness.redis.flushall()
 
-    states = await store.read_all_states()
+    states = await store.read_states(["a", "b"])
 
     assert {sub_id: item.state for sub_id, item in states.items()} == {
         "a": S.RATE_LIMITED,
@@ -217,7 +218,7 @@ async def test_reconcile_writes_a_state_the_database_missed(harness) -> None:  #
     await store.compare_and_set_state("a", None, record(S.BANNED, 1))
     harness.db.rows.clear()
 
-    await store.reconcile()
+    await store.reconcile(["a"])
 
     assert harness.db.rows["a"].state is S.BANNED
 
@@ -232,7 +233,7 @@ async def test_reconcile_drops_a_row_for_a_subscription_that_recovered(harness) 
 
     await harness.redis.set(harness.keys.state("a"), encode_record(record(S.ACTIVE, 2)))
 
-    await store.reconcile()
+    await store.reconcile(["a"])
 
     assert harness.db.rows == {}
 
@@ -269,4 +270,105 @@ async def test_unreachable_redis_raises_instead_of_inventing_state(harness) -> N
     harness.server.connected = False
 
     with pytest.raises(RedisConnectionError):
-        await store.read_all_states()
+        await store.read_states(["a"])
+
+
+class GatedDb(InMemoryStateDb):
+    """Holds back the first write until released, to let a newer write overtake it."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.gate = asyncio.Event()
+        self.first = True
+        self.read_calls = 0
+
+    async def write_state(self, subscription_id, record):  # type: ignore[no-untyped-def]
+        if self.first:
+            self.first = False
+            await self.gate.wait()
+        await super().write_state(subscription_id, record)
+
+    async def read_states(self, subscription_ids):  # type: ignore[no-untyped-def]
+        self.read_calls += 1
+        return await super().read_states(subscription_ids)
+
+
+async def test_late_database_write_of_an_old_state_cannot_undo_a_newer_one(clock) -> None:  # type: ignore[no-untyped-def]
+    harness = RedisHarness(clock)
+    harness.db = GatedDb()
+    first, second = harness.store(), harness.store()
+    older = asyncio.get_running_loop().create_task(
+        first.compare_and_set_state("a", None, record(S.BANNED, 1))
+    )
+    await asyncio.sleep(0.05)
+    await second.compare_and_set_state("a", 1, record(S.AUTH_FAILED, 2))
+
+    harness.db.gate.set()
+    await older
+
+    assert harness.db.rows["a"].state is S.AUTH_FAILED
+
+
+async def test_state_changed_elsewhere_is_read_from_the_database_after_flushall(harness) -> None:  # type: ignore[no-untyped-def]
+    store = harness.store()
+    await store.compare_and_set_state("a", None, record(S.BANNED, 1))
+    await harness.redis.flushall()
+    harness.db.rows["a"] = record(S.AUTH_FAILED, 5)
+
+    states = await store.read_states(["a"])
+
+    assert states["a"].state is S.AUTH_FAILED
+
+
+async def test_subscription_without_a_row_is_not_looked_up_again_for_a_while(clock) -> None:  # type: ignore[no-untyped-def]
+    harness = RedisHarness(clock)
+    harness.db = GatedDb()
+    store = harness.store()
+
+    for _ in range(5):
+        await store.read_states(["never-seen"])
+
+    assert harness.db.read_calls == 1
+
+
+async def test_half_open_is_not_kept_in_the_database(harness) -> None:  # type: ignore[no-untyped-def]
+    store = harness.store()
+    await store.compare_and_set_state("a", None, record(S.AUTH_FAILED, 1))
+
+    await store.compare_and_set_state("a", 1, record(S.HALF_OPEN, 2))
+
+    assert harness.db.rows == {}
+
+
+async def test_only_the_states_the_spec_names_are_durable() -> None:
+    from agentek_gateway.subscriptions.redis_state import needs_durable_row
+
+    durable = {state for state in S if needs_durable_row(record(state, 1))}
+
+    assert durable == {
+        S.RATE_LIMITED,
+        S.OVERLOADED,
+        S.BROKEN,
+        S.AUTH_REFRESHING,
+        S.AUTH_FAILED,
+        S.BANNED,
+        S.DISABLED,
+    }
+
+
+async def test_reconcile_restores_a_state_redis_forgot(harness) -> None:  # type: ignore[no-untyped-def]
+    store = harness.store()
+    harness.db.rows["a"] = record(S.BANNED, 3)
+
+    await store.reconcile(["a"])
+
+    assert await harness.redis.exists(harness.keys.state("a")) == 1
+
+
+async def test_in_memory_database_ignores_a_delete_older_than_its_row() -> None:
+    db = InMemoryStateDb()
+    await db.write_state("a", record(S.BANNED, 5))
+
+    await db.delete_state("a", 4)
+
+    assert "a" in db.rows

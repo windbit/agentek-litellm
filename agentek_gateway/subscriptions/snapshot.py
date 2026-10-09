@@ -28,7 +28,7 @@ class SnapshotSources:
 class SnapshotTiming:
     interval_s: float = 1.0
     max_stale_s: float = 60.0
-    directory_ttl_s: float = 30.0
+    directory_ttl_s: float = 5.0
 
 
 DEFAULT_TIMING = SnapshotTiming()
@@ -88,7 +88,7 @@ class SnapshotCache:
         directory = await self._subscriptions()
         ids = [subscription.id for subscription in directory]
         states, usage, unsupported, flags, in_flight = await asyncio.gather(
-            sources.store.read_all_states(),
+            sources.store.read_states(ids),
             sources.store.read_all_usage(),
             sources.store.unsupported_pairs(),
             sources.store.read_enabled_flags(),

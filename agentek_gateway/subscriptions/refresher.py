@@ -46,8 +46,9 @@ class TokenRefresher:
 
     async def tick(self) -> None:
         deps = self._deps
-        states = await deps.store.read_all_states()
-        for subscription in await deps.repo.list_subscriptions():
+        subscriptions = await deps.repo.list_subscriptions()
+        states = await deps.store.read_states([sub.id for sub in subscriptions])
+        for subscription in subscriptions:
             if not subscription.enabled or subscription.provider not in deps.providers:
                 continue
             if not await deps.still_leader():
@@ -87,13 +88,9 @@ class TokenRefresher:
         latest = await deps.coordinator.read_latest(name)
         if latest is None or latest.persisted:
             return stored
-        if same_tokens(latest.auth, stored.auth):
-            await deps.coordinator.save_latest(name, LatestAuth(latest.auth, True))
-            return stored
-        if await deps.credentials.write_auth_if_unchanged(name, stored, latest.auth):
-            await deps.coordinator.save_latest(name, LatestAuth(latest.auth, True))
-        else:
-            await deps.coordinator.clear_latest(name)
+        if not same_tokens(latest.auth, stored.auth):
+            await deps.credentials.write_auth_if_unchanged(name, stored, latest.auth)
+        await deps.coordinator.clear_latest(name)
         return await deps.credentials.read_auth(name) or stored
 
     async def refresh(self, subscription: Subscription) -> None:

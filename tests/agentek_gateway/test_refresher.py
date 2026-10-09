@@ -101,9 +101,9 @@ async def test_pair_saved_by_a_mid_request_refresh_is_written_to_the_database() 
 
     stored = await upkeep.credentials.read_auth(CRED)
     latest = await replica.coordinator.read_latest(CRED)
-    assert (stored.auth.refresh_token, latest.persisted, upkeep.provider.refresh_tokens) == (  # type: ignore[union-attr]
+    assert (stored.auth.refresh_token, latest, upkeep.provider.refresh_tokens) == (  # type: ignore[union-attr]
         "rt-mid",
-        True,
+        None,
         [],
     )
 
