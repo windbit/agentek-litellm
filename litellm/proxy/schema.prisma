@@ -1409,7 +1409,7 @@ model LiteLLM_AgentekSubscription {
   provider        String
   name            String   @unique
   credential_name String
-  priority        Int      @default(100)
+  priority        Int      @default(50)
   enabled         Boolean  @default(true)
   max_concurrency Int?
   egress          String?
@@ -1426,6 +1426,7 @@ model LiteLLM_AgentekSubscriptionState {
   state           String
   until           DateTime?
   reason          String?
+  source          String?
   overloaded_hits Int       @default(0)
   version         Int       @default(0)
   updated_at      DateTime  @updatedAt

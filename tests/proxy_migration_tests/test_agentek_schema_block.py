@@ -50,8 +50,15 @@ model LiteLLM_AgentekThing {
   // a comment
   notes String?
 }
+
+enum LiteLLM_AgentekKind {
+  FIRST
+  SECOND
+}
 // END agentek
 """
+
+NO_BLOCK_SCHEMA = "model A {\n  id String @id\n}\n"
 
 
 def with_block_replaced(schema: str, old: str, new: str) -> str:
@@ -68,7 +75,7 @@ def test_repository_copies_hold_one_identical_block():
 @pytest.mark.parametrize(
     "schema",
     [
-        "model A {\n  id String @id\n}\n",
+        NO_BLOCK_SCHEMA,
         BASE_SCHEMA + BASE_SCHEMA,
         BASE_SCHEMA + "model LiteLLM_AfterBlock {\n  id String @id\n}\n",
         "// END agentek\n// BEGIN agentek\n",
@@ -88,19 +95,36 @@ def test_diverged_copy_is_named():
     assert problems == ("b.prisma: agentek block differs from a.prisma",)
 
 
-def test_comment_and_whitespace_changes_do_not_count_as_loss():
-    reformatted = with_block_replaced(
-        BASE_SCHEMA, "  // a comment\n", "  name  String\n"
-    ).replace("name  String", "name    String")
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("  // a comment\n", ""),
+        ("name  String", "name    String // trailing note"),
+        ("name  String", "name  String @unique"),
+        ("name  String", 'name  String @default("x")'),
+        ("notes String?\n}", "notes String?\n  @@index([name])\n}"),
+        ("name  String", "name  String?"),
+    ],
+    ids=["comment", "trailing-comment", "unique", "default", "index", "nullable"],
+)
+def test_compatible_edits_do_not_count_as_loss(old, new):
+    edited = with_block_replaced(BASE_SCHEMA, old, new)
 
-    assert check.growth_problems(BASE_SCHEMA, reformatted) == ()
+    assert check.growth_problems(BASE_SCHEMA, edited) == ()
 
 
-def test_added_field_and_model_are_growth():
+@pytest.mark.parametrize(
+    "addition",
+    [
+        "  extra Int\n}\n\nmodel LiteLLM_AgentekMore {\n  id String @id\n",
+        "  extra Int\n}\n\nenum LiteLLM_AgentekMoreKinds {\n  ONE\n",
+        "  extra Int\n}\n\ntype LiteLLM_AgentekComposite {\n  value Int\n",
+    ],
+    ids=["model", "enum", "type"],
+)
+def test_added_declarations_and_fields_are_growth(addition):
     grown = with_block_replaced(
-        BASE_SCHEMA,
-        "  notes String?\n}\n",
-        "  notes String?\n  extra Int\n}\n\nmodel LiteLLM_AgentekMore {\n  id String @id\n}\n",
+        BASE_SCHEMA, "  notes String?\n", "  notes String?\n" + addition
     )
 
     assert check.growth_problems(BASE_SCHEMA, grown) == ()
@@ -109,15 +133,29 @@ def test_added_field_and_model_are_growth():
 @pytest.mark.parametrize(
     ("old", "new", "lost"),
     [
-        ("  notes String?\n", "", "LiteLLM_AgentekThing: notes String?"),
-        ("name  String", "name  Int", "LiteLLM_AgentekThing: name String"),
+        ("  notes String?\n", "", "model LiteLLM_AgentekThing: notes String"),
+        ("name  String", "name  Int", "model LiteLLM_AgentekThing: name String"),
+        ("name  String", "title String", "model LiteLLM_AgentekThing: name String"),
+        ("  SECOND\n", "", "enum LiteLLM_AgentekKind: SECOND"),
         (
-            "model LiteLLM_AgentekThing {\n  id    String @id\n  name  String\n  // a comment\n  notes String?\n}\n",
-            "model LiteLLM_AgentekOther {\n  id String @id\n}\n",
-            "LiteLLM_AgentekThing: name String",
+            "enum LiteLLM_AgentekKind",
+            "enum LiteLLM_AgentekKinds",
+            "enum LiteLLM_AgentekKind: FIRST",
+        ),
+        (
+            "model LiteLLM_AgentekThing",
+            "view LiteLLM_AgentekThing",
+            "model LiteLLM_AgentekThing: id String",
         ),
     ],
-    ids=["field-removed", "field-retyped", "model-removed"],
+    ids=[
+        "field-removed",
+        "field-retyped",
+        "field-renamed",
+        "enum-value-removed",
+        "enum-renamed",
+        "kind-changed",
+    ],
 )
 def test_shrinking_block_is_rejected(old, new, lost):
     shrunk = with_block_replaced(BASE_SCHEMA, old, new)
@@ -127,12 +165,52 @@ def test_shrinking_block_is_rejected(old, new, lost):
     assert f"agentek block lost a definition: {lost}" in problems
 
 
+@pytest.mark.parametrize(
+    "rename",
+    [
+        ("name  String", 'name  String @map("title")'),
+        ("notes String?\n}", 'notes String?\n  @@map("renamed")\n}'),
+        ("notes String?\n}", 'notes String?\n  @@schema("other")\n}'),
+        ("  SECOND\n", '  SECOND @map("second")\n'),
+    ],
+    ids=["map", "table-map", "schema", "enum-map"],
+)
+def test_physical_renames_are_rejected(rename):
+    renamed = with_block_replaced(BASE_SCHEMA, *rename)
+
+    problems = check.growth_problems(BASE_SCHEMA, renamed)
+
+    assert any(
+        problem.startswith("agentek block must not use physical renames")
+        for problem in problems
+    )
+
+
+def test_rename_in_a_comment_is_not_a_rename():
+    commented = with_block_replaced(
+        BASE_SCHEMA, "  // a comment", '  // see @@map("x")'
+    )
+
+    assert check.growth_problems(BASE_SCHEMA, commented) == ()
+
+
 def test_base_without_block_accepts_any_block():
-    assert check.growth_problems("model A {\n  id String @id\n}\n", BASE_SCHEMA) == ()
+    assert check.growth_problems(NO_BLOCK_SCHEMA, BASE_SCHEMA) == ()
 
 
 def test_block_removed_after_base_had_it_is_rejected():
-    assert check.growth_problems(BASE_SCHEMA, "model A {\n  id String @id\n}\n")
+    assert check.growth_problems(BASE_SCHEMA, NO_BLOCK_SCHEMA)
+
+
+@pytest.mark.parametrize(
+    "broken_base",
+    [BASE_SCHEMA + BASE_SCHEMA, BASE_SCHEMA.replace("// END agentek", "")],
+    ids=["duplicated", "no-end-marker"],
+)
+def test_malformed_block_in_base_refuses_to_compare(broken_base):
+    problems = check.growth_problems(broken_base, BASE_SCHEMA)
+
+    assert problems == ("the base agentek block is malformed, cannot compare",)
 
 
 def git(repo: Path, *args: str) -> None:
@@ -144,7 +222,8 @@ def git(repo: Path, *args: str) -> None:
     )
 
 
-def test_main_compares_working_tree_with_base_ref(tmp_path, monkeypatch):
+@pytest.fixture
+def committed_repo(tmp_path, monkeypatch):
     git(tmp_path, "init", "-q")
     for path in check.SCHEMA_COPIES:
         target = tmp_path / path
@@ -153,14 +232,32 @@ def test_main_compares_working_tree_with_base_ref(tmp_path, monkeypatch):
     git(tmp_path, "add", ".")
     git(tmp_path, "commit", "-q", "-m", "base")
     monkeypatch.chdir(tmp_path)
+    return tmp_path
 
+
+def test_main_accepts_unchanged_block(committed_repo):
     assert check.main(["--base-ref", "HEAD"]) == 0
 
+
+def test_main_rejects_block_that_shrank_since_base_ref(committed_repo):
     shrunk = with_block_replaced(BASE_SCHEMA, "  notes String?\n", "")
     for path in check.SCHEMA_COPIES:
-        (tmp_path / path).write_text(shrunk)
+        (committed_repo / path).write_text(shrunk)
 
     assert check.main(["--base-ref", "HEAD"]) == 1
+
+
+def test_main_rejects_physical_rename_without_base_ref(committed_repo):
+    renamed = with_block_replaced(BASE_SCHEMA, "name  String", 'name  String @map("t")')
+    for path in check.SCHEMA_COPIES:
+        (committed_repo / path).write_text(renamed)
+
+    assert check.main([]) == 1
+
+
+def test_unreachable_base_ref_explains_what_to_fetch(committed_repo):
+    with pytest.raises(SystemExit, match="Fetch the base branch"):
+        check.main(["--base-ref", "origin/missing"])
 
 
 requires_postgres = pytest.mark.skipif(

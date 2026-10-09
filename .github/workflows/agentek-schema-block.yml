@@ -1,0 +1,51 @@
+# Guards the agentek block of schema.prisma (see ci_cd/check_agentek_schema.py) and replays
+# upgrade, rollback and pending-migration cases against a real Postgres.
+name: agentek-schema-block
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: agentek-schema-block-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  schema-block:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Fetch master as the base of the growth check
+        run: git fetch origin master:refs/remotes/origin/master
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Install dependencies
+        run: uv sync --frozen --all-groups --all-extras --python 3.12
+
+      - name: Check the block is identical in all copies and only grows
+        run: uv run --no-sync python ci_cd/check_agentek_schema.py --base-ref origin/master
+
+      - name: Replay migrations against Postgres
+        run: uv run --no-sync python -m pytest tests/proxy_migration_tests/test_agentek_schema_block.py -v
