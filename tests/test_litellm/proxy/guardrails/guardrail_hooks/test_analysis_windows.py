@@ -6,6 +6,9 @@ import pytest
 from litellm.proxy.guardrails.guardrail_hooks.analysis_windows import (
     MAX_WINDOWS,
     OVERLAP,
+    InvalidWindowResponse,
+    WindowCancelledError,
+    merge_windows,
     WINDOW,
     OversizeError,
     SpanLRU,
@@ -165,6 +168,21 @@ def test_next_window_ignores_separator_beyond_snap_limit():
     assert second.start == first.end - OVERLAP
 
 
+def test_paragraph_break_in_crlf_text_is_a_paragraph_level_cut():
+    text = with_inserts(WINDOW + 1000, {5000: "\r\n\r\n", 7000: "\r\n", 7500: ". "})
+    assert plan_windows(text)[0].end == 5004
+
+
+def test_crlf_text_without_spaces_never_starts_or_ends_a_window_inside_crlf():
+    text = ("a" * 1021 + "\r\n") * 60
+    windows = plan_windows(text)
+    assert len(windows) > 2
+    for window in windows:
+        assert text[window.start - 1 : window.start + 1] != "\r\n"
+        assert text[window.end - 1 : window.end + 1] != "\r\n"
+    assert_valid_plan(text, windows)
+
+
 def test_prefix_windows_survive_appended_paragraph():
     base = random_prose(60_000)
     grown = base + "\n\nНовый абзац про заявку Иван Петров."
@@ -244,19 +262,31 @@ def test_own_items_shifts_to_global_offsets_and_drops_foreign():
     ]
 
 
-def test_own_items_skips_malformed_items():
+def test_own_items_skips_non_mapping_items():
     window = Window(0, 100, 0, 100)
-    items = [
-        "text",
-        None,
-        [1, 2],
-        {"start": "5", "end": 9},
-        {"start": 5, "end": 9.0},
-        {"start": 5},
-        {"start": True, "end": 9},
-        {"start": 5, "end": 9, "entity_type": "OK"},
-    ]
+    items = ["text", None, [1, 2], {"start": 5, "end": 9, "entity_type": "OK"}]
     assert own_items(window, items) == [{"start": 5, "end": 9, "entity_type": "OK"}]
+
+
+@pytest.mark.parametrize(
+    "item",
+    [
+        pytest.param({"start": "5", "end": 9}, id="string-start"),
+        pytest.param({"start": 5, "end": 9.0}, id="float-end"),
+        pytest.param({"start": 5}, id="missing-end"),
+        pytest.param({"start": True, "end": 9}, id="bool-start"),
+        pytest.param({"start": -1, "end": 9}, id="negative-start"),
+        pytest.param({"start": 9, "end": 9}, id="empty"),
+        pytest.param({"start": 9, "end": 5}, id="reversed"),
+        pytest.param({"start": 5, "end": 101}, id="end-beyond-window"),
+    ],
+)
+def test_invalid_item_is_a_window_failure(item):
+    window = Window(0, 100, 0, 100)
+    with pytest.raises(InvalidWindowResponse):
+        own_items(window, [item])
+    with pytest.raises(InvalidWindowResponse):
+        merge_windows([window], [[item]])
 
 
 def test_own_items_does_not_mutate_input():
@@ -347,22 +377,52 @@ async def test_timeout_covers_waiting_for_the_gate():
     assert probe.peak == 0
 
 
-async def test_parent_cancellation_leaves_nothing_in_flight():
-    probe = Probe()
+async def test_parent_cancellation_waits_for_windows_to_finish_cancelling():
+    live = 0
 
     async def fetch(window: Window) -> int:
-        return await probe.fetch(window, hold=30)
+        nonlocal live
+        live += 1
+        try:
+            await asyncio.sleep(30)
+            return window.start
+        except asyncio.CancelledError:
+            await asyncio.sleep(0.05)
+            raise
+        finally:
+            live -= 1
 
     parent = asyncio.create_task(
         run_windows(windows_for(4), fetch, gate=asyncio.Semaphore(4), timeout=60)
     )
     await asyncio.sleep(0.02)
-    assert probe.in_flight == 4
+    assert live == 4
     parent.cancel()
     with pytest.raises(asyncio.CancelledError):
         await parent
+    assert live == 0
+
+
+async def test_empty_window_list_returns_empty_result():
+    probe = Probe()
+    assert (
+        await run_windows([], probe.fetch, gate=asyncio.Semaphore(1), timeout=1) == []
+    )
+
+
+async def test_cancellation_raised_inside_fetch_is_a_window_failure():
+    probe = Probe()
+
+    async def fetch(window: Window) -> int:
+        if window.start == 10:
+            raise asyncio.CancelledError()
+        return await probe.fetch(window, hold=30)
+
+    with pytest.raises(WindowCancelledError):
+        await asyncio.wait_for(
+            run_windows(windows_for(3), fetch, gate=asyncio.Semaphore(3), timeout=60), 5
+        )
     assert probe.in_flight == 0
-    assert probe.cancelled == 4
 
 
 async def test_gate_bounds_concurrency():
@@ -437,3 +497,103 @@ def test_span_lru_returns_copies_of_the_list():
     stored.append({"n": 2})
     cache.get("a").append({"n": 3})
     assert cache.get("a") == [{"n": 1}]
+
+
+def clipped_analyzer(windows, start, end, *, clip):
+    """Находки окон для сущности [start, end): целиком в окне, а при `clip` — обрезанная краем окна."""
+    per_window = []
+    for window in windows:
+        lo, hi = max(start, window.start), min(end, window.end)
+        inside = window.start <= start and end <= window.end
+        if (inside or (clip and lo < hi)) and lo < hi:
+            per_window.append(
+                [
+                    {
+                        "entity_type": "X",
+                        "start": lo - window.start,
+                        "end": hi - window.start,
+                    }
+                ]
+            )
+        else:
+            per_window.append([])
+    return per_window
+
+
+@pytest.mark.parametrize("clip", [False, True], ids=["whole-only", "edge-clipped"])
+@pytest.mark.parametrize("length", [600, 800, 1000])
+def test_long_entity_around_seam_is_found_once_and_whole(length, clip):
+    text = "x" * 40_000
+    windows = plan_windows(text)
+    for seam in (windows[0].end, windows[1].start):
+        for start in range(seam - length - 20, seam + 20):
+            per_window = clipped_analyzer(windows, start, start + length, clip=clip)
+            merged = merge_windows(windows, per_window)
+            assert [(item["start"], item["end"]) for item in merged] == [
+                (start, start + length)
+            ]
+
+
+@pytest.mark.parametrize("length", [2, 100, 511, OVERLAP // 2])
+def test_short_entity_around_seam_merges_like_ownership(length):
+    text = "x" * 40_000
+    windows = plan_windows(text)
+    for start in range(windows[0].end - length - 20, windows[0].end + 20):
+        per_window = clipped_analyzer(windows, start, start + length, clip=False)
+        owned = [
+            item
+            for window, items in zip(windows, per_window)
+            for item in own_items(window, items)
+        ]
+        assert merge_windows(windows, per_window) == owned
+
+
+def test_rescue_keeps_only_non_overlapping_same_type_items_of_neighbours():
+    windows = [Window(0, 100, 0, 50), Window(40, 140, 50, 140)]
+    first = [{"entity_type": "A", "start": 45, "end": 55}]
+    second = [
+        {"entity_type": "A", "start": 0, "end": 10},
+        {"entity_type": "B", "start": 0, "end": 10},
+        {"entity_type": "A", "start": 60, "end": 70},
+    ]
+    merged = merge_windows(windows, [first, second])
+    assert [(item["entity_type"], item["start"], item["end"]) for item in merged] == [
+        ("B", 40, 50),
+        ("A", 45, 55),
+        ("A", 100, 110),
+    ]
+
+
+def test_edge_item_that_is_a_real_entity_is_not_replaced_by_equal_neighbour_item():
+    windows = [Window(0, 100, 0, 50), Window(20, 140, 50, 140)]
+    first = [{"entity_type": "A", "start": 30, "end": 100, "score": 0.9}]
+    second = [{"entity_type": "A", "start": 10, "end": 80, "score": 0.1}]
+    merged = merge_windows(windows, [first, second])
+    assert merged == [{"entity_type": "A", "start": 30, "end": 100, "score": 0.9}]
+
+
+def test_stub_at_physical_edge_is_replaced_by_covering_neighbour_item():
+    windows = [Window(0, 100, 0, 70), Window(40, 200, 70, 200)]
+    first = [{"entity_type": "A", "start": 60, "end": 100}]
+    second = [{"entity_type": "A", "start": 20, "end": 120}]
+    merged = merge_windows(windows, [first, second])
+    assert [(item["start"], item["end"]) for item in merged] == [(60, 160)]
+
+
+def test_item_touching_text_boundaries_is_not_a_stub():
+    windows = [Window(0, 100, 0, 70), Window(40, 120, 70, 120)]
+    first = [{"entity_type": "A", "start": 0, "end": 20}]
+    second = [{"entity_type": "A", "start": 60, "end": 80}]
+    merged = merge_windows(windows, [first, second])
+    assert [(item["start"], item["end"]) for item in merged] == [(0, 20), (100, 120)]
+
+
+def test_duplicate_stubs_replaced_by_one_cover_give_one_item():
+    windows = [Window(0, 100, 0, 70), Window(40, 200, 70, 200)]
+    first = [
+        {"entity_type": "A", "start": 50, "end": 100},
+        {"entity_type": "A", "start": 60, "end": 100},
+    ]
+    second = [{"entity_type": "A", "start": 10, "end": 120}]
+    merged = merge_windows(windows, [first, second])
+    assert [(item["start"], item["end"]) for item in merged] == [(50, 160)]

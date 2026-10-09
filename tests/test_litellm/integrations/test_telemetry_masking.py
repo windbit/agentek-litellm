@@ -715,6 +715,15 @@ class WindowAnalyzer:
         return found
 
 
+@pytest.fixture
+def fresh_budgets():
+    import litellm.integrations.telemetry_masking as tm
+
+    tm._budgets.clear()
+    yield
+    tm._budgets.clear()
+
+
 def window_masker(analyzer):
     return TelemetryMasker(
         entities=["PERSON"], analyzer_base="http://analyzer", analyze_request=analyzer
@@ -733,12 +742,10 @@ def put(text, value, position):
 @pytest.mark.asyncio
 async def test_long_text_goes_in_windows_and_name_on_the_seam_is_masked():
     text = prose(100_000)
-    cut = plan_windows(text)[0].end
-    text = put(text, PERSON, cut - len("Иван "))
+    person_start = plan_windows(text)[0].end - len("Иван ")
+    text = put(text, PERSON, person_start)
     windows = plan_windows(text)
-    assert (
-        windows[0].end - len("Иван ") < windows[0].end < windows[0].end + len("Петров")
-    )
+    assert person_start < windows[0].end < person_start + len(PERSON)
     analyzer = WindowAnalyzer()
 
     masked = await window_masker(analyzer).mask({"content": text})
@@ -833,14 +840,17 @@ async def test_windows_of_one_span_run_in_parallel_up_to_the_span_limit():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("length", [WINDOW, WINDOW + 1])
-async def test_window_boundary_decides_between_one_exchange_and_several(length):
+@pytest.mark.parametrize(("length", "exchanges"), [(WINDOW, 1), (WINDOW + 1, 2)])
+async def test_window_boundary_decides_between_one_exchange_and_several(
+    length, exchanges
+):
     text = prose(length)
     analyzer = WindowAnalyzer()
 
     await window_masker(analyzer).mask({"content": text})
 
-    assert analyzer.texts == [text] if length == WINDOW else len(analyzer.texts) == 2
+    assert len(analyzer.texts) == exchanges
+    assert (analyzer.texts == [text]) == (exchanges == 1)
 
 
 @pytest.mark.asyncio
@@ -867,10 +877,11 @@ async def test_text_over_limit_is_dropped_before_any_window_is_sent():
 
 
 @pytest.mark.asyncio
-async def test_span_deadline_applies_to_all_windows_together(monkeypatch):
+async def test_span_deadline_applies_to_all_windows_together(
+    fresh_budgets, monkeypatch
+):
     import litellm.integrations.telemetry_masking as tm
 
-    tm._budgets.clear()
     monkeypatch.setattr(tm, "MASK_DEADLINE_SECONDS", 0.05)
     analyzer = WindowAnalyzer(delay=0.3)
     masker = window_masker(analyzer)
@@ -881,3 +892,96 @@ async def test_span_deadline_applies_to_all_windows_together(monkeypatch):
     await asyncio.sleep(1)
     assert tm._loop_budget().spans == 0
     assert tm._loop_budget().exchanges == 0
+
+
+@pytest.mark.asyncio
+async def test_window_concurrency_follows_analyzer_slots(fresh_budgets, monkeypatch):
+    import litellm.integrations.telemetry_masking as tm
+
+    monkeypatch.setattr(tm, "ANALYZE_MAX_CONCURRENCY", 1)
+    masker = window_masker(WindowAnalyzer(delay=0.01))
+    live = peak = 0
+    analyze_window = masker._analyze_window
+
+    async def counting(text):
+        nonlocal live, peak
+        live += 1
+        peak = max(peak, live)
+        try:
+            return await analyze_window(text)
+        finally:
+            live -= 1
+
+    masker._analyze_window = counting
+    await masker.mask({"content": prose(80_000)})
+
+    assert peak == 1
+
+
+@pytest.mark.asyncio
+async def test_long_entity_cut_by_window_end_is_masked_whole():
+    long_name = "Иван " + "Очень" * 130 + " Петров"
+    text = prose(60_000)
+    windows = plan_windows(text)
+    text = put(text, long_name, windows[0].end - 300)
+
+    async def whole_entities_only(sent):
+        position = sent.find(long_name)
+        if position < 0:
+            return []
+        return [
+            {
+                "entity_type": "PERSON",
+                "start": position,
+                "end": position + len(long_name),
+            }
+        ]
+
+    masked = await window_masker(whole_entities_only)._mask_text(text)
+
+    assert "Очень" not in masked
+    assert masked.count("<PERSON_") == 1
+
+
+@pytest.mark.asyncio
+async def test_invalid_span_from_analyzer_drops_the_span():
+    async def broken(sent):
+        return [{"entity_type": "PERSON", "start": 5, "end": len(sent) + 10}]
+
+    with pytest.raises(TelemetryMaskingUnavailable) as error:
+        await window_masker(broken).mask_span({"content": prose(30_000)}, None)
+
+    assert error.value.reason == "masking_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_span_cache_is_bounded_by_entries(monkeypatch):
+    import litellm.integrations.telemetry_masking as tm
+
+    monkeypatch.setattr(tm, "SPAN_CACHE_SIZE", 2)
+    analyzer = WindowAnalyzer()
+    masker = window_masker(analyzer)
+    for name in ("Первый", "Второй", "Третий"):
+        await masker.mask({"content": f"{name} абзац"})
+    sent = len(analyzer.texts)
+
+    await masker.mask({"content": "Первый абзац"})
+
+    assert len(analyzer.texts) == sent + 1
+
+
+@pytest.mark.asyncio
+async def test_span_cache_is_bounded_by_total_spans(monkeypatch):
+    import litellm.integrations.telemetry_masking as tm
+
+    monkeypatch.setattr(tm, "SPAN_CACHE_MAX_SPANS", 3)
+    analyzer = WindowAnalyzer()
+    masker = window_masker(analyzer)
+    texts = [f"{PERSON} и {PERSON}, абзац {number}" for number in range(3)]
+    for text in texts:
+        await masker.mask({"content": text})
+    sent = len(analyzer.texts)
+
+    await masker.mask({"content": texts[0]})
+
+    assert len(analyzer.texts) == sent + 1
