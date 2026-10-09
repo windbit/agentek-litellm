@@ -2,6 +2,8 @@ import hashlib
 import uuid
 from collections.abc import Mapping
 
+from litellm._logging import verbose_proxy_logger
+
 from .clock import Clock
 from .expiring import ExpiringMap
 from .model import SubscriptionId
@@ -47,7 +49,13 @@ class StickyBook:
         known = self._local.get(key)
         if known:
             return known
-        stored = await self._store.read_sticky(key)
+        try:
+            stored = await self._store.read_sticky(key)
+        except Exception:  # noqa: BLE001
+            verbose_proxy_logger.exception(
+                "agentek_gateway sticky binding was not read"
+            )
+            return None
         if stored:
             self._local.put(key, stored)
         return stored
@@ -59,4 +67,9 @@ class StickyBook:
         if self._local.get(key) == subscription_id:
             return
         self._local.put(key, subscription_id)
-        await self._store.write_sticky(key, subscription_id, self._ttl_s)
+        try:
+            await self._store.write_sticky(key, subscription_id, self._ttl_s)
+        except Exception:  # noqa: BLE001
+            verbose_proxy_logger.exception(
+                "agentek_gateway sticky binding was not saved"
+            )

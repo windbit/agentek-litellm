@@ -49,11 +49,11 @@ class Plain:
     deployments: list[dict[str, object]]
     repo: InMemorySubscriptionRepo
 
-    async def pick(self, request_id: str = "req") -> list[str]:
+    async def pick(self, request_id: str = "req", **request: object) -> list[str]:
         chosen = await self.runtime.gateway.filter(
             MODEL,
             self.deployments,
-            {"metadata": {"agentek_request_id": request_id}},
+            {"metadata": {"agentek_request_id": request_id}, **request},
         )
         return [str(item["model_info"]["id"]) for item in chosen]  # type: ignore[index]
 

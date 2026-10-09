@@ -149,3 +149,15 @@ async def test_new_subscription_reaches_the_snapshot_within_the_directory_ttl() 
     late = sorted((await snapshot.refresh()).subscriptions)
 
     assert (early, late) == (["a"], ["a", "b"])
+
+
+async def test_chat_binding_store_outage_does_not_stop_routing_on_the_last_snapshot() -> (
+    None
+):
+    plain = plain_runtime(["a"], shared=True)
+    await plain.runtime.parts.snapshot.refresh()
+    plain.server.connected = False
+
+    picked = await plain.pick(prompt_cache_key="chat-1")
+
+    assert picked == ["sub:a:gpt-x", SHARED_ID]

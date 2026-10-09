@@ -182,6 +182,7 @@ class SubscriptionGateway:
         return snapshot.subscriptions.get(subscription_id) if subscription_id else None
 
     def _looks_like_subscription(self, deployment: Deployment) -> bool:
+        """Cheap identification that needs no healthy state: the plugin's id prefix or a known subscription credential."""
         model_info = deployment.get("model_info")
         deployment_id = (
             model_info.get("id") if isinstance(model_info, Mapping) else None
@@ -190,10 +191,9 @@ class SubscriptionGateway:
             SUBSCRIPTION_ID_PREFIX
         ):
             return True
-        params = deployment.get("litellm_params")
-        model = params.get("model") if isinstance(params, Mapping) else None
-        return isinstance(model, str) and any(
-            model.startswith(f"{provider}/") for provider in self._parts.providers
+        snapshot = self._parts.snapshot.current
+        return snapshot is not None and (
+            subscription_of("", deployment.get("litellm_params"), snapshot) is not None
         )
 
 
