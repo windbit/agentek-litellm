@@ -367,56 +367,57 @@
    "kind": "rewritten",
    "form": "однострочный JSON с кириллицей в виде двойных эскейпов \\\\uXXXX внутри вложенной строки",
    "chars": 52824,
+   "decoded_chars": 49990,
    "newlines": 0,
    "planted": 0,
    "windows": [
     {
      "start": 0,
-     "end": 7822,
+     "end": 7434,
      "own_lo": 0,
-     "own_hi": 7282
+     "own_hi": 6895
     },
     {
-     "start": 6743,
-     "end": 14660,
-     "own_lo": 7282,
-     "own_hi": 14137
+     "start": 6357,
+     "end": 13951,
+     "own_lo": 6895,
+     "own_hi": 13435
     },
     {
-     "start": 13615,
-     "end": 20718,
-     "own_lo": 14137,
-     "own_hi": 20204
+     "start": 12920,
+     "end": 19678,
+     "own_lo": 13435,
+     "own_hi": 19165
     },
     {
-     "start": 19691,
-     "end": 27592,
-     "own_lo": 20204,
-     "own_hi": 27079
+     "start": 18652,
+     "end": 24788,
+     "own_lo": 19165,
+     "own_hi": 24272
     },
     {
-     "start": 26567,
-     "end": 34452,
-     "own_lo": 27079,
-     "own_hi": 33940
+     "start": 23756,
+     "end": 31447,
+     "own_lo": 24272,
+     "own_hi": 30928
     },
     {
-     "start": 33428,
-     "end": 40764,
-     "own_lo": 33940,
-     "own_hi": 40248
+     "start": 30409,
+     "end": 36773,
+     "own_lo": 30928,
+     "own_hi": 36254
     },
     {
-     "start": 39732,
-     "end": 47717,
-     "own_lo": 40248,
-     "own_hi": 47202
+     "start": 35735,
+     "end": 43448,
+     "own_lo": 36254,
+     "own_hi": 42935
     },
     {
-     "start": 46688,
-     "end": 52824,
-     "own_lo": 47202,
-     "own_hi": 52824
+     "start": 42422,
+     "end": 49990,
+     "own_lo": 42935,
+     "own_hi": 49990
     }
    ]
   },
@@ -712,9 +713,9 @@
    "kind": "synthetic",
    "form": "JSON с кириллицей в виде \\\\uXXXX; окна считаются по раскодированному тексту",
    "chars": 146153,
+   "decoded_chars": 27428,
    "newlines": 0,
    "planted": 9,
-   "decoded_chars": 27428,
    "windows": [
     {
      "start": 0,

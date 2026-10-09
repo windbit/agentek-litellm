@@ -11,8 +11,8 @@
 Запись на файл: `file`, `kind` (`synthetic` — собран генератором под шов, `rewritten` — форма с реального сообщения, значения заменены),
 `form`, `chars`, `newlines`, `planted` (число записей в `expected_entities.json`), `windows`, `seams`.
 
-`windows` — окна, как их выдаёт `plan_windows` на этом тексте: `start`, `end`, `own_lo`, `own_hi` (зона владения). У `seam_json_u_escapes_28k.json` окна
-считаются по раскодированному тексту (`decoded_chars` — его длина), как делает гардрейл.
+`windows` — окна, как их выдаёт `plan_windows` на этом тексте: `start`, `end`, `own_lo`, `own_hi` (зона владения). У файлов с раскодированием (`decoded_chars` — длина раскодированного текста) окна
+считаются по раскодированному тексту, как делает гардрейл.
 
 `seams` — какая сущность на каком шве. `window` — индекс окна из `windows`, `entity` — индекс записи в `expected_entities.json` этого файла.
 
@@ -35,18 +35,20 @@
 Список неполон: в `rewritten`-файлах есть и другие сущности, которых здесь нет. Эталон для правил — полный прогон `PiiRuleEngine` с боевым рулбуком,
 эталон для анализатора — полный разбор без окон.
 
-`detector: "rules"` — запись находится движком правил на этих оффсетах с этим типом (`check_corpus.py` с `CORPUS_RULEBOOK` это проверяет).
+`detector: "rules"` — запись находится движком правил на этих оффсетах с этим типом (проверяет тест).
 `detector: "analyzer"` — запись находит анализатор; `ru2_detects_isolated` говорит, нашёл ли её `presidio-analyzer:2.2.362-ru2` на срезе ±500 символов вокруг.
 
-В `seam_json_u_escapes_28k.json` `start`/`end` — оффсеты в сыром тексте с `\uXXXX`, `decoded_start`/`decoded_end` — в раскодированном; окна и швы заданы
+Для файлов, где срабатывает раскодирование (`seam_json_u_escapes_28k.json`), `start`/`end` — оффсеты в сыром тексте с `\uXXXX`, `decoded_start`/`decoded_end` — в раскодированном; окна и швы заданы
 в раскодированных, `text` — раскодированное значение.
 
-## check_corpus.py
+## Проверка
 
-Сверяет оффсеты с текстом, длины с manifest, `windows` с `plan_windows` и швы с окнами. Запуск из корня форка:
+`tests/guardrails_tests/test_pii_windows_corpus.py` сверяет оффсеты с текстом, длины с manifest, `windows` с `plan_windows` и швы с окнами.
+Текст для окон и оффсетов берётся так же, как в гардрейле: если `decode_json_escapes` срабатывает, это раскодированный текст (в manifest у такого файла есть `decoded_chars`).
+`rulebook.yaml` — рулбук для сверки `detector: "rules"` с `PiiRuleEngine`.
 
 ```bash
-python tests/guardrails_tests/fixtures/pii_windows/check_corpus.py
+pytest tests/guardrails_tests/test_pii_windows_corpus.py
 ```
 
-`CORPUS_RULEBOOK=<путь к рулбуку>` добавляет сверку `detector: "rules"` с `PiiRuleEngine`. Изменился `plan_windows` — перегенерируй швы и `windows`: проверка падает.
+Изменился `plan_windows` — перегенерируй `windows` и швы: тест падает.
