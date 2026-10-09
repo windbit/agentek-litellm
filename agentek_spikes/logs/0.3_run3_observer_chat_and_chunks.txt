@@ -1,0 +1,9 @@
+=== 0.3 chat non-stream usage_limit (observer must see every attempt): HTTP 200
+   provider_error 429 solo:sub-a:solo headers: 9 msg: {"error": {"type": "usage_limit_reached", "message": "The usage limit has been reached", "
+   provider_error 429 solo:sub-a:solo headers: 9 msg: {"error": {"type": "usage_limit_reached", "message": "The usage limit has been reached", "
+   provider_error 429 solo:sub-a:solo headers: 9 msg: {"error": {"type": "usage_limit_reached", "message": "The usage limit has been reached", "
+   provider_error 429 solo:sub-a:solo headers: 9 msg: {"error": {"type": "usage_limit_reached", "message": "The usage limit has been reached", "
+=== 0.3 responses stream mid-stream error chunk payload: HTTP 200
+   stream_error_chunk ErrorEvent {"type": "error", "code": "rate_limit_exceeded", "message": "Rate limit reached mid stream"}
+=== 0.3 responses stream response.failed chunk payload: HTTP 200
+   stream_error_chunk ResponseFailedEvent {"type": "response.failed", "response": {"id": "resp_bGl0ZWxsbTpjdXN0b21fbGxtX3Byb3ZpZGVyOmNoYXRncHQ7bW9kZWxfaWQ6c29sbzpzdWItYTpzb2xvO3Jlc3BvbnNlX2lkOnJlc3BfZTMzMGQxM2E3ZGZhNDkwMGIxYWYyY2M0", "created_at": 1791552595, "error": {"code": "usage_limit_reached", "message": "The usage limit has been reached"}, "incomplete_details": n

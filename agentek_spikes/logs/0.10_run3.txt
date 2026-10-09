@@ -1,0 +1,20 @@
+
+=== 0.10 j chat non-stream: HTTP 200 in 0.6s upstream=['A:internal', 'A:internal', 'A:internal', 'B:ok']
+    filter excl=None meta_excl=None
+    filter excl=None meta_excl=None
+    filter excl=None meta_excl=None
+    filter excl=['priced:sub-a'] meta_excl=['priced:sub-a']
+
+=== 0.10 k chat stream: HTTP 200 in 0.4s upstream=['A:internal', 'A:internal', 'A:internal', 'B:ok']
+    filter excl=None meta_excl=None
+    filter excl=None meta_excl=None
+    filter excl=None meta_excl=None
+    filter excl=['priced:sub-a'] meta_excl=['priced:sub-a']
+
+=== 0.10 l responses non-stream: HTTP 200 in 0.3s upstream=['A:internal', 'B:ok']
+    filter excl=None meta_excl=None
+    filter excl=None meta_excl=None
+
+=== 0.10 m responses stream: HTTP 200 in 0.3s upstream=['A:internal', 'B:ok']
+    filter excl=None meta_excl=None
+    filter excl=None meta_excl=None

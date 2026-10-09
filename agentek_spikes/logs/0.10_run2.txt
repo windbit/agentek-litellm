@@ -1,0 +1,54 @@
+
+=== 0.10 g real failover: A dies before first chunk, plugin allows A,B,C: stream=True HTTP 500 in 0.5s upstream=['A:close_after_headers', 'A:close_after_headers', 'A:close_after_headers'] client Retry-After={}
+    body: {"error":{"message":"litellm.InternalServerError: InternalServerError: ChatgptException - . Received Model Group=priced\nAvailable Model Gro
+    filter excl=None meta_excl=None healthy=['sub-a', 'sub-b', 'sub-c']
+    pick -> priced:sub-a
+    failure hook: InternalServerError 500 dep=priced:sub-a text='litellm.InternalServerError: InternalServerError: ChatgptExc'
+    filter excl=None meta_excl=None healthy=['sub-a', 'sub-b', 'sub-c']
+    pick -> priced:sub-a
+    failure hook: InternalServerError 500 dep=priced:sub-a text='litellm.InternalServerError: InternalServerError: ChatgptExc'
+    filter excl=None meta_excl=None healthy=['sub-a', 'sub-b', 'sub-c']
+    pick -> priced:sub-a
+    failure hook: InternalServerError 500 dep=priced:sub-a text='litellm.InternalServerError: InternalServerError: ChatgptExc'
+
+=== 0.10 h real failover: A and B die before first chunk, plugin allows A,B only: stream=True HTTP 500 in 0.1s upstream=['A:close_after_headers', 'A:close_after_headers', 'B:close_after_headers'] client Retry-After={}
+    body: {"error":{"message":"litellm.InternalServerError: InternalServerError: ChatgptException - . Received Model Group=priced\nAvailable Model Gro
+    filter excl=None meta_excl=None healthy=['sub-a', 'sub-b', 'sub-c']
+    pick -> priced:sub-a
+    failure hook: InternalServerError 500 dep=priced:sub-a text='litellm.InternalServerError: InternalServerError: ChatgptExc'
+    filter excl=None meta_excl=None healthy=['sub-a', 'sub-b', 'sub-c']
+    pick -> priced:sub-a
+    failure hook: InternalServerError 500 dep=priced:sub-a text='litellm.InternalServerError: InternalServerError: ChatgptExc'
+    filter excl=None meta_excl=None healthy=['sub-b', 'sub-c']
+    pick -> priced:sub-b
+    failure hook: InternalServerError 500 dep=priced:sub-b text='litellm.InternalServerError: InternalServerError: ChatgptExc'
+
+=== 0.10 i retry-after variant=response: A,B exhausted, plugin allows A,B: stream=False HTTP 429 in 0.1s upstream=['A:usage_limit', 'B:usage_limit'] client Retry-After={}
+    body: {"error":{"message":"litellm.RateLimitError: agentek: no available subscriptions (spike). Received Model Group=priced\nAvailable Model Group
+    filter excl=None meta_excl=None healthy=['sub-a', 'sub-b', 'sub-c']
+    pick -> priced:sub-a
+    failure hook: RateLimitError 429 dep=priced:sub-a text='litellm.RateLimitError: RateLimitError: ChatgptException - {'
+    filter excl=None meta_excl=None healthy=['sub-b', 'sub-c']
+    pick -> priced:sub-b
+    filter excl=None meta_excl=None healthy=['sub-b', 'sub-c']
+    pick -> None
+
+=== 0.10 i retry-after variant=attr: A,B exhausted, plugin allows A,B: stream=False HTTP 429 in 0.1s upstream=['A:usage_limit', 'B:usage_limit'] client Retry-After={'retry-after': '10'}
+    body: {"error":{"message":"litellm.RateLimitError: agentek: no available subscriptions (spike). Received Model Group=priced\nAvailable Model Group
+    filter excl=None meta_excl=None healthy=['sub-a', 'sub-b', 'sub-c']
+    pick -> priced:sub-a
+    failure hook: RateLimitError 429 dep=priced:sub-a text='litellm.RateLimitError: RateLimitError: ChatgptException - {'
+    filter excl=None meta_excl=None healthy=['sub-b', 'sub-c']
+    pick -> priced:sub-b
+    filter excl=None meta_excl=None healthy=['sub-b', 'sub-c']
+    pick -> None
+
+=== 0.10 i retry-after variant=hook: A,B exhausted, plugin allows A,B: stream=False HTTP 429 in 0.1s upstream=['A:usage_limit', 'B:usage_limit'] client Retry-After={'retry-after': '10'}
+    body: {"error":{"message":"litellm.RateLimitError: agentek: no available subscriptions (spike). Received Model Group=priced\nAvailable Model Group
+    filter excl=None meta_excl=None healthy=['sub-a', 'sub-b', 'sub-c']
+    pick -> priced:sub-a
+    failure hook: RateLimitError 429 dep=priced:sub-a text='litellm.RateLimitError: RateLimitError: ChatgptException - {'
+    filter excl=None meta_excl=None healthy=['sub-b', 'sub-c']
+    pick -> priced:sub-b
+    filter excl=None meta_excl=None healthy=['sub-b', 'sub-c']
+    pick -> None

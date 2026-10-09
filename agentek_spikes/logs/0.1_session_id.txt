@@ -1,0 +1,2 @@
+without override (current provider behaviour), pck=[X,X,Y]: [('C', '2b43ee1b-7b79-472c-89cc-', None), ('C', '29b4ea0c-7d0c-4d88-979e-', None), ('A', '0d782c3f-d9ee-48b4-a871-', None)]
+with session_id derived from prompt_cache_key in pre_call hook, pck=[X,X,Y]: [('C', 'agentek-4b68ab3847feda7d', None), ('C', 'agentek-4b68ab3847feda7d', None), ('A', 'agentek-18f5384d58bcb1bb', None)]

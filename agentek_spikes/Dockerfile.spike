@@ -1,0 +1,6 @@
+# Spike image: CI image of the fork head + the plugin package, mirroring the `COPY agentek_gateway` line the
+# real Dockerfile will get. Build from services/litellm:  docker build -f agentek_spikes/Dockerfile.spike -t agentek-litellm:spike .
+ARG BASE=ghcr.io/windbit/agentek-litellm:b649adb72d24cce5b6fd0e06f22fdf9a34e05ac1
+FROM ${BASE}
+COPY agentek_gateway /app/agentek_gateway
+ENV LITELLM_WORKER_STARTUP_HOOKS=agentek_gateway:startup

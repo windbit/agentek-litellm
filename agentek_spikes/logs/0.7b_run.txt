@@ -1,0 +1,6 @@
+##### S5-v2: p-v2 DB (policy table + row), rollback to p-v1-pend with the v2 resolver
+NOTICE:  database "s5v2" does not exist, skipping
+before: LiteLLM_AgentekSubscription,LiteLLM_AgentekSubscriptionPolicy,LiteLLM_AgentekSubscriptionState
+2026-10-09 12:49:39,084 - litellm_proxy_extras - INFO - Using v2 migration resolver (--use_v2_migration_resolver)
+RESULT True
+after: LiteLLM_AgentekSubscription,LiteLLM_AgentekSubscriptionPolicy,LiteLLM_AgentekSubscriptionState,LiteLLM_SpikeDummy; policy rows: 1

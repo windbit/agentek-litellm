@@ -1,0 +1,14 @@
+=== 0.3 c2 responses stream error-event mid-stream
+    stream_end {"status": "completed", "chunks": 4, "kinds": ["ResponsesAPIStreamEvents.RESPONSE_CREATED", "ResponsesAPIStreamEvents.OUTPUT_TEXT_DELTA", "ResponsesAPIStreamEvents.OUTPUT_TEXT_DELTA", "error"]}
+=== 0.3 d2 responses stream abort mid-stream
+    failure {"exc_class": "IncompleteRead", "stream": true}
+    stream_end {"status": "error:IncompleteRead", "chunks": 3, "kinds": ["ResponsesAPIStreamEvents.RESPONSE_CREATED", "ResponsesAPIStreamEvents.OUTPUT_TEXT_DELTA", "ResponsesAPIStreamEvents.OUTPUT_TEXT_DELTA"]}
+    proxy_failure_hook {"exc_class": "IncompleteRead"}
+=== 0.3 f2 responses stream client disconnect
+    stream_end {"status": "cancelled", "chunks": 3, "kinds": ["ResponsesAPIStreamEvents.RESPONSE_CREATED", "ResponsesAPIStreamEvents.OUTPUT_TEXT_DELTA", "ResponsesAPIStreamEvents.OUTPUT_TEXT_DELTA"]}
+=== 0.3 g responses stream ok
+    success {"stream": true}
+    stream_end {"status": "completed", "chunks": 8, "kinds": ["ResponsesAPIStreamEvents.RESPONSE_CREATED", "ResponsesAPIStreamEvents.OUTPUT_TEXT_DELTA", "ResponsesAPIStreamEvents.OUTPUT_TEXT_DELTA", "ResponsesAPIStreamEvents.OUTPUT_TEXT_DELTA", "ResponsesAPIStreamEvents.OUTP
+=== 0.3 h responses stream response.failed at start
+    failure {"status": 500, "exc_class": "APIError", "stream": true}
+    stream_end {"status": "completed", "chunks": 2, "kinds": ["ResponsesAPIStreamEvents.RESPONSE_CREATED", "ResponsesAPIStreamEvents.RESPONSE_FAILED"]}

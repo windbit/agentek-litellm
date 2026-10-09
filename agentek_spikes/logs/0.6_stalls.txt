@@ -1,0 +1,4 @@
+deployments=600 rate=100rps p50=1.2 p99=9.8 max=33.6
+slow calls (>15 ms), start offsets in s: ['9.82:20ms', '9.99:34ms']
+deployments=1800 rate=100rps p50=3.4 p99=13.4 max=73.2
+slow calls (>15 ms), start offsets in s: ['1.36:39ms', '1.40:30ms', '1.43:31ms', '1.46:73ms', '1.53:53ms', '1.59:30ms', '1.62:27ms', '4.81:17ms', '5.06:16ms', '10.00:19ms']

@@ -1,0 +1,2 @@
+router num_retries = 4
+gateway, model=solo, num_retries=4: HTTP 429, upstream attempts=5, 18.5s

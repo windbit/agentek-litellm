@@ -1,0 +1,3 @@
+# cdn-cgi/trace from the gateway pod (python urllib, https://chatgpt.com/cdn-cgi/trace), 2026-10-09, 3 samples per cluster over ~2 minutes
+dev gateway:  ip=<redacted>  loc=FI colo=ARN  x3, identical
+box gateway:  ip=<redacted> loc=FI colo=FRA  x3, identical

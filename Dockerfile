@@ -96,6 +96,9 @@ COPY --from=builder /app/litellm/proxy/prisma_migration.py /app/litellm/proxy/pr
 # working directory on sys.path; litellm/proxy/hooks resolves
 # enterprise.enterprise_hooks from it)
 COPY --from=builder /app/enterprise /app/enterprise
+# Agentek plugin package: imported from /app (the proxy puts the working directory on sys.path)
+# by the LITELLM_WORKER_STARTUP_HOOKS=agentek_gateway:startup hook.
+COPY --from=builder /app/agentek_gateway /app/agentek_gateway
 # Prisma binaries live in $HOME/.cache (default prisma-python location),
 # which is /root/.cache here. Copy only the Prisma subdirs — copying the
 # whole /root/.cache drags in the uv build cache (~660 MB, includes a

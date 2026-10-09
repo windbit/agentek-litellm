@@ -1,0 +1,28 @@
+=== 0.1 responses: 429 on first pick
+  filter  call=24766b rk=13184 excl=None target_order=None meta_excl=None pck_paths=['prompt_cache_key', 'proxy_server_request.body.prompt_cache_key'] healthy=['sub-a', 'sub-b', 'sub-c']
+  pre_call call=24766b CallTypes.aresponses dep=sub:sub-b:gpt-5.4 tags_before=['team-x', 'Credential: sub-b'] tags_after=['team-x', 'Credential: sub-b']
+  failure  call=24766b dep=sub:sub-b:gpt-5.4 {'status': 429, 'exc_class': 'RateLimitError', 'exc_headers': {}, 'exc_body': '', 'stream': False, 'elapsed': 0.018}
+  filter  call=24766b rk=27392 excl=None target_order=None meta_excl=None pck_paths=['prompt_cache_key', 'proxy_server_request.body.prompt_cache_key', 'proxy_server_request.body.litellm_metadata.previous_models[0].prompt_cache_key', 'proxy_server_request.body.litellm_metadata.previous_models[1].prompt_cache_key', 'proxy_server_r
+  pre_call call=24766b CallTypes.aresponses dep=sub:sub-a:gpt-5.4 tags_before=['team-x', 'Credential: sub-b', 'Credential: sub-a'] tags_after=['team-x', 'Credential: sub-b', 'Credential: sub-a']
+  filter  call=24766b rk=21632 excl=None target_order=None meta_excl=None pck_paths=['prompt_cache_key', 'proxy_server_request.body.prompt_cache_key', 'proxy_server_request.body.litellm_metadata.previous_models[0].prompt_cache_key', 'proxy_server_request.body.litellm_metadata.previous_models[1].prompt_cache_key', 'proxy_server_r
+  pre_call call=24766b CallTypes.aresponses dep=sub:sub-a:gpt-5.4 tags_before=['team-x', 'Credential: sub-b', 'Credential: sub-a'] tags_after=['team-x', 'Credential: sub-b', 'Credential: sub-a']
+  success  call=24766b dep=sub:sub-a:gpt-5.4 {'stream': False, 'request_tags': ['team-x', 'Credential: sub-b', 'User-Agent: Python-urllib', 'User-Agent: Python-urllib/3.14']}
+=== 0.1 chat: 429 on first pick
+  filter  call=3f9019 rk=49408 excl=None target_order=None meta_excl=None pck_paths=['prompt_cache_key', 'proxy_server_request.body.prompt_cache_key'] healthy=['sub-a', 'sub-c']
+  pre_call call=3f9019 CallTypes.acompletion dep=sub:sub-a:gpt-5.4 tags_before=['team-x', 'Credential: sub-a'] tags_after=['team-x', 'Credential: sub-a']
+  pre_call call=3f9019 CallTypes.aresponses dep=sub:sub-a:gpt-5.4 tags_before=['team-x', 'Credential: sub-a'] tags_after=['team-x', 'Credential: sub-a']
+  failure  call=3f9019 dep=sub:sub-a:gpt-5.4 {'status': 429, 'exc_class': 'RateLimitError', 'exc_headers': {}, 'exc_body': '', 'stream': False, 'elapsed': 0.509}
+  filter  call=3f9019 rk=22688 excl=None target_order=None meta_excl=None pck_paths=['prompt_cache_key', 'metadata.previous_models[0].prompt_cache_key', 'metadata.previous_models[0].proxy_server_request.body.prompt_cache_key', 'metadata.previous_models[1].prompt_cache_key', 'metadata.previous_models[1].proxy_server_request.body.
+  pre_call call=3f9019 CallTypes.acompletion dep=sub:sub-c:gpt-5.4 tags_before=['team-x', 'Credential: sub-a', 'Credential: sub-c'] tags_after=['team-x', 'Credential: sub-a', 'Credential: sub-c']
+  pre_call call=3f9019 CallTypes.aresponses dep=sub:sub-c:gpt-5.4 tags_before=['team-x', 'Credential: sub-a', 'Credential: sub-c'] tags_after=['team-x', 'Credential: sub-a', 'Credential: sub-c']
+  filter  call=3f9019 rk=93216 excl=None target_order=None meta_excl=None pck_paths=['prompt_cache_key', 'metadata.previous_models[0].prompt_cache_key', 'metadata.previous_models[0].proxy_server_request.body.prompt_cache_key', 'metadata.previous_models[1].prompt_cache_key', 'metadata.previous_models[1].proxy_server_request.body.
+  pre_call call=3f9019 CallTypes.acompletion dep=sub:sub-c:gpt-5.4 tags_before=['team-x', 'Credential: sub-a', 'Credential: sub-c'] tags_after=['team-x', 'Credential: sub-a', 'Credential: sub-c']
+  pre_call call=3f9019 CallTypes.aresponses dep=sub:sub-c:gpt-5.4 tags_before=['team-x', 'Credential: sub-a', 'Credential: sub-c'] tags_after=['team-x', 'Credential: sub-a', 'Credential: sub-c']
+  success  call=3f9019 dep=sub:sub-c:gpt-5.4 {'stream': False, 'request_tags': ['team-x', 'Credential: sub-a', 'Credential: sub-c', 'User-Agent: Python-urllib', 'User-Agent: Python-urllib/3.14']}
+=== 0.1 responses: 429, 429, then ok
+  filter  call=39d4ed rk=66240 excl=None target_order=None meta_excl=None pck_paths=['prompt_cache_key', 'proxy_server_request.body.prompt_cache_key'] healthy=['sub-c']
+  pre_call call=39d4ed CallTypes.aresponses dep=sub:sub-c:gpt-5.4 tags_before=['team-x', 'Credential: sub-c'] tags_after=['team-x', 'Credential: sub-c']
+  failure  call=39d4ed dep=sub:sub-c:gpt-5.4 {'status': 429, 'exc_class': 'RateLimitError', 'exc_headers': {}, 'exc_body': '', 'stream': False, 'elapsed': 0.024}
+  proxy_failure_hook {"call_id": "39d4ede7-2b91-475a-b5b6-04febdccea52", "exc_class": "RateLimitError", "status": 429, "text": "litellm.RateLimitError: RateLimitError: ChatgptException - {\"error\": {\"type\": \"usage_limit_reached\", \"message\": \"The usage limit has been reached\", \"plan_type\": \"plus\", \"resets_a
+  startup_hook_begin {"prisma_client_is_none": true}
+  ready {"hook_ran_at": 0.01, "prisma_ready_at": 3.34, "router_ready_at": 2.16, "bg_ticks": 2}

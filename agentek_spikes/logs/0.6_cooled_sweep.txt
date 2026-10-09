@@ -1,0 +1,3 @@
+deployments=1800 cooled=0.0 p50=12.99ms p99=34.71ms
+deployments=1800 cooled=0.02 p50=13.96ms p99=42.17ms
+deployments=1800 cooled=0.17 p50=14.00ms p99=51.13ms

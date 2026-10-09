@@ -1,0 +1,14 @@
+\echo '== unclassified (non-429/400/budget) by class + message head'
+select metadata->'error_information'->>'error_class' cls, left(regexp_replace(metadata->'error_information'->>'error_message','[0-9a-f-]{16,}|[0-9]{4,}','#','g'),70) msg, count(*) n
+from "LiteLLM_SpendLogs" where "startTime" > now() - interval '7 days' and status <> 'success' and exists (select 1 from jsonb_array_elements_text(request_tags) x where x like 'Credential: chatgpt%')
+ and coalesce(metadata->'error_information'->>'error_class','') not in ('RateLimitError','BudgetExceededError','BadRequestError') group by 1,2 order by 3 desc limit 8;
+\echo '== unclassified per credential 7d'
+with t as (select status, metadata->'error_information'->>'error_class' cls, (select x from jsonb_array_elements_text(request_tags) x where x like 'Credential: chatgpt%' limit 1) cred from "LiteLLM_SpendLogs" where "startTime" > now() - interval '7 days' and jsonb_typeof(request_tags)='array')
+select cred, count(*) total, count(*) filter (where status<>'success' and coalesce(cls,'') not in ('RateLimitError','BudgetExceededError','BadRequestError')) unclassified from t where cred is not null group by 1 order by 2 desc;
+\echo '== 2-minute bins with unclassified errors: failing creds / creds active in the bin'
+with t as (select date_bin('2 minutes', "startTime", timestamp '2026-01-01') b, status, metadata->'error_information'->>'error_class' cls, (select x from jsonb_array_elements_text(request_tags) x where x like 'Credential: chatgpt%' limit 1) cred from "LiteLLM_SpendLogs" where "startTime" > now() - interval '7 days' and jsonb_typeof(request_tags)='array'),
+b as (select b, count(distinct cred) active, count(distinct cred) filter (where status<>'success' and coalesce(cls,'') not in ('RateLimitError','BudgetExceededError','BadRequestError')) failing, count(*) filter (where status<>'success' and coalesce(cls,'') not in ('RateLimitError','BudgetExceededError','BadRequestError')) fails from t where cred is not null group by b)
+select failing||'/'||active as failing_of_active, count(*) bins, sum(fails) errors from b where failing>0 group by 1 order by 2 desc;
+\echo '== hours with unclassified errors: distinct creds failing (top 8 hours by errors)'
+with t as (select date_trunc('hour',"startTime") h, (select x from jsonb_array_elements_text(request_tags) x where x like 'Credential: chatgpt%' limit 1) cred from "LiteLLM_SpendLogs" where "startTime" > now() - interval '7 days' and status<>'success' and coalesce(metadata->'error_information'->>'error_class','') not in ('RateLimitError','BudgetExceededError','BadRequestError') and jsonb_typeof(request_tags)='array')
+select h, count(*) errors, count(distinct cred) creds, string_agg(distinct replace(cred,'Credential: chatgpt-',''), ',') names from t where cred is not null group by h order by 2 desc limit 8;

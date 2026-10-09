@@ -1,0 +1,58 @@
+
+=== 0.10 a stream: A 429 pre-chunk, plugin allows A,B,C: stream=True HTTP 200 in 0.8s upstream=['A:usage_limit', 'B:ok'] headers={}
+    body: data: {"type":"response.created","response":{"id":"resp_yQjSum2GYffFlhMnGMWgyh3H5pgcJ9g84G7jxuTPZnB-IFGGd7qT1Z5WY9H1vySuGJ7rFm6MxuP6T9Nfz9IJn1Uafbi8dqgoPo8yJJZek2fxtL4ZryY0ROwexY-H5r040lWqLi-YJcpQyPNU
+    filter excl=None meta_excl=None healthy=['sub-a', 'sub-b', 'sub-c']
+    pick -> priced:sub-a
+    failure hook: RateLimitError 429 dep=priced:sub-a
+    filter excl=None meta_excl=None healthy=['sub-b', 'sub-c']
+    pick -> priced:sub-b
+
+=== 0.10 b stream: A and B 429, plugin allows only A,B: stream=True HTTP 429 in 0.1s upstream=['A:usage_limit', 'B:usage_limit'] headers={}
+    body: {"error":{"message":"litellm.RateLimitError: agentek: no available subscriptions (spike). Received Model Group=priced\nAvailable Model Group Fallbacks=None","type":"throttling_error","param":null,"cod
+    filter excl=None meta_excl=None healthy=['sub-a', 'sub-b', 'sub-c']
+    pick -> priced:sub-a
+    failure hook: RateLimitError 429 dep=priced:sub-a
+    filter excl=None meta_excl=None healthy=['sub-b', 'sub-c']
+    pick -> priced:sub-b
+    failure hook: RateLimitError 429 dep=priced:sub-b
+    filter excl=None meta_excl=None healthy=['sub-c']
+    pick -> None
+    failure hook: RateLimitError 429 dep=priced:sub-b
+
+=== 0.10 c stream: A,B,C all 429, plugin allows all: stream=True HTTP 429 in 0.1s upstream=['A:usage_limit', 'B:usage_limit', 'C:usage_limit'] headers={}
+    body: {"error":{"message":"litellm.RateLimitError: RateLimitError: ChatgptException - {\"error\": {\"type\": \"usage_limit_reached\", \"message\": \"The usage limit has been reached\", \"plan_type\": \"plus
+    filter excl=None meta_excl=None healthy=['sub-a', 'sub-b', 'sub-c']
+    pick -> priced:sub-a
+    failure hook: RateLimitError 429 dep=priced:sub-a
+    filter excl=None meta_excl=None healthy=['sub-b', 'sub-c']
+    pick -> priced:sub-b
+    failure hook: RateLimitError 429 dep=priced:sub-b
+    filter excl=None meta_excl=None healthy=['sub-c']
+    pick -> priced:sub-c
+    failure hook: RateLimitError 429 dep=priced:sub-c
+
+=== 0.10 d non-stream: A 429, plugin allows A,B,C, no own tracking: stream=False HTTP 200 in 0.3s upstream=['A:usage_limit', 'B:ok'] headers={}
+    body: data: {"type":"response.created","response":{"id":"resp_2DuQGo-fmIrKfGxWAhceiK4PAqaF5_luaP2iFkLD-ZSL79eptPr-RSAL54pAsZM5hypvK0qXQLKI9orXwSD6Nfvk4qyol7HAtb37_kvK8UDja4IEwPQTB76rT1GC8nRCYxH2u5-2d9D7srqP
+    filter excl=None meta_excl=None healthy=['sub-a', 'sub-b', 'sub-c']
+    pick -> priced:sub-a
+    failure hook: RateLimitError 429 dep=priced:sub-a
+    filter excl=None meta_excl=None healthy=['sub-b', 'sub-c']
+    pick -> priced:sub-b
+
+=== 0.10 e non-stream: A 429, plugin allows A,B,C, own per-call tracking: stream=False HTTP 200 in 0.3s upstream=['A:usage_limit', 'B:ok'] headers={}
+    body: data: {"type":"response.created","response":{"id":"resp_RHQ5GHlTI_ppA6t2zSO4WaHPXidIp2vR0QGVTF72y-z1YCudXXlC3Z2D3m718FszFLW2mMfdeb4ekDI5yq5qd8sZBQh-2RFcxWqmw7lyrXZTbNMUz6vdy2epUMaG9HTu6tiKssD3DJ7cubjz
+    filter excl=None meta_excl=None healthy=['sub-a', 'sub-b', 'sub-c']
+    pick -> priced:sub-a
+    failure hook: RateLimitError 429 dep=priced:sub-a
+    filter excl=None meta_excl=None healthy=['sub-b', 'sub-c']
+    pick -> priced:sub-b
+
+=== 0.10 f non-stream: A,B 429, plugin allows A,B, own tracking: stream=False HTTP 429 in 0.1s upstream=['A:usage_limit', 'B:usage_limit'] headers={}
+    body: {"error":{"message":"litellm.RateLimitError: agentek: no available subscriptions (spike). Received Model Group=priced\nAvailable Model Group Fallbacks=None","type":"throttling_error","param":null,"cod
+    filter excl=None meta_excl=None healthy=['sub-a', 'sub-b', 'sub-c']
+    pick -> priced:sub-a
+    failure hook: RateLimitError 429 dep=priced:sub-a
+    filter excl=None meta_excl=None healthy=['sub-b', 'sub-c']
+    pick -> priced:sub-b
+    filter excl=None meta_excl=None healthy=['sub-b', 'sub-c']
+    pick -> None

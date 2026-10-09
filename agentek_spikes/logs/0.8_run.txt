@@ -1,0 +1,25 @@
+
+=== 0.8 rewrite_tags=None: HTTP 200 upstream=['A:usage_limit', 'B:ok']
+   pre_call dep=priced:sub-a tags_after=['team-x', 'Credential: sub-a']
+   pre_call dep=priced:sub-b tags_after=['team-x', 'Credential: sub-a', 'Credential: sub-b']
+   success dep=priced:sub-b request_tags=['team-x', 'Credential: sub-a', 'Credential: sub-b', 'User-Agent: Python-urllib', 'User-Agent: Python-urllib/3.14']
+   DailyTagSpend delta (0.8 rewrite_tags=None):
+     Credential: sub-a      spend=0.02 api_requests=1 ok=1 failed=0
+     Credential: sub-b      spend=0.02 api_requests=1 ok=1 failed=0
+   last spend log row (request_tags|model_id|spend): ["team-x", "Credential: sub-a", "Credential: sub-b", "User-Agent: Python-urllib", "User-Agent: Python-urllib/3.14"]|priced:sub-b|0.02
+
+=== 0.8 rewrite_tags=assign: HTTP 200 upstream=['A:usage_limit', 'B:ok']
+   pre_call dep=priced:sub-a tags_after=['team-x', 'Credential: sub-a']
+   pre_call dep=priced:sub-b tags_after=['team-x', 'Credential: sub-b']
+   success dep=priced:sub-b request_tags=['team-x', 'Credential: sub-b', 'User-Agent: Python-urllib', 'User-Agent: Python-urllib/3.14']
+   DailyTagSpend delta (0.8 rewrite_tags=assign):
+     Credential: sub-b      spend=0.02 api_requests=1 ok=1 failed=0
+   last spend log row (request_tags|model_id|spend): ["team-x", "Credential: sub-b", "User-Agent: Python-urllib", "User-Agent: Python-urllib/3.14"]|priced:sub-b|0.02
+
+=== 0.8 rewrite_tags=inplace: HTTP 200 upstream=['A:usage_limit', 'B:ok']
+   pre_call dep=priced:sub-a tags_after=['team-x', 'Credential: sub-a']
+   pre_call dep=priced:sub-b tags_after=['team-x', 'Credential: sub-b']
+   success dep=priced:sub-b request_tags=['team-x', 'Credential: sub-b', 'User-Agent: Python-urllib', 'User-Agent: Python-urllib/3.14']
+   DailyTagSpend delta (0.8 rewrite_tags=inplace):
+     Credential: sub-b      spend=0.02 api_requests=1 ok=1 failed=0
+   last spend log row (request_tags|model_id|spend): ["team-x", "Credential: sub-b", "User-Agent: Python-urllib", "User-Agent: Python-urllib/3.14"]|priced:sub-b|0.02

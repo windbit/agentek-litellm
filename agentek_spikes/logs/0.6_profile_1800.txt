@@ -1,0 +1,19 @@
+deployments=1800 cooled=0.0 p50=8.83ms p99=14.46ms
+         15858593 function calls (15498593 primitive calls) in 5.972 seconds
+   Ordered by: cumulative time
+   List reduced from 230 to 14 due to restriction <14>
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+      593    0.007    0.000    5.956    0.010 /app/.python/cpython-3.13.13-linux-x86_64-gnu/lib/python3.13/asyncio/base_events.py:1981(_run_once)
+      600    0.001    0.000    5.915    0.010 /app/.python/cpython-3.13.13-linux-x86_64-gnu/lib/python3.13/asyncio/events.py:87(_run)
+      600    0.003    0.000    5.914    0.010 {method 'run' of '_contextvars.Context' objects}
+      400    0.002    0.000    5.908    0.015 /spikes/bench_profile.py:23(one)
+      400    0.004    0.000    5.907    0.015 /app/.venv/lib/python3.13/site-packages/litellm/router.py:11294(async_get_available_deployment)
+      400    0.011    0.000    5.896    0.015 /app/.venv/lib/python3.13/site-packages/litellm/router.py:11149(async_get_healthy_deployments)
+      200    0.001    0.000    5.893    0.029 /spikes/bench_profile.py:17(main)
+      400    0.004    0.000    5.746    0.014 /app/.venv/lib/python3.13/site-packages/litellm/router_utils/cooldown_handlers.py:323(_async_get_cooldown_deployments)
+      400    0.185    0.000    5.482    0.014 /app/.venv/lib/python3.13/site-packages/litellm/router_utils/cooldown_cache.py:112(async_get_active_cooldowns)
+      400    0.007    0.000    5.173    0.013 /app/.venv/lib/python3.13/site-packages/litellm/caching/dual_cache.py:301(async_batch_get_cache)
+      400    0.002    0.000    4.116    0.010 /app/.venv/lib/python3.13/site-packages/litellm/caching/redis_cache.py:178(wrapper)
+      400    0.267    0.001    4.113    0.010 /app/.venv/lib/python3.13/site-packages/litellm/caching/redis_cache.py:1075(async_batch_get_cache)
+      400    0.005    0.000    3.705    0.009 /app/.venv/lib/python3.13/site-packages/litellm/caching/redis_cache.py:963(_async_run_redis_mget_operation)
+      400    0.004    0.000    3.661    0.009 /app/.venv/lib/python3.13/site-packages/redis/asyncio/client.py:636(execute_command)

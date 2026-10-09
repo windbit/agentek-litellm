@@ -1,0 +1,4 @@
+
+model LiteLLM_SpikeDummy {
+  id String @id @default(uuid())
+}

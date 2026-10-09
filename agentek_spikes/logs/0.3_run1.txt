@@ -1,0 +1,32 @@
+
+=== 0.3 a non-stream, group of 3, 503 x all: HTTP 503 3.4s body='{"error":{"message":"litellm.ServiceUnavailableError: ServiceUnavailableError: ChatgptExce' 
+  upstream attempts=3 (['C:overloaded', 'B:overloaded', 'B:overloaded'])  hook events={'filter': 3, 'pre_call_hook': 3, 'provider_error': 3, 'failure': 1, 'proxy_failure_hook': 1, 'response_headers_hook': 1} 
+     provider_error {"status": 503, "deployment_id": "sub:sub-c:gpt-5.4", "message": "{\"error\": {\"type\": \"server_error\", \"message\": \"overloaded\"}}"}
+     failure {"status": 503, "deployment_id": "sub:sub-c:gpt-5.4", "exc_class": "ServiceUnavailableError", "stream": false}
+     provider_error {"status": 503, "deployment_id": "sub:sub-b:gpt-5.4", "message": "{\"error\": {\"type\": \"server_error\", \"message\": \"overloaded\"}}"}
+     provider_error {"status": 503, "deployment_id": "sub:sub-b:gpt-5.4", "message": "{\"error\": {\"type\": \"server_error\", \"message\": \"overloaded\"}}"}
+     proxy_failure_hook {"status": 503, "exc_class": "ServiceUnavailableError", "text": "litellm.ServiceUnavailableError: ServiceUnavailableError: ChatgptException - {\"error\": {\"type\": \"server_error\", \"message\": \"overloaded\"}}. Received Model G
+
+=== 0.3 b non-stream, solo, 503 x3: HTTP 503 5.4s body='{"error":{"message":"litellm.ServiceUnavailableError: ServiceUnavailableError: ChatgptExce' 
+  upstream attempts=3 (['A:overloaded', 'A:overloaded', 'A:overloaded'])  hook events={'filter': 3, 'pre_call_hook': 3, 'provider_error': 3, 'failure': 1, 'proxy_failure_hook': 1, 'response_headers_hook': 1} 
+     provider_error {"status": 503, "deployment_id": "solo:sub-a:solo", "message": "{\"error\": {\"type\": \"server_error\", \"message\": \"overloaded\"}}"}
+     failure {"status": 503, "deployment_id": "solo:sub-a:solo", "exc_class": "ServiceUnavailableError", "stream": false}
+     provider_error {"status": 503, "deployment_id": "solo:sub-a:solo", "message": "{\"error\": {\"type\": \"server_error\", \"message\": \"overloaded\"}}"}
+     provider_error {"status": 503, "deployment_id": "solo:sub-a:solo", "message": "{\"error\": {\"type\": \"server_error\", \"message\": \"overloaded\"}}"}
+     proxy_failure_hook {"status": 503, "exc_class": "ServiceUnavailableError", "text": "litellm.ServiceUnavailableError: ServiceUnavailableError: ChatgptException - {\"error\": {\"type\": \"server_error\", \"message\": \"overloaded\"}}. Received Model G
+
+=== 0.3 c stream responses, solo, error event at chunk 3: HTTP 200 0.2s body='data: {"type":"response.created","response":{"id":"resp_s76gi1FBPbrzUC7CIaDivOqCO1JN7AUMaz' 
+  upstream attempts=1 (['A:midstream_error'])  hook events={'filter': 1, 'pre_call_hook': 1, 'response_headers_hook': 1} 
+
+=== 0.3 d stream responses, solo, connection abort at chunk 3: HTTP 200 0.4s body='data: {"type":"response.created","response":{"id":"resp_vC_xKM2lK99nCyZ2pMVq9zDXrgfKYSg4P1' 
+  upstream attempts=1 (['A:midstream_abort'])  hook events={'filter': 1, 'pre_call_hook': 1, 'response_headers_hook': 1, 'failure': 1, 'proxy_failure_hook': 1} 
+     failure {"deployment_id": "solo:sub-a:solo", "exc_class": "IncompleteRead", "stream": true}
+     proxy_failure_hook {"exc_class": "IncompleteRead", "text": "Failed to perform, curl: (18) transfer closed with outstanding read data remaining. See https://curl.se/libcurl/c/libcurl-errors.html first for more details."}
+
+=== 0.3 e stream chat, solo, error event at chunk 3: HTTP 200 0.4s body='data: {"id":"chatcmpl-895d33bb-2994-492a-adc5-0592da044b0a","object":"chat.completion.chun' 
+  upstream attempts=1 (['A:midstream_error'])  hook events={'filter': 1, 'pre_call_hook': 2, 'response_headers_hook': 1, 'proxy_failure_hook': 1, 'failure': 1} 
+     proxy_failure_hook {"status": 500, "exc_class": "MidStreamFallbackError", "text": "litellm.MidStreamFallbackError: litellm.APIError: Rate limit reached mid stream. Received Model Group=solo\nAvailable Model Group Fallbacks=None Original exception: A
+     failure {"status": 500, "deployment_id": "solo:sub-a:solo", "exc_class": "APIError", "stream": true}
+
+=== 0.3 f client disconnect after 2 chunks (slow stream): closed client after 3 data lines
+  upstream attempts=1 (['A:slow_stream'])  hook events={'filter': 1, 'pre_call_hook': 1, 'response_headers_hook': 1} 

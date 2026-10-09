@@ -1,0 +1,15 @@
+[92m12:59:36 - LiteLLM:WARNING[0m: utils.py:3005 - register_model: model=grp-0 not in built-in cost map and no prefix/region variant matched; cache cost fields will default to 0. To track cache cost, add cache_creation_input_token_cost and cache_read_input_token_cost to model_info
+{"case": "default (no num_retries)", "deployments": 1, "upstream_attempts": 3, "outcome": "RateLimitError", "elapsed_s": 6.1}
+{"case": "num_retries=4", "deployments": 1, "upstream_attempts": 5, "outcome": "RateLimitError", "elapsed_s": 17.5}
+{"case": "retry_policy RateLimitErrorRetries=4", "deployments": 1, "upstream_attempts": 5, "outcome": "RateLimitError", "elapsed_s": 17.8}
+{"case": "model_group_retry_policy {grp: RateLimitErrorRetries=4}", "deployments": 1, "upstream_attempts": 5, "outcome": "RateLimitError", "elapsed_s": 17.2}
+{"case": "per-deployment litellm_params.num_retries=4", "deployments": 1, "upstream_attempts": 25, "outcome": "RateLimitError", "elapsed_s": 52.0}
+{"case": "per-deployment litellm_params.max_retries=4", "deployments": 1, "upstream_attempts": 3, "outcome": "RateLimitError", "elapsed_s": 4.6}
+{"case": "default (no num_retries)", "deployments": 3, "upstream_attempts": 3, "outcome": "RateLimitError", "elapsed_s": 0.1}
+[92m13:01:31 - LiteLLM:WARNING[0m: utils.py:3005 - register_model: model=grp-1 not in built-in cost map and no prefix/region variant matched; cache cost fields will default to 0. To track cache cost, add cache_creation_input_token_cost and cache_read_input_token_cost to model_info
+[92m13:01:31 - LiteLLM:WARNING[0m: utils.py:3005 - register_model: model=grp-2 not in built-in cost map and no prefix/region variant matched; cache cost fields will default to 0. To track cache cost, add cache_creation_input_token_cost and cache_read_input_token_cost to model_info
+{"case": "num_retries=4", "deployments": 3, "upstream_attempts": 3, "outcome": "RateLimitError", "elapsed_s": 0.0}
+{"case": "retry_policy RateLimitErrorRetries=4", "deployments": 3, "upstream_attempts": 4, "outcome": "RateLimitError", "elapsed_s": 6.9}
+{"case": "model_group_retry_policy {grp: RateLimitErrorRetries=4}", "deployments": 3, "upstream_attempts": 4, "outcome": "RateLimitError", "elapsed_s": 7.1}
+{"case": "per-deployment litellm_params.num_retries=4", "deployments": 3, "upstream_attempts": 25, "outcome": "RateLimitError", "elapsed_s": 35.2}
+{"case": "per-deployment litellm_params.max_retries=4", "deployments": 3, "upstream_attempts": 3, "outcome": "RateLimitError", "elapsed_s": 0.1}

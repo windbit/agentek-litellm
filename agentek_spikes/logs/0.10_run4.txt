@@ -1,0 +1,18 @@
+
+=== 0.10 n chat stream=False: plugin allows only A, A fails: HTTP 429 in 0.2s upstream=['A:internal'] Retry-After=10
+    body: {"error":{"message":"litellm.RateLimitError: agentek: no available subscriptions (spike). Received Model Group=priced\nAvailable Model Group Fallbacks=None","type":"throttling_error","param":null,"cod
+    filter excl=None
+    pick -> priced:sub-a
+    filter excl=None
+    pick -> None
+    filter excl=None
+    pick -> None
+
+=== 0.10 n chat stream=True: plugin allows only A, A fails: HTTP 429 in 0.1s upstream=['A:internal'] Retry-After=10
+    body: {"error":{"message":"litellm.RateLimitError: agentek: no available subscriptions (spike). Received Model Group=priced\nAvailable Model Group Fallbacks=None","type":"throttling_error","param":null,"cod
+    filter excl=None
+    pick -> priced:sub-a
+    filter excl=None
+    pick -> None
+    filter excl=None
+    pick -> None

@@ -1,0 +1,8 @@
+{"deployments": 600, "group_size": 30, "filter": false, "concurrency": 1, "router_build_s": 1.2, "p50_ms": 0.94, "p95_ms": 1.32, "p99_ms": 1.56, "max_ms": 5.14, "calls": 3000, "rps": 967}
+{"deployments": 600, "group_size": 30, "filter": false, "concurrency": 32, "router_build_s": 1.2, "p50_ms": 0.85, "p95_ms": 1.22, "p99_ms": 1.37, "max_ms": 2.93, "calls": 3008, "rps": 1100}
+{"deployments": 600, "group_size": 30, "filter": true, "concurrency": 1, "router_build_s": 1.2, "p50_ms": 1.35, "p95_ms": 2.43, "p99_ms": 4.74, "max_ms": 33.41, "calls": 3000, "rps": 611}
+{"deployments": 600, "group_size": 30, "filter": true, "concurrency": 32, "router_build_s": 1.2, "p50_ms": 16.4, "p95_ms": 30.6, "p99_ms": 37.21, "max_ms": 44.3, "calls": 3008, "rps": 959}
+{"deployments": 1800, "group_size": 90, "filter": false, "concurrency": 1, "router_build_s": 2.6, "p50_ms": 18.24, "p95_ms": 26.01, "p99_ms": 30.53, "max_ms": 307.28, "calls": 3000, "rps": 53}
+{"deployments": 1800, "group_size": 90, "filter": false, "concurrency": 32, "router_build_s": 2.6, "p50_ms": 342.56, "p95_ms": 548.49, "p99_ms": 789.44, "max_ms": 828.63, "calls": 3008, "rps": 47}
+{"deployments": 1800, "group_size": 90, "filter": true, "concurrency": 1, "router_build_s": 2.6, "p50_ms": 24.94, "p95_ms": 37.58, "p99_ms": 59.65, "max_ms": 341.23, "calls": 3000, "rps": 38}
+{"deployments": 1800, "group_size": 90, "filter": true, "concurrency": 32, "router_build_s": 2.6, "p50_ms": 517.27, "p95_ms": 871.21, "p99_ms": 1103.69, "max_ms": 1322.49, "calls": 3008, "rps": 50}

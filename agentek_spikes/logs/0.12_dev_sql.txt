@@ -1,0 +1,20 @@
+== unclassified (non-429/400/budget) by class + message head
+ServiceUnavailableError|litellm.ServiceUnavailableError: ServiceUnavailableError: ChatgptExcep|4
+APIConnectionError|litellm.APIConnectionError: APIConnectionError: ChatgptException - Err|2
+InternalServerError|litellm.InternalServerError: ChatgptException - {
+  "error": {
+    "me|1
+== unclassified per credential 7d
+Credential: chatgpt-vlad|2361|3
+Credential: chatgpt-obbana2|1503|4
+== 2-minute bins with unclassified errors: failing creds / creds active in the bin
+1/1|5|5
+1/2|2|2
+== hours with unclassified errors: distinct creds failing (top 8 hours by errors)
+2026-10-07 13:00:00|1|1|vlad
+2026-10-07 15:00:00|1|1|obbana2
+2026-10-08 07:00:00|1|1|vlad
+2026-10-08 08:00:00|1|1|obbana2
+2026-10-08 11:00:00|1|1|vlad
+2026-10-09 02:00:00|1|1|obbana2
+2026-10-09 08:00:00|1|1|obbana2

@@ -1,0 +1,217 @@
+##### prisma CLI in the image
+prisma                : 5.4.2
+@prisma/client        : Not found
+Current platform      : debian-openssl-3.0.x
+
+##### S1 fresh DB, image WITH block (p-v1): migrate deploy applies upstream + agentek migration
+NOTICE:  database "s1" does not exist, skipping
+Applying migration `20250326162113_baseline`
+Applying migration `20250326171002_add_daily_user_table`
+Applying migration `20250327180120_add_api_requests_to_daily_user_table`
+Applying migration `20250329084805_new_cron_job_table`
+Applying migration `20250331215456_track_success_and_failed_requests_daily_agg_table`
+Applying migration `20250411215431_add_managed_file_table`
+Applying migration `20250412081753_team_member_permissions`
+Applying migration `20250415151647_add_cache_read_write_tokens_daily_spend_transactions`
+Applying migration `20250415191926_add_daily_team_table`
+Applying migration `20250416115320_add_tag_table_to_db`
+Applying migration `20250416151339_drop_tag_uniqueness_requirement`
+Applying migration `20250416185146_add_allowed_routes_litellm_verification_token`
+Applying migration `20250425182129_add_session_id`
+Applying migration `20250430193429_add_managed_vector_stores`
+Applying migration `20250507161526_add_mcp_table_to_db`
+Applying migration `20250507161527_add_health_check_fields_to_mcp_servers`
+Applying migration `20250507184818_add_mcp_key_team_permission_mgmt`
+Applying migration `20250508072103_add_status_to_spendlogs`
+Applying migration `20250509141545_use_big_int_for_daily_spend_tables`
+Applying migration `20250510142544_add_session_id_index_spend_logs`
+Applying migration `20250514142245_add_guardrails_table`
+Applying migration `20250522223020_managed_object_table`
+Applying migration `20250526154401_allow_null_entity_id`
+Applying migration `20250528185438_add_vector_stores_to_object_permissions`
+Applying migration `20250603210143_cascade_budget_changes`
+Applying migration `20250618225828_add_health_check_table`
+Applying migration `20250625145206_cascade_budget_and_loosen_managed_file_json`
+Applying migration `20250625213625_add_status_to_managed_object_table`
+Applying migration `20250707212517_add_mcp_info_column_mcp_servers`
+Applying migration `20250707230009_add_mcp_namespaced_tool_name`
+Applying migration `20250711220620_add_stdio_mcp`
+Applying migration `20250718125714_add_litellm_params_to_vector_stores`
+Applying migration `20250802162330_prompt_table`
+Applying migration `20250806095134_rename_alias_to_server_name_mcp_table`
+Applying migration `20250918083359_drop_spec_version_column_from_mcp_table`
+Applying migration `20250926194702_unnamed_migration`
+Applying migration `20251003165142_add_allowed_tools_to_mcp`
+Applying migration `20251003190954_extra_headers_to_mcp_table`
+Applying migration `20251006143948_add_mcp_tool_permissions`
+Applying migration `20251011084309_add_tag_table`
+Applying migration `20251023141814_add_search_tool_table`
+Applying migration `20251031181430_add_cache_config_table`
+Applying migration `20251101131415_add_managed_vector_store_index_table`
+Applying migration `20251103072422_add_static_headers`
+Applying migration `20251104220043_add_credentials_to_mcp_servers`
+Applying migration `20251113000000_add_project_table`
+Applying migration `20251113000001_add_project_fields`
+Applying migration `20251114173537_add_request_id_to_daily_tag_spend`
+Applying migration `20251114180624_Add_org_usage_table`
+Applying migration `20251114182247_agents_table`
+Applying migration `20251119131227_add_prompt_versioning`
+Applying migration `20251122125322_Add organization_id to spend logs`
+Applying migration `20251204124859_add_end_user_spend_table`
+Applying migration `20251204142718_add_agent_permissions`
+Applying migration `20251209112246_add_ui_settings_table`
+Applying migration `20251210125210_add_storage_backend_to_managed_files`
+Applying migration `20251210205007_add_daily_agent_spend_table`
+Applying migration `20251211100212_schema_sync`
+Applying migration `20251219110931_add_deleted_keys_and_deleted_teams_tables`
+Applying migration `20251220144550_schema_update`
+Applying migration `20260102131258_add_metadata_urls_to_mcp_servers`
+Applying migration `20260105151539_add_allow_all_keys_to_mcp_servers`
+Applying migration `20260106155622_add_endpoint_to_daily_activity_tables`
+Applying migration `20260107111013_add_router_settings_to_keys_teams`
+Applying migration `20260108_add_user_email_lower_idx`
+Applying migration `20260116142756_update_deleted_keys_teams_table_routing_settings`
+Applying migration `20260123131407_add_policy_tables_and_policies_field`
+Applying migration `20260131150814_add_team_user_to_vector_stores`
+Applying migration `20260203120000_add_deprecated_verification_token_table`
+Applying migration `20260205091235_allow_team_guardrail_config`
+Applying migration `20260205144610_add_soft_budget_to_team_table`
+Applying migration `20260207093506_add_available_on_public_internet_to_mcp_servers`
+Applying migration `20260207110613_add_soft_budget_to_deleted_teams_table`
+Applying migration `20260209085821_add_verificationtoken_indexes`
+Applying migration `20260212103349_adjust_tags_policy_table`
+Applying migration `20260212143306_add_access_group_table`
+Applying migration `20260213105436_add_managed_vector_store_table`
+Applying migration `20260213170952_access_group_change_to_model_name`
+Applying migration `20260214094754_schema_sync`
+Applying migration `20260214163027_add_pipeline_to_policy_table`
+Applying migration `20260214185341_object_permissions_for_end_users`
+Applying migration `20260218231534_add_last_active_to_key_table`
+Applying migration `20260219105005_add_project_id_to_deleted_keys`
+Applying migration `20260219181415_baseline_diff`
+Applying migration `20260220124742_add_spec_path_to_mcp_servers`
+Applying migration `20260220153844_add_composite_index_aggregate_tables`
+Applying migration `20260221000000_ensure_project_id_verification_token`
+Applying migration `20260221183800_add_policy_versioning`
+Applying migration `20260222000000_add_batch_processed_to_managed_object_table`
+Applying migration `20260224201417_spend_logs_request_duration`
+Applying migration `20260224203854_add_agent_object_permissions_table`
+Applying migration `20260226000000_add_blocked_tools_to_object_permission`
+Applying migration `20260226120000_add_spend_log_tool_index`
+Applying migration `20260226202727_add_agent_id_to_delete_keys`
+Applying migration `20260228000000_add_claude_code_plugin_table`
+Applying migration `20260228100000_add_spend_logs_composite_index`
+Applying migration `20260228110000_mcp_default_public_internet_true`
+Applying migration `20260228170127_support_team_based_guardrails`
+Applying migration `20260303000000_update_tool_table_policies`
+Applying migration `20260304175016_add_spend_to_agent_table`
+Applying migration `20260305000000_add_agent_headers`
+Applying migration `20260305000000_add_rate_limits_to_agents`
+Applying migration `20260306175056_add_configs_override_table`
+Applying migration `20260306233848_schema_sync`
+Applying migration `20260309000000_add_mcp_approval_status`
+Applying migration `20260309000001_add_mcp_source_url`
+Applying migration `20260312124619_schema_sync`
+Applying migration `20260318140652_add_index_to_team_table`
+Applying migration `20260319000000_restore_mcp_approval_fields`
+Applying migration `20260321000000_add_mcp_toolsets`
+Applying migration `20260331000000_add_prompt_environment_and_created_by`
+Applying migration `20260401000000_add_budget_limits`
+Applying migration `20260401000000_add_team_member_model_scope`
+Applying migration `20260414140000_add_mcp_server_instructions`
+Applying migration `20260415120000_health_check_latest_per_model_index`
+Applying migration `20260418000000_add_adaptive_router_tables`
+Applying migration `20260421120000_add_memory_table`
+Applying migration `20260421135425_add_team_membership_total_spend`
+Applying migration `20260429120000_search_tools_on_object_permission`
+Applying migration `20260429161855_workflow_runs_tables`
+Applying migration `20260501195714_managed_resource_team_owner`
+Applying migration `20260513120000_add_delegate_auth_to_upstream_to_mcp_servers`
+Applying migration `20260514120000_add_blocked_to_proxy_model_table`
+Applying migration `20260520120000_add_mcp_env_vars`
+Applying migration `20260526120000_add_oauth_passthrough_to_mcp_servers`
+Applying migration `20260604120000_add_oauth2_flow_to_mcp_servers`
+Applying migration `20260605182307_add_timeout_to_mcp_server_table`
+Applying migration `20261001000000_agentek_block`
+The following migrations have been applied:
+All migrations have been successfully applied.
+2026-10-09 12:33:58,710 - litellm_proxy_extras - INFO - prisma migrate deploy completed
+2026-10-09 12:33:58,715 - litellm_proxy_extras - INFO - Generating migration diff between DB and schema.prisma...
+DIFF_SQL_BEGIN
+DIFF_SQL_END
+2026-10-09 12:34:21,528 - litellm_proxy_extras - INFO - ✅ Migration diff applied successfully
+RESULT True
+tables: LiteLLM_AgentekSubscription,LiteLLM_AgentekSubscriptionState
+-- second start, same image:
+No pending migrations to apply.
+2026-10-09 12:35:37,731 - litellm_proxy_extras - INFO - prisma migrate deploy completed
+2026-10-09 12:35:37,731 - litellm_proxy_extras - INFO - No pending migrations — skipping post-migration sanity check
+RESULT True
+rows after: 1
+
+##### S2 rollback: DB with block+row, start image WITHOUT block and WITHOUT pending migration (plain old image)
+No pending migrations to apply.
+2026-10-09 12:36:20,518 - litellm_proxy_extras - INFO - prisma migrate deploy completed
+2026-10-09 12:36:20,518 - litellm_proxy_extras - INFO - No pending migrations — skipping post-migration sanity check
+RESULT True
+tables: LiteLLM_AgentekSubscription,LiteLLM_AgentekSubscriptionState rows: 1
+
+##### S3 DB with block+row, image WITHOUT block but with one PENDING migration (e.g. next upstream bump without the block) -> v1 resolver
+NOTICE:  database "s3" does not exist, skipping
+Applying migration `20261003000000_spike_dummy`
+The following migration have been applied:
+All migrations have been successfully applied.
+2026-10-09 12:38:36,763 - litellm_proxy_extras - INFO - prisma migrate deploy completed
+2026-10-09 12:38:36,764 - litellm_proxy_extras - INFO - Generating migration diff between DB and schema.prisma...
+DIFF_SQL_BEGIN
+ALTER TABLE "LiteLLM_AgentekSubscriptionState" DROP CONSTRAINT "LiteLLM_AgentekSubscriptionState_subscription_id_fkey";
+DROP TABLE "LiteLLM_AgentekSubscription";
+DROP TABLE "LiteLLM_AgentekSubscriptionState";
+DIFF_SQL_END
+2026-10-09 12:38:57,135 - litellm_proxy_extras - INFO - ✅ Migration diff applied successfully
+RESULT True
+tables: LiteLLM_SpikeDummy rows: ERROR:  relation "LiteLLM_AgentekSubscription" does not exist
+
+##### S3v2 same, v2 resolver
+NOTICE:  database "s3b" does not exist, skipping
+Applying migration `20261003000000_spike_dummy`
+The following migration have been applied:
+All migrations have been successfully applied.
+RESULT True
+tables: LiteLLM_AgentekSubscription,LiteLLM_AgentekSubscriptionState,LiteLLM_SpikeDummy rows: 1
+
+##### S4 DB with block+row, image WITH block and one pending migration -> drift check must not propose DROP
+NOTICE:  database "s4" does not exist, skipping
+Applying migration `20261003000000_spike_dummy`
+The following migration have been applied:
+All migrations have been successfully applied.
+2026-10-09 12:42:53,480 - litellm_proxy_extras - INFO - prisma migrate deploy completed
+2026-10-09 12:42:53,486 - litellm_proxy_extras - INFO - Generating migration diff between DB and schema.prisma...
+DIFF_SQL_BEGIN
+DIFF_SQL_END
+RESULT True
+2026-10-09 12:43:14,219 - litellm_proxy_extras - INFO - ✅ Migration diff applied successfully
+tables: LiteLLM_AgentekSubscription,LiteLLM_AgentekSubscriptionState,LiteLLM_SpikeDummy rows: 1
+
+##### S5 rollback p-v2 -> image WITH block v1 but WITHOUT the newer migration (policy table), with a pending migration forcing the drift check
+NOTICE:  database "s5" does not exist, skipping
+before: LiteLLM_AgentekSubscription,LiteLLM_AgentekSubscriptionPolicy,LiteLLM_AgentekSubscriptionState
+Applying migration `20261003000000_spike_dummy`
+The following migration have been applied:
+All migrations have been successfully applied.
+2026-10-09 12:44:53,695 - litellm_proxy_extras - INFO - prisma migrate deploy completed
+2026-10-09 12:44:53,720 - litellm_proxy_extras - INFO - Generating migration diff between DB and schema.prisma...
+DIFF_SQL_BEGIN
+DROP TABLE "LiteLLM_AgentekSubscriptionPolicy";
+DIFF_SQL_END
+2026-10-09 12:45:12,338 - litellm_proxy_extras - INFO - ✅ Migration diff applied successfully
+RESULT True
+after: LiteLLM_AgentekSubscription,LiteLLM_AgentekSubscriptionState,LiteLLM_SpikeDummy; subscription rows: 1 policy rows: ERROR:  relation "LiteLLM_AgentekSubscriptionPolicy" does not exist
+
+##### S5b same rollback without any pending migration (plain rollback p-v2 -> p-v1)
+NOTICE:  database "s5b" does not exist, skipping
+RESULT True
+No pending migrations to apply.
+2026-10-09 12:47:47,930 - litellm_proxy_extras - INFO - prisma migrate deploy completed
+2026-10-09 12:47:47,930 - litellm_proxy_extras - INFO - No pending migrations — skipping post-migration sanity check
+after: LiteLLM_AgentekSubscription,LiteLLM_AgentekSubscriptionPolicy,LiteLLM_AgentekSubscriptionState

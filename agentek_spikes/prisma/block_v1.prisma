@@ -1,0 +1,28 @@
+
+// BEGIN agentek
+model LiteLLM_AgentekSubscription {
+  id              String   @id @default(uuid())
+  provider        String
+  name            String   @unique
+  credential_name String
+  priority        Int      @default(100)
+  enabled         Boolean  @default(true)
+  max_concurrency Int?
+  egress          String?
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  state LiteLLM_AgentekSubscriptionState?
+}
+
+model LiteLLM_AgentekSubscriptionState {
+  subscription_id String   @id
+  state           String
+  until           DateTime?
+  reason          String?
+  version         Int      @default(0)
+  updated_at      DateTime @updatedAt
+
+  subscription LiteLLM_AgentekSubscription @relation(fields: [subscription_id], references: [id], onDelete: Cascade)
+}
+// END agentek

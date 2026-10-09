@@ -1,0 +1,8 @@
+DEFAULT_MAX_REDIS_BATCH_CACHE_SIZE=1000
+deployments=1800 cooled=0.0 p50=11.07ms p99=82.10ms
+deployments=1800 cooled=0.02 p50=9.70ms p99=68.34ms
+deployments=1800 cooled=0.17 p50=14.34ms p99=55.49ms
+DEFAULT_MAX_REDIS_BATCH_CACHE_SIZE=10000
+deployments=1800 cooled=0.0 p50=3.21ms p99=7.07ms
+deployments=1800 cooled=0.02 p50=4.33ms p99=15.67ms
+deployments=1800 cooled=0.17 p50=2.60ms p99=6.69ms

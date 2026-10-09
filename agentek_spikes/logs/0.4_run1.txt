@@ -1,0 +1,32 @@
+=== 0.4 remap=None run0 non-stream: HTTP 200; upstream=['B:ok']; body='data: {"type":"response.created","response":{"id":"resp_kWLU64s-8xkbQlbjfNJJjkD3wC85uSP6jA54wjJ1OhWlGJ6NyntNmM'
+    events {'filter': 1, 'pre_call_hook': 1, 'response_headers_hook': 1, 'success': 1, 'stream_end': 1} []
+=== 0.4 remap=None run1 non-stream: HTTP 200; upstream=['B:ok']; body='data: {"type":"response.created","response":{"id":"resp_5FKcY5bwswsXNqc_HKh00jMpHkY3xJ7ilQbxrt1bN2UMjvKM2ie8hB'
+    events {'filter': 1, 'pre_call_hook': 1, 'response_headers_hook': 1, 'success': 1, 'stream_end': 1} []
+=== 0.4 remap=None run2 non-stream: HTTP 200; upstream=['B:ok']; body='data: {"type":"response.created","response":{"id":"resp_njdAIFU0k4IgBFmklMPMMkS4vPDvzb3wI99-B1vtzk0AqToawVbo68'
+    events {'filter': 1, 'pre_call_hook': 1, 'response_headers_hook': 1, 'success': 1, 'stream_end': 1} []
+=== 0.4 remap=None run3 non-stream: HTTP 200; upstream=['C:ok']; body='data: {"type":"response.created","response":{"id":"resp_dNi_9VnuIf_jAI1wlVSTOxznjCK7FdAST0DfoIUK5asgMeuxrTX5Hw'
+    events {'filter': 1, 'pre_call_hook': 1, 'response_headers_hook': 1, 'success': 1, 'stream_end': 1} []
+=== 0.4 remap=403 run0 non-stream: HTTP 200; upstream=['B:ok']; body='data: {"type":"response.created","response":{"id":"resp_XYopyEIR0geEy1WV2t2h0QUTJY7J1hNag-h_QKAVpbTvZSYtLwdEU3'
+    events {'filter': 1, 'pre_call_hook': 1, 'response_headers_hook': 1, 'success': 1, 'stream_end': 1} []
+=== 0.4 remap=403 run1 non-stream: HTTP 200; upstream=['C:ok']; body='data: {"type":"response.created","response":{"id":"resp_PCEYak9zSoW_EXBI3UJjMzkh0DnwCCPG81krE6uGkm7jP55y479tMt'
+    events {'filter': 1, 'pre_call_hook': 1, 'response_headers_hook': 1, 'success': 1, 'stream_end': 1} []
+=== 0.4 remap=403 run2 non-stream: HTTP 200; upstream=['B:ok']; body='data: {"type":"response.created","response":{"id":"resp_mGNiP5n0euV2ODBCvm_kNrwgwAxYgr65f5J2VzLCZdz8JwBe7famIA'
+    events {'filter': 1, 'pre_call_hook': 1, 'response_headers_hook': 1, 'success': 1, 'stream_end': 1} []
+=== 0.4 remap=403 run3 non-stream: HTTP 200; upstream=['C:ok']; body='data: {"type":"response.created","response":{"id":"resp_coT9TkhgyM4h2WglV50EzjziauQFpR3Q6PoEmenV9bB2FueXv-6ws4'
+    events {'filter': 1, 'pre_call_hook': 1, 'response_headers_hook': 1, 'success': 1, 'stream_end': 1} []
+=== 0.4 remap=409 run0 non-stream: HTTP 200; upstream=['A:model_not_supported', 'B:ok']; body='data: {"type":"response.created","response":{"id":"resp_e86uMKFxCV3mTCn_E6fBHZfY4ryEtnaVZIScrjGfc0hie4e84mo-Fc'
+    events {'filter': 2, 'pre_call_hook': 2, 'provider_error': 1, 'provider_error_remapped': 1, 'failure': 1, 'response_headers_hook': 1, 'success': 1, 'stream_end': 1} [409]
+=== 0.4 remap=409 run1 non-stream: HTTP 200; upstream=['B:ok']; body='data: {"type":"response.created","response":{"id":"resp_P7dewXnMu42Q-g-OD0xleZk-9OBr4bY7YqzSpNYjUuO58RooSlq8GS'
+    events {'filter': 1, 'pre_call_hook': 1, 'response_headers_hook': 1, 'success': 1, 'stream_end': 1} []
+=== 0.4 remap=409 run2 non-stream: HTTP 200; upstream=['C:ok']; body='data: {"type":"response.created","response":{"id":"resp__jWUoY6sn7rc6gT0328DWr_btxiKVK8X0BiQrfPc39LOYx171CwS69'
+    events {'filter': 1, 'pre_call_hook': 1, 'response_headers_hook': 1, 'success': 1, 'stream_end': 1} []
+=== 0.4 remap=409 run3 non-stream: HTTP 200; upstream=['A:model_not_supported', 'B:ok']; body='data: {"type":"response.created","response":{"id":"resp_6x6VnkMaJVoOuPDnf3evphrD_Ri-V_h6b7YMwUl8xhlO7_4bth6829'
+    events {'filter': 2, 'pre_call_hook': 2, 'provider_error': 1, 'provider_error_remapped': 1, 'failure': 1, 'response_headers_hook': 1, 'success': 1, 'stream_end': 1} [409]
+=== 0.4 remap=503 run0 non-stream: HTTP 200; upstream=['B:ok']; body='data: {"type":"response.created","response":{"id":"resp_vfNd9I2Mu_0fqZbKw584w23eFxlucPaa9hbfoACmsPuu9afnfHZ6MG'
+    events {'filter': 1, 'pre_call_hook': 1, 'response_headers_hook': 1, 'success': 1, 'stream_end': 1} []
+=== 0.4 remap=503 run1 non-stream: HTTP 200; upstream=['C:ok']; body='data: {"type":"response.created","response":{"id":"resp_6RkaRwj6D2hNNChnWekAZO4WZwTHo5gPPDpaACKpXPALxY0XRs2fGH'
+    events {'filter': 1, 'pre_call_hook': 1, 'response_headers_hook': 1, 'success': 1, 'stream_end': 1} []
+=== 0.4 remap=503 run2 non-stream: HTTP 200; upstream=['A:model_not_supported', 'B:ok']; body='data: {"type":"response.created","response":{"id":"resp_35IuziWDfpR9_3MwseBLkDAKUE_arAVipjBk9IxjLmT3fh3INDLF6y'
+    events {'filter': 2, 'pre_call_hook': 2, 'provider_error': 1, 'provider_error_remapped': 1, 'failure': 1, 'response_headers_hook': 1, 'success': 1, 'stream_end': 1} [503]
+=== 0.4 remap=503 run3 non-stream: HTTP 200; upstream=['B:ok']; body='data: {"type":"response.created","response":{"id":"resp_9ZOrqg7eY5WXzAoFQ9eof8aTAmGfbI-6p3PoT96WcLA6cbvl0LKuPw'
+    events {'filter': 1, 'pre_call_hook': 1, 'response_headers_hook': 1, 'success': 1, 'stream_end': 1} []
