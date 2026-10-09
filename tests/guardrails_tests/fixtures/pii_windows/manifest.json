@@ -1,0 +1,1449 @@
+{
+ "cases": [
+  {
+   "file": "json_oneline_code.txt",
+   "kind": "rewritten",
+   "form": "однострочный JSON с исходным кодом (HTML/CSS) и нумерацией строк",
+   "chars": 23629,
+   "newlines": 0,
+   "planted": 0,
+   "windows": [
+    {
+     "start": 0,
+     "end": 6978,
+     "own_lo": 0,
+     "own_hi": 6466
+    },
+    {
+     "start": 5954,
+     "end": 12553,
+     "own_lo": 6466,
+     "own_hi": 12041
+    },
+    {
+     "start": 11529,
+     "end": 19489,
+     "own_lo": 12041,
+     "own_hi": 18975
+    },
+    {
+     "start": 18462,
+     "end": 23629,
+     "own_lo": 18975,
+     "own_hi": 23629
+    }
+   ]
+  },
+  {
+   "file": "json_oneline_contacts.txt",
+   "kind": "rewritten",
+   "form": "однострочный JSON вывода команды: телефоны, email, числа формата ИНН",
+   "chars": 52006,
+   "newlines": 0,
+   "planted": 0,
+   "windows": [
+    {
+     "start": 0,
+     "end": 7520,
+     "own_lo": 0,
+     "own_hi": 7007
+    },
+    {
+     "start": 6494,
+     "end": 14464,
+     "own_lo": 7007,
+     "own_hi": 13949
+    },
+    {
+     "start": 13434,
+     "end": 21215,
+     "own_lo": 13949,
+     "own_hi": 20701
+    },
+    {
+     "start": 20188,
+     "end": 27041,
+     "own_lo": 20701,
+     "own_hi": 26528
+    },
+    {
+     "start": 26016,
+     "end": 33624,
+     "own_lo": 26528,
+     "own_hi": 33111
+    },
+    {
+     "start": 32598,
+     "end": 40347,
+     "own_lo": 33111,
+     "own_hi": 39834
+    },
+    {
+     "start": 39321,
+     "end": 47275,
+     "own_lo": 39834,
+     "own_hi": 46762
+    },
+    {
+     "start": 46250,
+     "end": 52006,
+     "own_lo": 46762,
+     "own_hi": 52006
+    }
+   ]
+  },
+  {
+   "file": "json_oneline_names.txt",
+   "kind": "rewritten",
+   "form": "однострочный JSON результата инструмента: вложенные строки с экранированными кавычками, ФИО в значениях",
+   "chars": 57496,
+   "newlines": 0,
+   "planted": 5,
+   "windows": [
+    {
+     "start": 0,
+     "end": 7998,
+     "own_lo": 0,
+     "own_hi": 7484
+    },
+    {
+     "start": 6971,
+     "end": 14961,
+     "own_lo": 7484,
+     "own_hi": 14446
+    },
+    {
+     "start": 13931,
+     "end": 20898,
+     "own_lo": 14446,
+     "own_hi": 20378
+    },
+    {
+     "start": 19858,
+     "end": 27856,
+     "own_lo": 20378,
+     "own_hi": 27343
+    },
+    {
+     "start": 26831,
+     "end": 30864,
+     "own_lo": 27343,
+     "own_hi": 30352
+    },
+    {
+     "start": 29840,
+     "end": 37839,
+     "own_lo": 30352,
+     "own_hi": 37327
+    },
+    {
+     "start": 36815,
+     "end": 43986,
+     "own_lo": 37327,
+     "own_hi": 43473
+    },
+    {
+     "start": 42961,
+     "end": 50956,
+     "own_lo": 43473,
+     "own_hi": 50444
+    },
+    {
+     "start": 49932,
+     "end": 57496,
+     "own_lo": 50444,
+     "own_hi": 57496
+    }
+   ]
+  },
+  {
+   "file": "json_oneline_nested_130k.json",
+   "kind": "synthetic",
+   "form": "однострочный JSON вложенных объектов, ПДн в строковых полях",
+   "chars": 130057,
+   "newlines": 0,
+   "planted": 224,
+   "windows": [
+    {
+     "start": 0,
+     "end": 7939,
+     "own_lo": 0,
+     "own_hi": 7424
+    },
+    {
+     "start": 6910,
+     "end": 14902,
+     "own_lo": 7424,
+     "own_hi": 14388
+    },
+    {
+     "start": 13874,
+     "end": 21842,
+     "own_lo": 14388,
+     "own_hi": 21328
+    },
+    {
+     "start": 20814,
+     "end": 28765,
+     "own_lo": 21328,
+     "own_hi": 28253
+    },
+    {
+     "start": 27741,
+     "end": 35703,
+     "own_lo": 28253,
+     "own_hi": 35187
+    },
+    {
+     "start": 34671,
+     "end": 42665,
+     "own_lo": 35187,
+     "own_hi": 42152
+    },
+    {
+     "start": 41639,
+     "end": 49612,
+     "own_lo": 42152,
+     "own_hi": 49099
+    },
+    {
+     "start": 48587,
+     "end": 56556,
+     "own_lo": 49099,
+     "own_hi": 56039
+    },
+    {
+     "start": 55522,
+     "end": 63518,
+     "own_lo": 56039,
+     "own_hi": 63005
+    },
+    {
+     "start": 62492,
+     "end": 70485,
+     "own_lo": 63005,
+     "own_hi": 69971
+    },
+    {
+     "start": 69458,
+     "end": 77394,
+     "own_lo": 69971,
+     "own_hi": 76882
+    },
+    {
+     "start": 76370,
+     "end": 84366,
+     "own_lo": 76882,
+     "own_hi": 83850
+    },
+    {
+     "start": 83334,
+     "end": 91315,
+     "own_lo": 83850,
+     "own_hi": 90798
+    },
+    {
+     "start": 90281,
+     "end": 98270,
+     "own_lo": 90798,
+     "own_hi": 97757
+    },
+    {
+     "start": 97245,
+     "end": 105243,
+     "own_lo": 97757,
+     "own_hi": 104729
+    },
+    {
+     "start": 104215,
+     "end": 112214,
+     "own_lo": 104729,
+     "own_hi": 111699
+    },
+    {
+     "start": 111185,
+     "end": 119139,
+     "own_lo": 111699,
+     "own_hi": 118627
+    },
+    {
+     "start": 118115,
+     "end": 126109,
+     "own_lo": 118627,
+     "own_hi": 125595
+    },
+    {
+     "start": 125082,
+     "end": 130057,
+     "own_lo": 125595,
+     "own_hi": 130057
+    }
+   ]
+  },
+  {
+   "file": "json_oneline_tables.txt",
+   "kind": "rewritten",
+   "form": "однострочный JSON с содержимым файла: pipe-таблицы, адреса, ФИО",
+   "chars": 76436,
+   "newlines": 0,
+   "planted": 6,
+   "windows": [
+    {
+     "start": 0,
+     "end": 7986,
+     "own_lo": 0,
+     "own_hi": 7468
+    },
+    {
+     "start": 6950,
+     "end": 14803,
+     "own_lo": 7468,
+     "own_hi": 14289
+    },
+    {
+     "start": 13775,
+     "end": 21770,
+     "own_lo": 14289,
+     "own_hi": 21257
+    },
+    {
+     "start": 20744,
+     "end": 28737,
+     "own_lo": 21257,
+     "own_hi": 28219
+    },
+    {
+     "start": 27702,
+     "end": 35660,
+     "own_lo": 28219,
+     "own_hi": 35147
+    },
+    {
+     "start": 34635,
+     "end": 42422,
+     "own_lo": 35147,
+     "own_hi": 41908
+    },
+    {
+     "start": 41395,
+     "end": 49369,
+     "own_lo": 41908,
+     "own_hi": 48852
+    },
+    {
+     "start": 48336,
+     "end": 56302,
+     "own_lo": 48852,
+     "own_hi": 55789
+    },
+    {
+     "start": 55277,
+     "end": 62319,
+     "own_lo": 55789,
+     "own_hi": 61802
+    },
+    {
+     "start": 61286,
+     "end": 68017,
+     "own_lo": 61802,
+     "own_hi": 67505
+    },
+    {
+     "start": 66993,
+     "end": 74073,
+     "own_lo": 67505,
+     "own_hi": 73557
+    },
+    {
+     "start": 73042,
+     "end": 76436,
+     "own_lo": 73557,
+     "own_hi": 76436
+    }
+   ]
+  },
+  {
+   "file": "json_oneline_u_escapes.txt",
+   "kind": "rewritten",
+   "form": "однострочный JSON с кириллицей в виде двойных эскейпов \\\\uXXXX внутри вложенной строки",
+   "chars": 52824,
+   "decoded_chars": 49990,
+   "newlines": 0,
+   "planted": 0,
+   "windows": [
+    {
+     "start": 0,
+     "end": 7434,
+     "own_lo": 0,
+     "own_hi": 6895
+    },
+    {
+     "start": 6357,
+     "end": 13951,
+     "own_lo": 6895,
+     "own_hi": 13435
+    },
+    {
+     "start": 12920,
+     "end": 19678,
+     "own_lo": 13435,
+     "own_hi": 19165
+    },
+    {
+     "start": 18652,
+     "end": 24788,
+     "own_lo": 19165,
+     "own_hi": 24272
+    },
+    {
+     "start": 23756,
+     "end": 31447,
+     "own_lo": 24272,
+     "own_hi": 30928
+    },
+    {
+     "start": 30409,
+     "end": 36773,
+     "own_lo": 30928,
+     "own_hi": 36254
+    },
+    {
+     "start": 35735,
+     "end": 43448,
+     "own_lo": 36254,
+     "own_hi": 42935
+    },
+    {
+     "start": 42422,
+     "end": 49990,
+     "own_lo": 42935,
+     "own_hi": 49990
+    }
+   ]
+  },
+  {
+   "file": "ladder_prose_48k.txt",
+   "kind": "synthetic",
+   "form": "проза с абзацами, сущность каждые 250 символов",
+   "chars": 48000,
+   "newlines": 134,
+   "planted": 191,
+   "windows": [
+    {
+     "start": 0,
+     "end": 7860,
+     "own_lo": 0,
+     "own_hi": 7343
+    },
+    {
+     "start": 6827,
+     "end": 14374,
+     "own_lo": 7343,
+     "own_hi": 13861
+    },
+    {
+     "start": 13348,
+     "end": 20856,
+     "own_lo": 13861,
+     "own_hi": 20344
+    },
+    {
+     "start": 19832,
+     "end": 27338,
+     "own_lo": 20344,
+     "own_hi": 26824
+    },
+    {
+     "start": 26310,
+     "end": 33759,
+     "own_lo": 26824,
+     "own_hi": 33241
+    },
+    {
+     "start": 32723,
+     "end": 39635,
+     "own_lo": 33241,
+     "own_hi": 39120
+    },
+    {
+     "start": 38605,
+     "end": 46604,
+     "own_lo": 39120,
+     "own_hi": 46088
+    },
+    {
+     "start": 45572,
+     "end": 48000,
+     "own_lo": 46088,
+     "own_hi": 48000
+    }
+   ]
+  },
+  {
+   "file": "price_table_pipe_39k.txt",
+   "kind": "synthetic",
+   "form": "прайс-лист pipe-таблицей, строки через перевод строки, редкие строки контактов",
+   "chars": 38916,
+   "newlines": 601,
+   "planted": 24,
+   "windows": [
+    {
+     "start": 0,
+     "end": 7982,
+     "own_lo": 0,
+     "own_hi": 7467
+    },
+    {
+     "start": 6953,
+     "end": 14906,
+     "own_lo": 7467,
+     "own_hi": 14392
+    },
+    {
+     "start": 13878,
+     "end": 21833,
+     "own_lo": 14392,
+     "own_hi": 21317
+    },
+    {
+     "start": 20801,
+     "end": 28781,
+     "own_lo": 21317,
+     "own_hi": 28268
+    },
+    {
+     "start": 27755,
+     "end": 35713,
+     "own_lo": 28268,
+     "own_hi": 35197
+    },
+    {
+     "start": 34682,
+     "end": 38916,
+     "own_lo": 35197,
+     "own_hi": 38916
+    }
+   ]
+  },
+  {
+   "file": "seam_crlf_cut_30k.txt",
+   "kind": "synthetic",
+   "form": "строки с CRLF, пара \\r\\n стоит на границе окна",
+   "chars": 30096,
+   "newlines": 392,
+   "planted": 6,
+   "windows": [
+    {
+     "start": 0,
+     "end": 7917,
+     "own_lo": 0,
+     "own_hi": 7401
+    },
+    {
+     "start": 6886,
+     "end": 14775,
+     "own_lo": 7401,
+     "own_hi": 14260
+    },
+    {
+     "start": 13745,
+     "end": 21688,
+     "own_lo": 14260,
+     "own_hi": 21172
+    },
+    {
+     "start": 20657,
+     "end": 28563,
+     "own_lo": 21172,
+     "own_hi": 28049
+    },
+    {
+     "start": 27535,
+     "end": 30096,
+     "own_lo": 28049,
+     "own_hi": 30096
+    }
+   ],
+   "seams": [
+    {
+     "role": "crlf_pair_straddles_limit",
+     "window": 0,
+     "at": [
+      7999,
+      8000
+     ]
+    },
+    {
+     "role": "cut_after_crlf",
+     "window": 0,
+     "at": [
+      7915,
+      7917
+     ]
+    },
+    {
+     "role": "entity_before_cut",
+     "window": 0,
+     "entity": 0
+    },
+    {
+     "role": "entity_after_cut",
+     "window": 0,
+     "entity": 1
+    },
+    {
+     "role": "crlf_pair_straddles_limit",
+     "window": 1,
+     "at": [
+      14885,
+      14886
+     ]
+    },
+    {
+     "role": "cut_after_crlf",
+     "window": 1,
+     "at": [
+      14773,
+      14775
+     ]
+    },
+    {
+     "role": "entity_before_cut",
+     "window": 1,
+     "entity": 2
+    },
+    {
+     "role": "entity_after_cut",
+     "window": 1,
+     "entity": 3
+    },
+    {
+     "role": "crlf_pair_straddles_limit",
+     "window": 2,
+     "at": [
+      21744,
+      21745
+     ]
+    },
+    {
+     "role": "cut_after_crlf",
+     "window": 2,
+     "at": [
+      21686,
+      21688
+     ]
+    },
+    {
+     "role": "entity_before_cut",
+     "window": 2,
+     "entity": 4
+    },
+    {
+     "role": "entity_after_cut",
+     "window": 2,
+     "entity": 5
+    }
+   ]
+  },
+  {
+   "file": "seam_hard_cut_blob_40k.txt",
+   "kind": "synthetic",
+   "form": "блоб из латиницы и цифр длиннее 4000 в правой половине окна: жёсткий разрез",
+   "chars": 40000,
+   "newlines": 0,
+   "planted": 3,
+   "windows": [
+    {
+     "start": 0,
+     "end": 8000,
+     "own_lo": 0,
+     "own_hi": 7488
+    },
+    {
+     "start": 6976,
+     "end": 14973,
+     "own_lo": 7488,
+     "own_hi": 14457
+    },
+    {
+     "start": 13942,
+     "end": 21936,
+     "own_lo": 14457,
+     "own_hi": 21420
+    },
+    {
+     "start": 20904,
+     "end": 28904,
+     "own_lo": 21420,
+     "own_hi": 28389
+    },
+    {
+     "start": 27874,
+     "end": 35874,
+     "own_lo": 28389,
+     "own_hi": 35362
+    },
+    {
+     "start": 34850,
+     "end": 40000,
+     "own_lo": 35362,
+     "own_hi": 40000
+    }
+   ],
+   "seams": [
+    {
+     "role": "hard_cut_split",
+     "window": 0,
+     "entity": 1
+    },
+    {
+     "role": "hard_start_inside_entity",
+     "window": 1,
+     "entity": 0
+    },
+    {
+     "role": "window_end_split",
+     "window": 1,
+     "entity": 2
+    }
+   ]
+  },
+  {
+   "file": "seam_json_u_escapes_28k.json",
+   "kind": "synthetic",
+   "form": "JSON с кириллицей в виде \\\\uXXXX; окна считаются по раскодированному тексту",
+   "chars": 146153,
+   "decoded_chars": 27428,
+   "newlines": 0,
+   "planted": 9,
+   "windows": [
+    {
+     "start": 0,
+     "end": 7997,
+     "own_lo": 0,
+     "own_hi": 7483
+    },
+    {
+     "start": 6969,
+     "end": 14965,
+     "own_lo": 7483,
+     "own_hi": 14453
+    },
+    {
+     "start": 13941,
+     "end": 21940,
+     "own_lo": 14453,
+     "own_hi": 21426
+    },
+    {
+     "start": 20913,
+     "end": 27428,
+     "own_lo": 21426,
+     "own_hi": 27428
+    }
+   ],
+   "seams": [
+    {
+     "role": "window_end_split",
+     "window": 0,
+     "entity": 2
+    },
+    {
+     "role": "next_window_start",
+     "window": 1,
+     "entity": 0
+    },
+    {
+     "role": "zone_boundary_last_owned",
+     "window": 0,
+     "entity": 1
+    },
+    {
+     "role": "window_end_split",
+     "window": 1,
+     "entity": 5
+    },
+    {
+     "role": "next_window_start",
+     "window": 2,
+     "entity": 3
+    },
+    {
+     "role": "zone_boundary_first_owned",
+     "window": 1,
+     "entity": 4
+    },
+    {
+     "role": "window_end_split",
+     "window": 2,
+     "entity": 8
+    },
+    {
+     "role": "next_window_start",
+     "window": 3,
+     "entity": 6
+    },
+    {
+     "role": "zone_boundary_last_owned",
+     "window": 2,
+     "entity": 7
+    }
+   ]
+  },
+  {
+   "file": "seam_window_ends_56k.txt",
+   "kind": "synthetic",
+   "form": "поток слов без разрывов строк и без точек: разрезы падают на пробел",
+   "chars": 56000,
+   "newlines": 0,
+   "planted": 21,
+   "windows": [
+    {
+     "start": 0,
+     "end": 7996,
+     "own_lo": 0,
+     "own_hi": 7483
+    },
+    {
+     "start": 6970,
+     "end": 14966,
+     "own_lo": 7483,
+     "own_hi": 14450
+    },
+    {
+     "start": 13935,
+     "end": 21934,
+     "own_lo": 14450,
+     "own_hi": 21421
+    },
+    {
+     "start": 20908,
+     "end": 28905,
+     "own_lo": 21421,
+     "own_hi": 28393
+    },
+    {
+     "start": 27881,
+     "end": 35877,
+     "own_lo": 28393,
+     "own_hi": 35364
+    },
+    {
+     "start": 34852,
+     "end": 42851,
+     "own_lo": 35364,
+     "own_hi": 42336
+    },
+    {
+     "start": 41821,
+     "end": 49818,
+     "own_lo": 42336,
+     "own_hi": 49303
+    },
+    {
+     "start": 48788,
+     "end": 56000,
+     "own_lo": 49303,
+     "own_hi": 56000
+    }
+   ],
+   "seams": [
+    {
+     "role": "window_end_split",
+     "window": 0,
+     "entity": 2
+    },
+    {
+     "role": "next_window_start",
+     "window": 1,
+     "entity": 0
+    },
+    {
+     "role": "zone_boundary_last_owned",
+     "window": 0,
+     "entity": 1
+    },
+    {
+     "role": "window_end_split",
+     "window": 1,
+     "entity": 5
+    },
+    {
+     "role": "next_window_start",
+     "window": 2,
+     "entity": 3
+    },
+    {
+     "role": "zone_boundary_first_owned",
+     "window": 1,
+     "entity": 4
+    },
+    {
+     "role": "window_end_split",
+     "window": 2,
+     "entity": 8
+    },
+    {
+     "role": "next_window_start",
+     "window": 3,
+     "entity": 6
+    },
+    {
+     "role": "zone_boundary_last_owned",
+     "window": 2,
+     "entity": 7
+    },
+    {
+     "role": "window_end_split",
+     "window": 3,
+     "entity": 11
+    },
+    {
+     "role": "next_window_start",
+     "window": 4,
+     "entity": 9
+    },
+    {
+     "role": "zone_boundary_first_owned",
+     "window": 3,
+     "entity": 10
+    },
+    {
+     "role": "window_end_split",
+     "window": 4,
+     "entity": 14
+    },
+    {
+     "role": "next_window_start",
+     "window": 5,
+     "entity": 12
+    },
+    {
+     "role": "zone_boundary_last_owned",
+     "window": 4,
+     "entity": 13
+    },
+    {
+     "role": "window_end_split",
+     "window": 5,
+     "entity": 17
+    },
+    {
+     "role": "next_window_start",
+     "window": 6,
+     "entity": 15
+    },
+    {
+     "role": "zone_boundary_first_owned",
+     "window": 5,
+     "entity": 16
+    },
+    {
+     "role": "window_end_split",
+     "window": 6,
+     "entity": 20
+    },
+    {
+     "role": "next_window_start",
+     "window": 7,
+     "entity": 18
+    },
+    {
+     "role": "zone_boundary_last_owned",
+     "window": 6,
+     "entity": 19
+    }
+   ]
+  },
+  {
+   "file": "seam_wrapped_address_60k.txt",
+   "kind": "synthetic",
+   "form": "проза с жёстким переносом строк по 72 символа: адрес переносится внутри предложения",
+   "chars": 60000,
+   "newlines": 857,
+   "planted": 16,
+   "windows": [
+    {
+     "start": 0,
+     "end": 7986,
+     "own_lo": 0,
+     "own_hi": 7471
+    },
+    {
+     "start": 6957,
+     "end": 14943,
+     "own_lo": 7471,
+     "own_hi": 14430
+    },
+    {
+     "start": 13917,
+     "end": 21903,
+     "own_lo": 14430,
+     "own_hi": 21390
+    },
+    {
+     "start": 20877,
+     "end": 28863,
+     "own_lo": 21390,
+     "own_hi": 28349
+    },
+    {
+     "start": 27835,
+     "end": 35821,
+     "own_lo": 28349,
+     "own_hi": 35307
+    },
+    {
+     "start": 34794,
+     "end": 42780,
+     "own_lo": 35307,
+     "own_hi": 42267
+    },
+    {
+     "start": 41754,
+     "end": 49740,
+     "own_lo": 42267,
+     "own_hi": 49228
+    },
+    {
+     "start": 48716,
+     "end": 56702,
+     "own_lo": 49228,
+     "own_hi": 56189
+    },
+    {
+     "start": 55677,
+     "end": 60000,
+     "own_lo": 56189,
+     "own_hi": 60000
+    }
+   ],
+   "seams": [
+    {
+     "role": "address_split_by_newline",
+     "window": 0,
+     "entity": 1
+    },
+    {
+     "role": "zone_boundary_last_owned",
+     "window": 0,
+     "entity": 0
+    },
+    {
+     "role": "address_split_by_newline",
+     "window": 1,
+     "entity": 3
+    },
+    {
+     "role": "zone_boundary_first_owned",
+     "window": 1,
+     "entity": 2
+    },
+    {
+     "role": "address_split_by_newline",
+     "window": 2,
+     "entity": 5
+    },
+    {
+     "role": "zone_boundary_last_owned",
+     "window": 2,
+     "entity": 4
+    },
+    {
+     "role": "address_split_by_newline",
+     "window": 3,
+     "entity": 7
+    },
+    {
+     "role": "zone_boundary_first_owned",
+     "window": 3,
+     "entity": 6
+    },
+    {
+     "role": "address_split_by_newline",
+     "window": 4,
+     "entity": 9
+    },
+    {
+     "role": "zone_boundary_last_owned",
+     "window": 4,
+     "entity": 8
+    },
+    {
+     "role": "address_split_by_newline",
+     "window": 5,
+     "entity": 11
+    },
+    {
+     "role": "zone_boundary_first_owned",
+     "window": 5,
+     "entity": 10
+    },
+    {
+     "role": "address_split_by_newline",
+     "window": 6,
+     "entity": 13
+    },
+    {
+     "role": "zone_boundary_last_owned",
+     "window": 6,
+     "entity": 12
+    },
+    {
+     "role": "address_split_by_newline",
+     "window": 7,
+     "entity": 15
+    },
+    {
+     "role": "zone_boundary_first_owned",
+     "window": 7,
+     "entity": 14
+    }
+   ]
+  },
+  {
+   "file": "text_console_dump.txt",
+   "kind": "rewritten",
+   "form": "несколько очень длинных строк, смесь кириллицы и латиницы, пути с обратными слэшами",
+   "chars": 70213,
+   "newlines": 4,
+   "planted": 0,
+   "windows": [
+    {
+     "start": 0,
+     "end": 7406,
+     "own_lo": 0,
+     "own_hi": 6892
+    },
+    {
+     "start": 6379,
+     "end": 14266,
+     "own_lo": 6892,
+     "own_hi": 13753
+    },
+    {
+     "start": 13241,
+     "end": 21182,
+     "own_lo": 13753,
+     "own_hi": 20667
+    },
+    {
+     "start": 20152,
+     "end": 28087,
+     "own_lo": 20667,
+     "own_hi": 27573
+    },
+    {
+     "start": 27060,
+     "end": 34983,
+     "own_lo": 27573,
+     "own_hi": 34467
+    },
+    {
+     "start": 33952,
+     "end": 41797,
+     "own_lo": 34467,
+     "own_hi": 41278
+    },
+    {
+     "start": 40760,
+     "end": 48531,
+     "own_lo": 41278,
+     "own_hi": 48016
+    },
+    {
+     "start": 47501,
+     "end": 55339,
+     "own_lo": 48016,
+     "own_hi": 54824
+    },
+    {
+     "start": 54310,
+     "end": 61580,
+     "own_lo": 54824,
+     "own_hi": 61065
+    },
+    {
+     "start": 60550,
+     "end": 67790,
+     "own_lo": 61065,
+     "own_hi": 67275
+    },
+    {
+     "start": 66761,
+     "end": 70213,
+     "own_lo": 67275,
+     "own_hi": 70213
+    }
+   ]
+  },
+  {
+   "file": "text_issue_card.txt",
+   "kind": "rewritten",
+   "form": "карточка задачи: поля, таблицы, email и ФИО",
+   "chars": 49055,
+   "newlines": 4,
+   "planted": 4,
+   "windows": [
+    {
+     "start": 0,
+     "end": 7744,
+     "own_lo": 0,
+     "own_hi": 7229
+    },
+    {
+     "start": 6714,
+     "end": 11362,
+     "own_lo": 7229,
+     "own_hi": 10849
+    },
+    {
+     "start": 10336,
+     "end": 16950,
+     "own_lo": 10849,
+     "own_hi": 16435
+    },
+    {
+     "start": 15921,
+     "end": 22627,
+     "own_lo": 16435,
+     "own_hi": 22112
+    },
+    {
+     "start": 21597,
+     "end": 29589,
+     "own_lo": 22112,
+     "own_hi": 29077
+    },
+    {
+     "start": 28565,
+     "end": 35861,
+     "own_lo": 29077,
+     "own_hi": 35347
+    },
+    {
+     "start": 34833,
+     "end": 41369,
+     "own_lo": 35347,
+     "own_hi": 40856
+    },
+    {
+     "start": 40344,
+     "end": 47018,
+     "own_lo": 40856,
+     "own_hi": 46505
+    },
+    {
+     "start": 45993,
+     "end": 49055,
+     "own_lo": 46505,
+     "own_hi": 49055
+    }
+   ]
+  },
+  {
+   "file": "text_user_long.txt",
+   "kind": "rewritten",
+   "form": "сообщение пользователя свыше 100К символов: тысячи строк, абзацы через пустую строку",
+   "chars": 113799,
+   "newlines": 2622,
+   "planted": 6,
+   "windows": [
+    {
+     "start": 0,
+     "end": 7740,
+     "own_lo": 0,
+     "own_hi": 7226
+    },
+    {
+     "start": 6712,
+     "end": 14376,
+     "own_lo": 7226,
+     "own_hi": 13863
+    },
+    {
+     "start": 13350,
+     "end": 21153,
+     "own_lo": 13863,
+     "own_hi": 20638
+    },
+    {
+     "start": 20123,
+     "end": 27883,
+     "own_lo": 20638,
+     "own_hi": 27370
+    },
+    {
+     "start": 26858,
+     "end": 34630,
+     "own_lo": 27370,
+     "own_hi": 34114
+    },
+    {
+     "start": 33599,
+     "end": 41336,
+     "own_lo": 34114,
+     "own_hi": 40821
+    },
+    {
+     "start": 40306,
+     "end": 48303,
+     "own_lo": 40821,
+     "own_hi": 47790
+    },
+    {
+     "start": 47278,
+     "end": 55278,
+     "own_lo": 47790,
+     "own_hi": 54766
+    },
+    {
+     "start": 54254,
+     "end": 61721,
+     "own_lo": 54766,
+     "own_hi": 61203
+    },
+    {
+     "start": 60685,
+     "end": 68611,
+     "own_lo": 61203,
+     "own_hi": 68094
+    },
+    {
+     "start": 67578,
+     "end": 75578,
+     "own_lo": 68094,
+     "own_hi": 75065
+    },
+    {
+     "start": 74552,
+     "end": 82511,
+     "own_lo": 75065,
+     "own_hi": 81996
+    },
+    {
+     "start": 81482,
+     "end": 89377,
+     "own_lo": 81996,
+     "own_hi": 88860
+    },
+    {
+     "start": 88344,
+     "end": 96062,
+     "own_lo": 88860,
+     "own_hi": 95547
+    },
+    {
+     "start": 95032,
+     "end": 102880,
+     "own_lo": 95547,
+     "own_hi": 102367
+    },
+    {
+     "start": 101855,
+     "end": 109841,
+     "own_lo": 102367,
+     "own_hi": 109327
+    },
+    {
+     "start": 108813,
+     "end": 113799,
+     "own_lo": 109327,
+     "own_hi": 113799
+    }
+   ]
+  },
+  {
+   "file": "text_user_message.txt",
+   "kind": "rewritten",
+   "form": "сообщение пользователя: сотни строк русской прозы, списки",
+   "chars": 41117,
+   "newlines": 664,
+   "planted": 0,
+   "windows": [
+    {
+     "start": 0,
+     "end": 7956,
+     "own_lo": 0,
+     "own_hi": 7441
+    },
+    {
+     "start": 6926,
+     "end": 14865,
+     "own_lo": 7441,
+     "own_hi": 14351
+    },
+    {
+     "start": 13837,
+     "end": 21700,
+     "own_lo": 14351,
+     "own_hi": 21188
+    },
+    {
+     "start": 20676,
+     "end": 27795,
+     "own_lo": 21188,
+     "own_hi": 27283
+    },
+    {
+     "start": 26771,
+     "end": 34744,
+     "own_lo": 27283,
+     "own_hi": 34230
+    },
+    {
+     "start": 33717,
+     "end": 41117,
+     "own_lo": 34230,
+     "own_hi": 41117
+    }
+   ]
+  },
+  {
+   "file": "text_wrapped_document.txt",
+   "kind": "rewritten",
+   "form": "документ в тегах-обёртке, JSON внутри текста, markdown-заголовки",
+   "chars": 37440,
+   "newlines": 4,
+   "planted": 4,
+   "windows": [
+    {
+     "start": 0,
+     "end": 7912,
+     "own_lo": 0,
+     "own_hi": 7397
+    },
+    {
+     "start": 6883,
+     "end": 14138,
+     "own_lo": 7397,
+     "own_hi": 13624
+    },
+    {
+     "start": 13111,
+     "end": 21019,
+     "own_lo": 13624,
+     "own_hi": 20504
+    },
+    {
+     "start": 19990,
+     "end": 27901,
+     "own_lo": 20504,
+     "own_hi": 27389
+    },
+    {
+     "start": 26877,
+     "end": 34787,
+     "own_lo": 27389,
+     "own_hi": 34274
+    },
+    {
+     "start": 33761,
+     "end": 37440,
+     "own_lo": 34274,
+     "own_hi": 37440
+    }
+   ]
+  }
+ ]
+}
