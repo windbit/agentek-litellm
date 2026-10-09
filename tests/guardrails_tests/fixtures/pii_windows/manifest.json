@@ -530,7 +530,7 @@
    "kind": "synthetic",
    "form": "строки с CRLF, пара \\r\\n стоит на границе окна",
    "chars": 30096,
-   "newlines": 433,
+   "newlines": 392,
    "planted": 6,
    "windows": [
     {

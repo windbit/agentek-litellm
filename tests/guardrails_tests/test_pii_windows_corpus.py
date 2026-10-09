@@ -1,35 +1,20 @@
 """Проверяет корпус `fixtures/pii_windows`: оффсеты, длины, окна, швы и детекторы правил."""
 
-import importlib
-import importlib.util
 import json
-import os
 from pathlib import Path
 
 import pytest
 
+from litellm.proxy.guardrails.guardrail_hooks.analysis_windows import plan_windows
 from litellm.proxy.guardrails.guardrail_hooks.json_escaped_text import decode_json_escapes
 from litellm.proxy.guardrails.guardrail_hooks.pii_rules import PiiRuleEngine, load_rulebook
 
 CORPUS = Path(__file__).parent / "fixtures" / "pii_windows"
 WINDOW = 8000
-WINDOWS_MODULE = "litellm.proxy.guardrails.guardrail_hooks.analysis_windows"
-WINDOWS_MODULE_PATH_ENV = "CORPUS_WINDOWS_MODULE"
 
 MANIFEST = json.loads((CORPUS / "manifest.json").read_text(encoding="utf-8"))
 EXPECTED = json.loads((CORPUS / "expected_entities.json").read_text(encoding="utf-8"))
 CASES = {case["file"]: case for case in MANIFEST["cases"]}
-
-
-def _plan_windows():
-    path = os.environ.get(WINDOWS_MODULE_PATH_ENV)
-    if path:
-        spec = importlib.util.spec_from_file_location("corpus_analysis_windows", path)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-    else:
-        module = importlib.import_module(WINDOWS_MODULE)
-    return module.plan_windows
 
 
 def _read(name):
@@ -84,7 +69,7 @@ def test_entity_offsets_match_text(name):
 def test_windows_follow_plan_windows_on_analyzed_text(name):
     _, _, text = _analyzed(name)
     windows = [
-        {"start": w.start, "end": w.end, "own_lo": w.own_lo, "own_hi": w.own_hi} for w in _plan_windows()(text)
+        {"start": w.start, "end": w.end, "own_lo": w.own_lo, "own_hi": w.own_hi} for w in plan_windows(text)
     ]
     assert windows == CASES[name]["windows"]
 
