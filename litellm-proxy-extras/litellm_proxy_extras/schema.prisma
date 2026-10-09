@@ -1399,3 +1399,78 @@ model LiteLLM_WorkflowMessage {
   @@unique([run_id, sequence_number])
   @@index([run_id])
 }
+
+// BEGIN agentek
+// Gateway-owned subscription tables. The block only grows: an image older than the database
+// would drop whatever the block lacks, so every shipped schema.prisma carries the full block.
+// The three schema.prisma copies hold an identical block (ci_cd/check_agentek_schema.py).
+model LiteLLM_AgentekSubscription {
+  id              String   @id @default(uuid())
+  provider        String
+  name            String   @unique
+  credential_name String
+  priority        Int      @default(100)
+  enabled         Boolean  @default(true)
+  max_concurrency Int?
+  egress          String?
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  state       LiteLLM_AgentekSubscriptionState?
+  policy      LiteLLM_AgentekSubscriptionPolicy?
+  daily_stats LiteLLM_AgentekSubscriptionDailyStat[]
+}
+
+model LiteLLM_AgentekSubscriptionState {
+  subscription_id String    @id
+  state           String
+  until           DateTime?
+  reason          String?
+  overloaded_hits Int       @default(0)
+  version         Int       @default(0)
+  updated_at      DateTime  @updatedAt
+
+  subscription LiteLLM_AgentekSubscription @relation(fields: [subscription_id], references: [id], onDelete: Cascade)
+}
+
+// Subjects are "<kind>:<id>" strings (employee, space, service), never key hashes.
+model LiteLLM_AgentekSubscriptionPolicy {
+  subscription_id     String   @id
+  visibility          String   @default("all")
+  visibility_subjects String[]
+  bound_subjects      String[]
+  version             Int      @default(0)
+  updated_at          DateTime @updatedAt
+
+  subscription LiteLLM_AgentekSubscription @relation(fields: [subscription_id], references: [id], onDelete: Cascade)
+}
+
+// Rows outlive the subscription they describe, so there is no foreign key.
+model LiteLLM_AgentekAudit {
+  id                String   @id @default(uuid())
+  created_at        DateTime @default(now())
+  actor             String
+  action            String
+  subscription_id   String?
+  subscription_name String?
+  subject           String?
+  before            Json?
+  after             Json?
+
+  @@index([created_at])
+  @@index([subscription_id, created_at])
+}
+
+model LiteLLM_AgentekSubscriptionDailyStat {
+  subscription_id String
+  day             DateTime @client.Date
+  failures        Json     @default("{}")
+  switches        Json     @default("{}")
+  state_seconds   Json     @default("{}")
+  updated_at      DateTime @updatedAt
+
+  subscription LiteLLM_AgentekSubscription @relation(fields: [subscription_id], references: [id], onDelete: Cascade)
+
+  @@id([subscription_id, day])
+}
+// END agentek

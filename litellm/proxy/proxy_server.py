@@ -7830,19 +7830,20 @@ class ProxyStartupEvent:
             )
             await proxy_config.get_credentials(prisma_client=prisma_client)
 
-            from litellm.llms.chatgpt.common_utils import (
-                CHATGPT_CREDENTIAL_REFRESH_INTERVAL_SECONDS,
-            )
+            if not get_secret_bool("DISABLE_CHATGPT_CREDENTIAL_REFRESH", False):
+                from litellm.llms.chatgpt.common_utils import (
+                    CHATGPT_CREDENTIAL_REFRESH_INTERVAL_SECONDS,
+                )
 
-            scheduler.add_job(
-                proxy_config.refresh_chatgpt_credentials,
-                "interval",
-                seconds=CHATGPT_CREDENTIAL_REFRESH_INTERVAL_SECONDS,
-                args=[prisma_client],
-                id="refresh_chatgpt_credentials_job",
-                replace_existing=True,
-                misfire_grace_time=APSCHEDULER_MISFIRE_GRACE_TIME,
-            )
+                scheduler.add_job(
+                    proxy_config.refresh_chatgpt_credentials,
+                    "interval",
+                    seconds=CHATGPT_CREDENTIAL_REFRESH_INTERVAL_SECONDS,
+                    args=[prisma_client],
+                    id="refresh_chatgpt_credentials_job",
+                    replace_existing=True,
+                    misfire_grace_time=APSCHEDULER_MISFIRE_GRACE_TIME,
+                )
 
         await cls._initialize_slack_alerting_jobs(
             scheduler=scheduler,

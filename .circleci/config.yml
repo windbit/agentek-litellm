@@ -601,6 +601,11 @@ jobs:
           name: Generate Prisma Client
           command: uv run --no-sync python -m prisma generate
       - run:
+          name: Check the agentek schema block is identical in all copies and only grows
+          command: |
+            git fetch --depth=1 origin master
+            uv run --no-sync python ci_cd/check_agentek_schema.py --base-ref FETCH_HEAD
+      - run:
           name: Check schema.prisma is in sync with committed migrations
           command: |
             mkdir -p test-results

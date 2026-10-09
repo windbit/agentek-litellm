@@ -746,6 +746,54 @@ async def test_initialize_scheduled_jobs_credentials(monkeypatch):
         assert len(mock_scheduler_calls) > 0
 
 
+CHATGPT_REFRESH_JOB_ID = "refresh_chatgpt_credentials_job"
+
+
+async def _registered_job_ids_with_model_db(monkeypatch) -> set:
+    from litellm.proxy import proxy_server
+    from litellm.proxy.utils import ProxyLogging
+
+    monkeypatch.delenv("DISABLE_PRISMA_SCHEMA_UPDATE", raising=False)
+    mock_proxy_logging = MagicMock(spec=ProxyLogging)
+    mock_proxy_logging.slack_alerting_instance = MagicMock()
+
+    with (
+        patch("litellm.proxy.proxy_server.proxy_config", AsyncMock()),
+        patch("litellm.proxy.proxy_server.store_model_in_db", True),
+    ):
+        await proxy_server.ProxyStartupEvent.initialize_scheduled_background_jobs(
+            general_settings={},
+            prisma_client=MagicMock(),
+            proxy_budget_rescheduler_min_time=1,
+            proxy_budget_rescheduler_max_time=2,
+            proxy_batch_write_at=5,
+            proxy_logging_obj=mock_proxy_logging,
+        )
+    try:
+        return {job.id for job in proxy_server.scheduler.get_jobs()}
+    finally:
+        proxy_server.scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_chatgpt_credential_refresh_job_registered_by_default(monkeypatch):
+    monkeypatch.delenv("DISABLE_CHATGPT_CREDENTIAL_REFRESH", raising=False)
+
+    job_ids = await _registered_job_ids_with_model_db(monkeypatch)
+
+    assert CHATGPT_REFRESH_JOB_ID in job_ids
+
+
+@pytest.mark.asyncio
+async def test_chatgpt_credential_refresh_job_skipped_when_disabled(monkeypatch):
+    monkeypatch.setenv("DISABLE_CHATGPT_CREDENTIAL_REFRESH", "true")
+
+    job_ids = await _registered_job_ids_with_model_db(monkeypatch)
+
+    assert CHATGPT_REFRESH_JOB_ID not in job_ids
+    assert "get_credentials_job" in job_ids
+
+
 def test_update_config_fields_deep_merge_db_wins():
     from litellm.proxy.proxy_server import ProxyConfig
 
