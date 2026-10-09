@@ -38,15 +38,15 @@ class Plugin:
 
 
 GATEWAY_STATE = GatewayState()
-DEFAULT_PLUGINS: Sequence[Plugin] = ()
 
 
 def startup() -> None:
     """LITELLM_WORKER_STARTUP_HOOKS entry point: wires the plugin into the proxy of this worker."""
     from .api import build_api_router
     from .proxy_host import ProxyHost
+    from .subscriptions.plugin import default_plugins
 
-    start_gateway(ProxyHost(), build_api_router, DEFAULT_PLUGINS, GATEWAY_STATE)
+    start_gateway(ProxyHost(), build_api_router, default_plugins(), GATEWAY_STATE)
 
 
 def start_gateway(

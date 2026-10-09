@@ -12,10 +12,7 @@ from litellm import Router
 from litellm.llms.chatgpt.responses.transformation import ChatGPTResponsesAPIConfig
 
 from agentek_gateway.subscriptions.adapter import SubscriptionCallback
-from agentek_gateway.subscriptions.attempts import AttemptTracker
 from agentek_gateway.subscriptions.config import GatewayConfig
-from agentek_gateway.subscriptions.failures import FailureRouter
-from agentek_gateway.subscriptions.gateway import GatewayParts
 from agentek_gateway.subscriptions.memory import (
     InMemoryPolicyRepo,
     InMemoryStateStore,
@@ -29,26 +26,18 @@ from agentek_gateway.subscriptions.providers.observer import (
     uninstall_error_observer,
 )
 from agentek_gateway.subscriptions.redis_slots import RedisSlotStore
-from agentek_gateway.subscriptions.registry import AttemptRegistry
 from agentek_gateway.subscriptions.runtime import (
     RuntimeSlot,
     SubscriptionRuntime,
-    assemble,
+    RuntimeDeps,
+    build_runtime,
 )
-from agentek_gateway.subscriptions.service import StateService
-from agentek_gateway.subscriptions.signals import SignalProcessor
-from agentek_gateway.subscriptions.slots import SlotLedger
-from agentek_gateway.subscriptions.snapshot import SnapshotCache, SnapshotSources
-from agentek_gateway.subscriptions.stickiness import StickyBook
-from agentek_gateway.subscriptions.tasks import BackgroundTasks
 
 from .conftest import FakeClock
 from .mock_codex import MockCodex
 
 MODEL = "gpt-5.4"
 FAR_FUTURE = 4_102_444_800
-TTL_S = 900.0
-LOCAL_STICKY_TTL_S = 60.0
 CHAT_MESSAGES = [{"role": "user", "content": "x"}]
 
 
@@ -233,41 +222,23 @@ async def _build_stack(
         num_retries=num_retries,
         retry_after=0,
     )
-    snapshot = SnapshotCache(
-        SnapshotSources(
-            repo=InMemorySubscriptionRepo(list(subscriptions.values())),
-            policy=InMemoryPolicyRepo(),
-            store=state_store,
-            slots=slot_store,
-            model_list=lambda: router.model_list,
-        ),
-        clock,
-    )
-    states = StateService(state_store, clock, config, snapshot.request_refresh)
-    signals = SignalProcessor(
-        state_store,
-        InMemorySubscriptionRepo(list(subscriptions.values())),
-        states,
-        clock,
-        config,
-    )
     provider = ChatGPTProvider(transport=None, probe_model=MODEL)  # type: ignore[arg-type]
     switches = Switches()
-    parts = GatewayParts(
-        clock=clock,
-        config=config,
-        snapshot=snapshot,
-        attempts=AttemptTracker(clock, TTL_S),
-        ledger=SlotLedger(slot_store, clock, TTL_S),
-        sticky=StickyBook(state_store, clock, TTL_S, LOCAL_STICKY_TTL_S),
-        providers={"chatgpt": provider},
-        failures=FailureRouter(states, signals, state_store, clock, config),
-        signals=signals,
-        registry=AttemptRegistry(clock, TTL_S),
-        telemetry=switches,
-        tasks=BackgroundTasks(),
+    repo = InMemorySubscriptionRepo(list(subscriptions.values()))
+    runtime = build_runtime(
+        RuntimeDeps(
+            clock=clock,
+            config=config,
+            state_store=state_store,
+            slot_store=slot_store,
+            repo=repo,
+            policy=InMemoryPolicyRepo(),
+            providers={"chatgpt": provider},
+            model_list=lambda: router.model_list,
+            telemetry=switches,
+        )
     )
-    runtime = assemble(parts)
+    snapshot = runtime.parts.snapshot
     slot = RuntimeSlot(runtime)
     callback = SubscriptionCallback(slot)
     litellm.callbacks.append(callback)
