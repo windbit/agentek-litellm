@@ -27,6 +27,7 @@ from litellm.proxy.guardrails.guardrail_hooks import presidio as presidio_module
 from litellm.proxy.guardrails.guardrail_hooks.analysis_windows import plan_windows
 from litellm.proxy.guardrails.guardrail_hooks.json_escaped_text import (
     decode_json_escapes,
+    unescape_json_fragment,
 )
 from litellm.proxy.guardrails.guardrail_hooks.presidio import (
     _OPTIONAL_PresidioPIIMasking,
@@ -382,6 +383,33 @@ async def restart_analyzer() -> None:
                 pass
             await asyncio.sleep(1)
     raise TimeoutError("analyzer did not come back after restart")
+
+
+@pytest.mark.asyncio
+async def test_escaped_corpus_file_is_masked_at_source_offsets() -> None:
+    name = "seam_json_u_escapes_28k.json"
+    with open(CORPUS / name, encoding="utf-8", newline="") as handle:
+        source = handle.read()
+    expected = json.loads(
+        (CORPUS / "expected_entities.json").read_text(encoding="utf-8")
+    )
+    rule_entities = [
+        entity for entity in expected[name] if entity["detector"] == "rules"
+    ]
+    guardrail = make_guardrail(rulebook=True)
+
+    found = await guardrail.analyze_text(
+        text=source, presidio_config=None, request_data={}
+    )
+
+    found_keys = {(span["entity_type"], span["start"], span["end"]) for span in found}
+    assert rule_entities
+    for entity in rule_entities:
+        assert (entity["entity_type"], entity["start"], entity["end"]) in found_keys
+        assert (
+            unescape_json_fragment(source[entity["start"] : entity["end"]])
+            == entity["text"]
+        )
 
 
 def worker_peaks_kib() -> dict[str, int]:

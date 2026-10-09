@@ -13,7 +13,7 @@ import hashlib
 import json
 import threading
 import time
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import AbstractContextManager, asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime
@@ -21,11 +21,14 @@ from typing import (
     TYPE_CHECKING,
     Any,
     AsyncGenerator,
+    Awaitable,
     Dict,
     Iterator,
     List,
     Literal,
+    NoReturn,
     Optional,
+    Sequence,
     Tuple,
     Union,
     cast,
@@ -63,9 +66,10 @@ from litellm.proxy.guardrails.guardrail_hooks.analysis_windows import (
     SpanLRU,
     Window,
     merge_windows,
-    own_items,
+    overlap_priority,
     plan_windows,
     run_windows,
+    validate_window_items,
 )
 from litellm.proxy.guardrails.guardrail_hooks.json_escaped_text import (
     ESCAPE_TRIGGER,
@@ -103,7 +107,7 @@ PRESIDIO_ANALYZE_MAX_CONCURRENCY = get_env_int("PRESIDIO_ANALYZE_MAX_CONCURRENCY
 PRESIDIO_ANALYZE_TIMEOUT_SECONDS = get_env_int("PRESIDIO_ANALYZE_TIMEOUT", 30)
 
 # Дедлайн запроса включает ожидание слота; он меньше таймаута клиента Hermes.
-PRESIDIO_ANALYZE_DEADLINE_SECONDS = get_env_int("PRESIDIO_ANALYZE_DEADLINE", 90)
+PRESIDIO_ANALYZE_DEADLINE_SECONDS = 90
 MAX_REQUEST_CONCURRENCY = 4
 WINDOWS_PER_CACHED_MESSAGE = 8
 MAX_LOGGED_SPANS = 200
@@ -144,6 +148,53 @@ def _new_analyze_budget() -> _AnalyzeBudget:
         gate=asyncio.Semaphore(request_slots),
         deadline=asyncio.get_running_loop().time() + PRESIDIO_ANALYZE_DEADLINE_SECONDS,
     )
+
+
+@contextmanager
+def request_analyze_budget() -> Iterator[None]:
+    """Общие слоты и дедлайн для всех окон всех сообщений, разбираемых внутри блока.
+
+    Ставить надо до создания задач: задача копирует контекст в момент создания.
+    """
+    token = _analyze_budget.set(_new_analyze_budget())
+    try:
+        yield
+    finally:
+        _analyze_budget.reset(token)
+
+
+async def _gather_or_cancel(awaitables: Sequence[Awaitable[Any]]) -> list[Any]:
+    """`gather`, в котором первая ошибка отменяет остальные задачи и ждёт их завершения."""
+    if not awaitables:
+        return []
+    tasks = [asyncio.ensure_future(awaitable) for awaitable in awaitables]
+    try:
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
+        for task in tasks:
+            if task.done() and not task.cancelled() and task.exception() is not None:
+                raise cast(BaseException, task.exception())
+        return [task.result() for task in tasks]
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def _finish_exchange(exchange: Awaitable[Any]) -> Any:
+    """Ждёт обмен с анализатором, но отмена вызывающего не рвёт его на полуслове.
+
+    Оборванный посреди чтения ответа `session.post` оставляет в aiohttp протокол соединения,
+    который копится до OOM (та же утечка, что в `telemetry_masking`). Обмен доходит до конца
+    под собственным `ClientTimeout`, а отмена вызывающего доходит до него сразу.
+    """
+    task = asyncio.ensure_future(exchange)
+    task.add_done_callback(_consume_exchange_result)
+    return await asyncio.shield(task)
+
+
+def _consume_exchange_result(task: "asyncio.Future[Any]") -> None:
+    if not task.cancelled():
+        task.exception()
 
 
 class _InvalidAnalyzerResponse(Exception):
@@ -562,7 +613,7 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
             # Use shared session to prevent memory leak (issue #14540)
             async with self._get_session_iterator() as session:
                 if len(windows) == 1:
-                    return await self._post_window(
+                    return await self._analyze_single_window(
                         session, text, presidio_config, request_data
                     )
                 return await self._analyze_in_windows(
@@ -572,7 +623,7 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
             # Re-raise GuardrailRaisedException without wrapping
             raise
         except OversizeError:
-            return self._reject_too_long_text()
+            self._refuse(TOO_LONG_MESSAGE)
         except (_InvalidAnalyzerResponse, InvalidWindowResponse) as e:
             return self._fail_on_invalid_response(str(e))
         except Exception as e:
@@ -587,50 +638,52 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
             or self.apply_to_output
         )
 
+    def _refuse(self, message: str) -> NoReturn:
+        raise GuardrailRaisedException(
+            guardrail_name=self.guardrail_name,
+            message=message,
+            should_wrap_with_default_message=False,
+        )
+
     def _fail_on_invalid_response(
         self, reason: str
     ) -> list[PresidioAnalyzeResponseItem]:
         if self._masks_entities():
-            raise GuardrailRaisedException(
-                guardrail_name=self.guardrail_name,
-                message=f"Presidio analyzer returned invalid response; cannot verify PII when PII protection is configured: {reason}",
-                should_wrap_with_default_message=False,
+            self._refuse(
+                "Presidio analyzer returned invalid response; cannot verify PII "
+                f"when PII protection is configured: {reason}"
             )
         verbose_proxy_logger.warning(
             "Presidio analyzer %s, returning empty list", reason
         )
         return []
 
-    def _reject_too_long_text(self) -> list[PresidioAnalyzeResponseItem]:
-        if self._masks_entities():
-            raise GuardrailRaisedException(
-                guardrail_name=self.guardrail_name,
-                message=TOO_LONG_MESSAGE,
-                should_wrap_with_default_message=False,
-            )
-        verbose_proxy_logger.warning(
-            "Message exceeds the analysis window limit, returning empty list"
+    def _request_analyze_budget(self) -> AbstractContextManager[None]:
+        return request_analyze_budget()
+
+    async def _analyze_single_window(
+        self,
+        session: aiohttp.ClientSession,
+        text: str,
+        presidio_config: PresidioPerRequestConfig | None,
+        request_data: dict,
+    ) -> list[PresidioAnalyzeResponseItem]:
+        """Короткий текст: слот запроса не нужен, но дедлайн запроса действует."""
+        exchange = _finish_exchange(
+            self._post_window(session, text, presidio_config, request_data)
         )
-        return []
-
-    @contextmanager
-    def _request_analyze_budget(self) -> Iterator[None]:
-        """Общие слоты и дедлайн для всех окон всех сообщений, разбираемых внутри блока.
-
-        Ставить надо до `asyncio.gather`: задачи копируют контекст в момент создания.
-        """
-        token = _analyze_budget.set(_new_analyze_budget())
-        try:
-            yield
-        finally:
-            _analyze_budget.reset(token)
+        budget = _analyze_budget.get()
+        if budget is None:
+            return await exchange
+        remaining = budget.deadline - asyncio.get_running_loop().time()
+        return await asyncio.wait_for(exchange, timeout=max(0.0, remaining))
 
     async def _analyze_in_windows(
         self,
         session: aiohttp.ClientSession,
         text: str,
         windows: list[Window],
-        presidio_config: Optional[PresidioPerRequestConfig],
+        presidio_config: PresidioPerRequestConfig | None,
         request_data: dict,
     ) -> list[PresidioAnalyzeResponseItem]:
         started = time.monotonic()
@@ -655,7 +708,7 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
             "Presidio windowed analysis: windows=%d chars=%d ms=%d",
             len(windows),
             len(text),
-            (time.monotonic() - started) * 1000,
+            int((time.monotonic() - started) * 1000),
         )
         return cast(
             list[PresidioAnalyzeResponseItem], merge_windows(windows, per_window)
@@ -666,7 +719,7 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
         session: aiohttp.ClientSession,
         chunk: str,
         window: Window,
-        presidio_config: Optional[PresidioPerRequestConfig],
+        presidio_config: PresidioPerRequestConfig | None,
         request_data: dict,
     ) -> list[dict[str, object]]:
         if not chunk.strip():
@@ -677,18 +730,36 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
         cached = self._window_cache.get(key) if key is not None else None
         if cached is not None:
             return cached
-        items = await self._post_window(session, chunk, presidio_config, request_data)
-        raw = cast(list[dict[str, object]], items)
-        own_items(window, raw)  # неверные позиции отказывают окно до записи в кэш
+        return await _finish_exchange(
+            self._exchange_window(
+                session, chunk, window, key, presidio_config, request_data
+            )
+        )
+
+    async def _exchange_window(
+        self,
+        session: aiohttp.ClientSession,
+        chunk: str,
+        window: Window,
+        key: str | None,
+        presidio_config: PresidioPerRequestConfig | None,
+        request_data: dict,
+    ) -> list[dict[str, object]]:
+        """Обмен по окну; удачный результат кэшируется, даже если вызывающий уже отменён."""
+        items = cast(
+            list[dict[str, object]],
+            await self._post_window(session, chunk, presidio_config, request_data),
+        )
+        validate_window_items(window, items)
         if key is not None:
-            self._window_cache.put(key, raw)
-        return raw
+            self._window_cache.put(key, items)
+        return items
 
     async def _post_window(
         self,
         session: aiohttp.ClientSession,
         text: str,
-        presidio_config: Optional[PresidioPerRequestConfig],
+        presidio_config: PresidioPerRequestConfig | None,
         request_data: dict,
     ) -> list[PresidioAnalyzeResponseItem]:
         """Один обмен с анализатором. Неприменимый ответ даёт `_InvalidAnalyzerResponse`."""
@@ -842,12 +913,7 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
         accepted: List[Any] = []
         for ar in sorted(
             analyze_results,
-            key=lambda x: (
-                x["score"],
-                x["end"] - x["start"],
-                -x["start"],
-                x["entity_type"],
-            ),
+            key=overlap_priority,
             reverse=True,
         ):
             if not any(
@@ -1185,6 +1251,11 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
                 masked_entity_count=masked_entity_count,
             )
 
+    async def _gather_with_budget(self, checks: Sequence[Awaitable[str]]) -> list[str]:
+        """Сообщения запроса делят один бюджет, а отказ одного отменяет остальные."""
+        with self._request_analyze_budget():
+            return await _gather_or_cancel(checks)
+
     @staticmethod
     def _spans_for_trace(
         analyze_results: list[PresidioAnalyzeResponseItem],
@@ -1270,8 +1341,7 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
                         )
                         task_mappings.append((msg_idx, int(content_idx)))
 
-            with self._request_analyze_budget():
-                responses = await asyncio.gather(*tasks)
+            responses = await self._gather_with_budget(tasks)
 
             # Map responses back to the correct message and content item
             for task_idx, r in enumerate(responses):
@@ -1379,8 +1449,7 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
                         )
                         task_mappings.append((msg_idx, int(content_idx)))
 
-            with self._request_analyze_budget():
-                responses = await asyncio.gather(*tasks)
+            responses = await self._gather_with_budget(tasks)
 
             # Map responses back to the correct message and content item
             for task_idx, r in enumerate(responses):
@@ -1487,6 +1556,15 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
         request_data: dict,
         mode: Literal["mask", "unmask"],
     ) -> dict:
+        with self._request_analyze_budget():
+            return await self._walk_anthropic_response(response, request_data, mode)
+
+    async def _walk_anthropic_response(
+        self,
+        response: dict,
+        request_data: dict,
+        mode: Literal["mask", "unmask"],
+    ) -> dict:
         """
         Process an Anthropic native message dict for PII masking/unmasking.
         Handles content blocks with type == "text".
@@ -1524,6 +1602,15 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
         return response
 
     async def _process_response_for_pii(
+        self,
+        response: ModelResponse,
+        request_data: dict,
+        mode: Literal["mask", "unmask"],
+    ) -> ModelResponse:
+        with self._request_analyze_budget():
+            return await self._walk_response(response, request_data, mode)
+
+    async def _walk_response(
         self,
         response: ModelResponse,
         request_data: dict,
@@ -1961,21 +2048,20 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
         ]
         # Разбор параллельный, но номера токенов раздаются по порядку текстов (см. _claim_numbering_turn).
         request_data = request_data or {}
-        with self._request_analyze_budget():
-            masked = await asyncio.gather(
-                *(
-                    self.check_pii(
-                        text=text,
-                        output_parse_pii=self.output_parse_pii,
-                        presidio_config=None,
-                        request_data=request_data,
-                    )
-                    for text in [
-                        *texts,
-                        *(function["arguments"] for function in tool_call_functions),
-                    ]
+        masked = await self._gather_with_budget(
+            [
+                self.check_pii(
+                    text=text,
+                    output_parse_pii=self.output_parse_pii,
+                    presidio_config=None,
+                    request_data=request_data,
                 )
-            )
+                for text in [
+                    *texts,
+                    *(function["arguments"] for function in tool_call_functions),
+                ]
+            ]
+        )
         inputs["texts"] = masked[: len(texts)]
         for function, arguments in zip(tool_call_functions, masked[len(texts) :]):
             function["arguments"] = arguments

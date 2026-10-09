@@ -1468,6 +1468,14 @@ class ResponsesWebSocketStreaming:
         return modified
 
     async def _mask_response_create(self, message: str) -> str:
+        from litellm.proxy.guardrails.guardrail_hooks.presidio import (
+            request_analyze_budget,
+        )
+
+        with request_analyze_budget():
+            return await self._mask_response_create_fields(message)
+
+    async def _mask_response_create_fields(self, message: str) -> str:
         """
         Enforce the authorized model and apply Presidio PII masking to a
         ``response.create`` message before it is forwarded to the upstream
@@ -1655,6 +1663,14 @@ class ResponsesWebSocketStreaming:
         return response_str
 
     async def _mask_response_completed(self, response_str: str) -> str:
+        from litellm.proxy.guardrails.guardrail_hooks.presidio import (
+            request_analyze_budget,
+        )
+
+        with request_analyze_budget():
+            return await self._mask_response_completed_fields(response_str)
+
+    async def _mask_response_completed_fields(self, response_str: str) -> str:
         """
         Apply Presidio output masking (apply_to_output=True) to the
         ``response.completed`` event before it is forwarded to the client.
