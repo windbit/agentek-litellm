@@ -6,10 +6,14 @@ Tests PII detection and masking for different message formats
 import asyncio
 import json
 import os
+import re
 import sys
+import time
 from contextlib import asynccontextmanager, contextmanager
+from typing import Any, Callable, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import aiohttp
 import pytest
 
 sys.path.insert(0, os.path.abspath("../../../../../.."))
@@ -17,6 +21,10 @@ sys.path.insert(0, os.path.abspath("../../../../../.."))
 import litellm
 from litellm.caching.caching import DualCache
 from litellm.proxy._types import UserAPIKeyAuth
+from litellm.proxy.guardrails.guardrail_hooks.analysis_windows import (
+    WINDOW,
+    plan_windows,
+)
 from litellm.proxy.guardrails.guardrail_hooks.presidio import (
     _OPTIONAL_PresidioPIIMasking,
 )
@@ -4835,3 +4843,811 @@ def test_decode_json_escapes_positions(source, decoded):
         assert start < end <= len(source)
         # Символ либо лежит в исходной строке как есть, либо записан эскейпом на своём отрезке.
         assert source[start:end] == char or source[start:end].startswith("\\")
+# ---------------------------------------------------------------------------
+# Окна анализа: длинный текст уходит в анализатор кусками
+# ---------------------------------------------------------------------------
+
+SEAM_NAME = "Игорь Сидоров"
+SEAM_INN = "500100732259"
+FILLER_WORD = "ф" * 40
+MAX_LOGGED_SPANS = 200
+
+
+class _RecordedResponse:
+    def __init__(
+        self,
+        body: object = None,
+        status: int = 200,
+        content_type: str = "application/json",
+    ) -> None:
+        self.status = status
+        self.content_type = content_type
+        self.headers = {"Content-Type": content_type}
+        self._body = [] if body is None else body
+
+    async def json(self) -> object:
+        return self._body
+
+    async def text(self) -> str:
+        return json.dumps(self._body, ensure_ascii=False)
+
+    async def __aenter__(self) -> "_RecordedResponse":
+        return self
+
+    async def __aexit__(self, *args: object) -> bool:
+        return False
+
+
+class _RecordedCall:
+    def __init__(
+        self,
+        session: "_RecordingAnalyzerSession",
+        payload: dict,
+        timeout: aiohttp.ClientTimeout,
+    ) -> None:
+        self.session = session
+        self.payload = payload
+        self.timeout = timeout
+
+    async def __aenter__(self) -> _RecordedResponse:
+        session = self.session
+        session.payloads.append(self.payload)
+        session.timeouts.append(self.timeout)
+        failure = session.failures.get(len(session.payloads))
+        if failure is not None:
+            return failure
+        session.in_flight += 1
+        session.peak_in_flight = max(session.peak_in_flight, session.in_flight)
+        try:
+            await asyncio.sleep(session.delay)
+        except asyncio.CancelledError:
+            session.cancelled += 1
+            raise
+        finally:
+            session.in_flight -= 1
+        return _RecordedResponse(session.respond(self.payload["text"]))
+
+    async def __aexit__(self, *args: object) -> bool:
+        return False
+
+
+class _RecordingAnalyzerSession:
+    """Двойник aiohttp-сессии: пишет каждый POST, отвечает функцией от текста, считает одновременные разборы.
+
+    `failures` — номер вызова (с 1) -> готовый ответ; он отдаётся сразу, без `delay`.
+    """
+
+    def __init__(
+        self,
+        respond: Callable[[str], object] = lambda text: [],
+        delay: float = 0.0,
+        failures: Optional[dict[int, _RecordedResponse]] = None,
+    ) -> None:
+        self.respond = respond
+        self.delay = delay
+        self.failures = failures if failures is not None else {}
+        self.payloads = []
+        self.timeouts = []
+        self.in_flight = 0
+        self.peak_in_flight = 0
+        self.cancelled = 0
+
+    @property
+    def texts(self) -> list[str]:
+        return [payload["text"] for payload in self.payloads]
+
+    def post(
+        self,
+        url: str,
+        json: Optional[dict] = None,
+        headers: Optional[dict] = None,
+        timeout: Optional[aiohttp.ClientTimeout] = None,
+    ) -> _RecordedCall:
+        return _RecordedCall(self, json, timeout)
+
+
+def _finds(
+    pattern: str, entity_type: str = "PERSON", score: float = 0.85
+) -> Callable[[str], list[dict]]:
+    compiled = re.compile(pattern)
+
+    def respond(text: str) -> list[dict]:
+        return [
+            {
+                "entity_type": entity_type,
+                "start": found.start(),
+                "end": found.end(),
+                "score": score,
+            }
+            for found in compiled.finditer(text)
+        ]
+
+    return respond
+
+
+def _windowed_presidio(**overrides: Any) -> _OPTIONAL_PresidioPIIMasking:
+    params = {
+        "presidio_analyzer_api_base": "http://mock-presidio:5002/",
+        "presidio_anonymizer_api_base": "http://mock-presidio:5001/",
+        "output_parse_pii": True,
+        "guardrail_name": "pii",
+        "default_on": True,
+        "pii_entities_config": {PiiEntityType.PERSON: PiiAction.MASK},
+    }
+    return _OPTIONAL_PresidioPIIMasking(**{**params, **overrides})
+
+
+def _with_session(
+    guardrail: _OPTIONAL_PresidioPIIMasking, session: _RecordingAnalyzerSession
+) -> Any:
+    return patch.object(
+        guardrail, "_get_session_iterator", _fake_analyzer_session_iterator(session)
+    )
+
+
+async def _analyze(
+    guardrail: _OPTIONAL_PresidioPIIMasking,
+    session: _RecordingAnalyzerSession,
+    text: str,
+    request_data: Optional[dict] = None,
+) -> Any:
+    with _with_session(guardrail, session):
+        return await guardrail.analyze_text(
+            text=text, presidio_config=None, request_data=request_data or {}
+        )
+
+
+async def _mask_through_analyzer(
+    guardrail: _OPTIONAL_PresidioPIIMasking,
+    session: _RecordingAnalyzerSession,
+    text: str,
+    request_data: Optional[dict] = None,
+) -> str:
+    with _with_session(guardrail, session):
+        return await guardrail.check_pii(
+            text=text,
+            output_parse_pii=guardrail.output_parse_pii,
+            presidio_config=None,
+            request_data={} if request_data is None else request_data,
+        )
+
+
+def _paragraph_text(chars: int, tag: str = "") -> str:
+    blocks, size, index = [], 0, 0
+    while size < chars:
+        block = f"Запись {tag}{index}: " + "слово " * 36 + "\n\n"
+        blocks.append(block)
+        size += len(block)
+        index += 1
+    return "".join(blocks)[:chars]
+
+
+def _seam_text() -> str:
+    """Первое окно кончается на «Игорь », фамилия начинается в следующем."""
+    text = "ф" * 7990 + SEAM_NAME + " " + (FILLER_WORD + " ") * 800
+    assert plan_windows(text)[0].end == 7996
+    return text
+
+
+def _unbroken_text_with_inn_on_the_cut() -> str:
+    """Ни одного разделителя: окно режется жёстко на 8000, ИНН лежит на разрезе."""
+    text = "ф" * 7993 + "-" + SEAM_INN + "-" + "ф" * 30_000
+    window = plan_windows(text)[0]
+    assert window.start < text.index(SEAM_INN) < window.end < text.index(SEAM_INN) + 12
+    return text
+
+
+def test_recording_session_double_records_fails_and_counts_peak() -> None:
+    session = _RecordingAnalyzerSession(
+        respond=_finds("Иван"),
+        delay=0.01,
+        failures={2: _RecordedResponse(status=500, body={"error": "boom"})},
+    )
+
+    async def call(text: str) -> tuple[int, object]:
+        async with session.post(
+            "url", json={"text": text}, timeout=aiohttp.ClientTimeout(total=5)
+        ) as response:
+            return response.status, await response.json()
+
+    async def scenario() -> list[tuple[int, object]]:
+        return await asyncio.gather(call("Иван тут"), call("второй"), call("пусто"))
+
+    results = asyncio.run(scenario())
+
+    assert session.texts == ["Иван тут", "второй", "пусто"]
+    assert results[0] == (
+        200,
+        [{"entity_type": "PERSON", "start": 0, "end": 4, "score": 0.85}],
+    )
+    assert results[1] == (500, {"error": "boom"})
+    assert results[2] == (200, [])
+    assert session.peak_in_flight == 2
+    assert session.in_flight == 0
+    assert [timeout.total for timeout in session.timeouts] == [5, 5, 5]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("length, posts", [(WINDOW, 1), (WINDOW + 1, 2)])
+async def test_window_threshold_is_inclusive(length: int, posts: int) -> None:
+    text = ("слово " * 2000)[:length]
+    session = _RecordingAnalyzerSession()
+
+    await _analyze(_windowed_presidio(), session, text)
+
+    assert len(session.texts) == posts
+    assert all(len(posted) <= WINDOW for posted in session.texts)
+
+
+@pytest.mark.asyncio
+async def test_long_text_is_posted_window_by_window() -> None:
+    text = _paragraph_text(40_000)
+    session = _RecordingAnalyzerSession()
+
+    await _analyze(_windowed_presidio(), session, text)
+
+    windows = plan_windows(text)
+    assert len(windows) > 4
+    assert sorted(session.texts) == sorted(
+        text[window.start : window.end] for window in windows
+    )
+    assert all(0 < len(posted) <= WINDOW for posted in session.texts)
+
+
+@pytest.mark.asyncio
+async def test_each_window_carries_the_full_payload_and_its_own_timeout() -> None:
+    guardrail = _windowed_presidio(
+        presidio_language="ru",
+        presidio_ad_hoc_recognizers=None,
+    )
+    guardrail.ad_hoc_recognizers = [{"name": "custom", "supported_entity": "X"}]
+    session = _RecordingAnalyzerSession()
+
+    with patch.object(
+        guardrail,
+        "get_guardrail_dynamic_request_body_params",
+        return_value={"score_threshold": 0.4},
+    ):
+        await _analyze(guardrail, session, _paragraph_text(20_000))
+
+    assert len(session.payloads) > 1
+    for payload in session.payloads:
+        assert payload == {
+            "text": payload["text"],
+            "language": "ru",
+            "entities": ["PERSON"],
+            "ad_hoc_recognizers": [{"name": "custom", "supported_entity": "X"}],
+            "score_threshold": 0.4,
+        }
+    assert [timeout.total for timeout in session.timeouts] == [30] * len(
+        session.payloads
+    )
+
+
+@pytest.mark.asyncio
+async def test_name_cut_by_a_window_edge_is_masked_once_and_whole() -> None:
+    text = _seam_text()
+    session = _RecordingAnalyzerSession(respond=_finds(SEAM_NAME))
+
+    masked = await _mask_through_analyzer(_windowed_presidio(), session, text)
+
+    assert masked == text.replace(SEAM_NAME, "<PERSON_1>")
+    assert SEAM_NAME not in session.texts[0]
+    assert SEAM_NAME in session.texts[1]
+
+
+@pytest.mark.asyncio
+async def test_escaped_text_is_cut_decoded_and_masked_in_source_coordinates() -> None:
+    escaped_name = "".join(
+        char if char == " " else f"\\u{ord(char):04x}" for char in SEAM_NAME
+    )
+    source = _seam_text().replace(SEAM_NAME, escaped_name)
+    session = _RecordingAnalyzerSession(respond=_finds(SEAM_NAME))
+    request_data = {}
+
+    masked = await _mask_through_analyzer(
+        _windowed_presidio(), session, source, request_data
+    )
+
+    assert masked == source.replace(escaped_name, "<PERSON_1>")
+    assert request_data["metadata"]["pii_tokens"] == {"<PERSON_1>": SEAM_NAME}
+    assert all("\\u" not in posted for posted in session.texts)
+
+
+@pytest.mark.asyncio
+async def test_rule_span_across_a_cut_is_found_once_on_the_full_text(
+    rulebook_file: str,
+) -> None:
+    text = _unbroken_text_with_inn_on_the_cut()
+    guardrail = _windowed_presidio(
+        pii_rulebook=rulebook_file,
+        pii_entities_config={
+            "PERSON": PiiAction.MASK,
+            "RU_INN": PiiAction.MASK,
+            "PHONE_NUMBER": PiiAction.MASK,
+        },
+    )
+    session = _RecordingAnalyzerSession(
+        respond=_finds(r"\d{6,12}", "PHONE_NUMBER", 0.4)
+    )
+
+    with patch.object(
+        guardrail.rule_engine, "analyze", wraps=guardrail.rule_engine.analyze
+    ) as rules:
+        masked = await _mask_through_analyzer(guardrail, session, text)
+
+    assert rules.call_count == 1
+    assert masked == text.replace(SEAM_INN, "<RU_INN_1>")
+
+
+@pytest.mark.asyncio
+async def test_whitespace_window_is_not_sent() -> None:
+    text = "Иван Петров " + " " * 25_000 + "Мария Иванова"
+    session = _RecordingAnalyzerSession(respond=_finds(r"[А-Я][а-я]+ [А-Я][а-я]+"))
+
+    masked = await _mask_through_analyzer(_windowed_presidio(), session, text)
+
+    assert len(session.texts) < len(plan_windows(text))
+    assert all(posted.strip() for posted in session.texts)
+    assert masked == "<PERSON_1> " + " " * 25_000 + "<PERSON_2>"
+
+
+@pytest.mark.asyncio
+async def test_mock_response_bypasses_windows() -> None:
+    guardrail = _windowed_presidio(mock_redacted_text={"text": "stub"})
+    session = _RecordingAnalyzerSession()
+
+    result = await _analyze(guardrail, session, _paragraph_text(40_000))
+
+    assert result == {"text": "stub"}
+    assert session.texts == []
+
+
+@pytest.mark.asyncio
+async def test_dict_item_response_of_a_window_is_one_span() -> None:
+    item = {"entity_type": "PERSON", "start": 0, "end": 4, "score": 0.9}
+    text = _paragraph_text(12_000)
+    session = _RecordingAnalyzerSession(respond=lambda posted: dict(item))
+
+    spans = await _analyze(_windowed_presidio(), session, text)
+
+    windows = plan_windows(text)
+    assert [span["start"] for span in spans] == [window.start for window in windows]
+
+
+FAILURES = {
+    "http_500": _RecordedResponse(status=500, body={"error": "boom"}),
+    "error_body": _RecordedResponse(body={"error": "No text provided"}),
+    "not_json": _RecordedResponse(body="<html>", content_type="text/html"),
+    "list_of_lists": _RecordedResponse(body=[[{"entity_type": "PERSON"}]]),
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", FAILURES.values(), ids=FAILURES.keys())
+async def test_failed_window_rejects_the_request_and_cancels_the_rest(
+    failure: _RecordedResponse,
+) -> None:
+    text = _paragraph_text(40_000)
+    guardrail = _windowed_presidio()
+    session = _RecordingAnalyzerSession(
+        respond=_finds("слово"), delay=0.05, failures={3: failure}
+    )
+
+    with (
+        _analyzer_concurrency_limit(4),
+        pytest.raises(GuardrailRaisedException, match="invalid response"),
+    ):
+        await _analyze(guardrail, session, text)
+
+    assert len(session.texts) < len(plan_windows(text))
+    assert session.cancelled >= 1
+    assert session.in_flight == 0
+
+
+@pytest.mark.asyncio
+async def test_window_with_positions_outside_the_window_rejects_and_is_not_cached() -> (
+    None
+):
+    text = _paragraph_text(12_000)
+    guardrail = _windowed_presidio()
+    bad = [{"entity_type": "PERSON", "start": 0, "end": WINDOW + 1, "score": 0.9}]
+    session = _RecordingAnalyzerSession(respond=lambda posted: bad)
+
+    with pytest.raises(GuardrailRaisedException, match="invalid response"):
+        await _analyze(guardrail, session, text)
+
+    assert guardrail._window_cache.total_spans == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text_chars", [3_000, 40_000])
+async def test_list_of_lists_is_a_failure_for_one_window_and_for_many(
+    text_chars: int,
+) -> None:
+    session = _RecordingAnalyzerSession(respond=lambda posted: [[{"start": 0}]])
+
+    with pytest.raises(GuardrailRaisedException, match="invalid response"):
+        await _analyze(_windowed_presidio(), session, _paragraph_text(text_chars))
+
+
+@pytest.mark.asyncio
+async def test_invalid_window_without_masking_policy_gives_empty_not_partial() -> None:
+    from litellm.proxy.guardrails.guardrail_hooks import presidio as presidio_module
+
+    guardrail = _windowed_presidio(pii_entities_config={}, output_parse_pii=False)
+    session = _RecordingAnalyzerSession(
+        respond=_finds("слово"),
+        failures={3: _RecordedResponse(body={"error": "No text provided"})},
+    )
+
+    with patch.object(presidio_module.verbose_proxy_logger, "warning") as warning:
+        spans = await _analyze(guardrail, session, _paragraph_text(40_000))
+
+    assert spans == []
+    assert warning.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_oversize_text_is_rejected_before_any_request() -> None:
+    text = "слово " * 200_000
+    session = _RecordingAnalyzerSession()
+
+    with pytest.raises(GuardrailRaisedException) as rejected:
+        await _analyze(_windowed_presidio(), session, text)
+
+    assert session.texts == []
+    message = str(rejected.value)
+    assert "too long to mask" in message
+    assert not any(
+        internal in message.lower() for internal in ("presidio", "analyzer", "window")
+    )
+
+
+@pytest.mark.asyncio
+async def test_oversize_text_without_masking_policy_gives_empty_with_warning() -> None:
+    from litellm.proxy.guardrails.guardrail_hooks import presidio as presidio_module
+
+    guardrail = _windowed_presidio(pii_entities_config={}, output_parse_pii=False)
+    session = _RecordingAnalyzerSession()
+
+    with patch.object(presidio_module.verbose_proxy_logger, "warning") as warning:
+        spans = await _analyze(guardrail, session, "слово " * 200_000)
+
+    assert spans == []
+    assert session.texts == []
+    assert warning.call_count == 1
+
+
+# --- бюджет запроса ---------------------------------------------------------
+
+
+def _apply_guardrail(guardrail: _OPTIONAL_PresidioPIIMasking, texts: list[str]) -> Any:
+    return guardrail.apply_guardrail(
+        inputs={"texts": texts}, request_data={}, input_type="request"
+    )
+
+
+@pytest.mark.asyncio
+async def test_twenty_long_messages_stay_within_the_request_budget() -> None:
+    guardrail = _windowed_presidio()
+    session = _RecordingAnalyzerSession(delay=0.005)
+    texts = [_paragraph_text(40_000, tag=f"{n}-") for n in range(20)]
+
+    with _analyzer_concurrency_limit(4), _with_session(guardrail, session):
+        await _apply_guardrail(guardrail, texts)
+
+    assert session.peak_in_flight == 2
+    assert len(session.texts) > 20 * 4
+
+
+@pytest.mark.asyncio
+async def test_request_budget_covers_both_pre_call_branches() -> None:
+    guardrail = _windowed_presidio()
+    session = _RecordingAnalyzerSession(delay=0.005)
+    string_branch = {
+        "messages": [
+            {"role": "user", "content": _paragraph_text(30_000, tag=f"s{n}-")}
+            for n in range(6)
+        ]
+    }
+    list_branch = {
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": _paragraph_text(30_000, tag=f"l{n}-")}
+                    for n in range(6)
+                ],
+            }
+        ]
+    }
+
+    for data in (string_branch, list_branch):
+        session.peak_in_flight = 0
+        with _analyzer_concurrency_limit(4), _with_session(guardrail, session):
+            await guardrail.async_pre_call_hook(
+                user_api_key_dict=UserAPIKeyAuth(api_key="k"),
+                cache=MagicMock(),
+                data=data,
+                call_type="completion",
+            )
+        assert session.peak_in_flight == 2
+
+
+@pytest.mark.asyncio
+async def test_request_budget_covers_the_logging_hook() -> None:
+    guardrail = _windowed_presidio()
+    session = _RecordingAnalyzerSession(delay=0.005)
+    kwargs = {
+        "messages": [
+            {"role": "user", "content": _paragraph_text(30_000, tag=f"{n}-")}
+            for n in range(6)
+        ]
+    }
+
+    with _analyzer_concurrency_limit(4), _with_session(guardrail, session):
+        await guardrail.async_logging_hook(kwargs, None, "acompletion")
+
+    assert session.peak_in_flight == 2
+
+
+@pytest.mark.asyncio
+async def test_short_message_does_not_wait_for_long_ones() -> None:
+    guardrail = _windowed_presidio()
+    session = _RecordingAnalyzerSession(delay=0.02)
+
+    with _analyzer_concurrency_limit(4), _with_session(guardrail, session):
+        with guardrail._request_analyze_budget():
+            long_tasks = [
+                asyncio.ensure_future(
+                    guardrail.analyze_text(
+                        text=_paragraph_text(40_000, tag=f"{n}-"),
+                        presidio_config=None,
+                        request_data={},
+                    )
+                )
+                for n in range(4)
+            ]
+            await asyncio.sleep(0.01)
+            await asyncio.wait_for(
+                guardrail.analyze_text(
+                    text="короткое сообщение", presidio_config=None, request_data={}
+                ),
+                timeout=2,
+            )
+            assert not any(task.done() for task in long_tasks)
+        await asyncio.gather(*long_tasks)
+
+
+@pytest.mark.asyncio
+async def test_two_requests_do_not_share_a_budget() -> None:
+    guardrail = _windowed_presidio()
+    session = _RecordingAnalyzerSession(delay=0.01)
+
+    with _analyzer_concurrency_limit(4), _with_session(guardrail, session):
+        await asyncio.gather(
+            _apply_guardrail(guardrail, [_paragraph_text(40_000, tag="a-")]),
+            _apply_guardrail(guardrail, [_paragraph_text(40_000, tag="b-")]),
+        )
+
+    assert session.peak_in_flight == 4
+
+
+@pytest.mark.asyncio
+async def test_budget_is_dropped_when_the_request_scope_ends() -> None:
+    from litellm.proxy.guardrails.guardrail_hooks import presidio as presidio_module
+
+    guardrail = _windowed_presidio()
+
+    with guardrail._request_analyze_budget():
+        assert presidio_module._analyze_budget.get() is not None
+
+    assert presidio_module._analyze_budget.get() is None
+
+
+@pytest.mark.asyncio
+async def test_deadline_includes_waiting_for_a_busy_slot() -> None:
+    from litellm.proxy.guardrails.guardrail_hooks import presidio as presidio_module
+
+    guardrail = _windowed_presidio()
+    session = _RecordingAnalyzerSession()
+
+    with (
+        _analyzer_concurrency_limit(1),
+        patch.object(presidio_module, "PRESIDIO_ANALYZE_DEADLINE_SECONDS", 0.3),
+    ):
+        await presidio_module._analyze_slot().acquire()
+        started = time.monotonic()
+        with pytest.raises(Exception, match="TimeoutError"):
+            await asyncio.wait_for(
+                _analyze(guardrail, session, _paragraph_text(40_000)), timeout=5
+            )
+
+    assert time.monotonic() - started < 2
+    assert session.texts == []
+    assert session.in_flight == 0
+
+
+@pytest.mark.asyncio
+async def test_client_disconnect_cancels_every_window_of_the_request() -> None:
+    guardrail = _windowed_presidio()
+    session = _RecordingAnalyzerSession(delay=30)
+
+    with _analyzer_concurrency_limit(4), _with_session(guardrail, session):
+        task = asyncio.ensure_future(
+            _apply_guardrail(guardrail, [_paragraph_text(40_000)])
+        )
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    assert session.in_flight == 0
+    assert session.cancelled == 2
+
+
+# --- кэши -------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_repeated_long_text_is_not_posted_again() -> None:
+    guardrail = _windowed_presidio()
+    session = _RecordingAnalyzerSession()
+    text = _paragraph_text(40_000)
+
+    await _analyze(guardrail, session, text)
+    posted = len(session.texts)
+    await _analyze(guardrail, session, text)
+
+    assert len(session.texts) == posted
+
+
+@pytest.mark.asyncio
+async def test_appended_paragraph_costs_at_most_two_posts() -> None:
+    guardrail = _windowed_presidio()
+    session = _RecordingAnalyzerSession(respond=_finds("слово"))
+    text = _paragraph_text(40_000)
+    first = await _analyze(guardrail, session, text)
+    session.payloads.clear()
+
+    grown = await _analyze(guardrail, session, text + "Новый абзац со словом.\n\n")
+
+    assert 1 <= len(session.texts) <= 2
+    assert grown[: len(first)] == first
+
+
+@pytest.mark.asyncio
+async def test_retry_after_a_failure_reposts_only_what_did_not_finish() -> None:
+    guardrail = _windowed_presidio()
+    text = _paragraph_text(40_000)
+    windows = plan_windows(text)
+    session = _RecordingAnalyzerSession(
+        delay=0.05, failures={3: _RecordedResponse(status=500, body={"error": "x"})}
+    )
+
+    with _analyzer_concurrency_limit(4), pytest.raises(GuardrailRaisedException):
+        await _analyze(guardrail, session, text)
+    session.payloads.clear()
+    session.failures.clear()
+    await _analyze(guardrail, session, text)
+
+    window_texts = [text[window.start : window.end] for window in windows]
+    assert window_texts[2] in session.texts
+    assert not set(window_texts[:2]) & set(session.texts)
+
+
+@pytest.mark.asyncio
+async def test_caches_are_bounded_by_the_sum_of_spans() -> None:
+    from litellm.proxy.guardrails.guardrail_hooks import presidio as presidio_module
+
+    session = _RecordingAnalyzerSession(respond=_finds("слово"))
+    with patch.object(presidio_module, "SPAN_CACHE_MAX_SPANS", 5000):
+        guardrail = _windowed_presidio()
+        for n in range(4):
+            await _analyze(guardrail, session, _paragraph_text(20_000, tag=f"{n}-"))
+
+    assert 0 < guardrail._span_cache.total_spans <= 5000
+    assert len(guardrail._span_cache) == 1
+    assert 0 < guardrail._window_cache.total_spans <= 5000
+
+
+# --- пересечения и логи -----------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "span_a, span_b",
+    [
+        (("LOCATION", 5, 15), ("PERSON", 5, 15)),
+        (("PERSON", 0, 10), ("PERSON", 5, 15)),
+    ],
+    ids=["same_span_different_type", "same_length_different_start"],
+)
+def test_overlap_tie_break_does_not_depend_on_input_order(
+    span_a: tuple[str, int, int], span_b: tuple[str, int, int]
+) -> None:
+    def span(entity_type: str, start: int, end: int) -> dict:
+        return {"entity_type": entity_type, "start": start, "end": end, "score": 0.85}
+
+    forward = _OPTIONAL_PresidioPIIMasking._drop_overlapping_results(
+        [span(*span_a), span(*span_b)]
+    )
+    backward = _OPTIONAL_PresidioPIIMasking._drop_overlapping_results(
+        [span(*span_b), span(*span_a)]
+    )
+
+    assert forward == backward
+    assert len(forward) == 1
+
+
+def test_overlap_tie_break_prefers_the_earlier_start_then_the_later_type() -> None:
+    drop = _OPTIONAL_PresidioPIIMasking._drop_overlapping_results
+
+    def span(entity_type: str, start: int, end: int) -> dict:
+        return {"entity_type": entity_type, "start": start, "end": end, "score": 0.85}
+
+    assert drop([span("PERSON", 5, 15), span("PERSON", 0, 10)]) == [
+        span("PERSON", 0, 10)
+    ]
+    assert drop([span("LOCATION", 5, 15), span("PERSON", 5, 15)]) == [
+        span("PERSON", 5, 15)
+    ]
+
+
+def test_numbered_placeholders_do_not_depend_on_span_order() -> None:
+    guardrail = _windowed_presidio()
+    text = "Иван и Мария"
+    spans = [
+        {"entity_type": "PERSON", "start": 0, "end": 4, "score": 0.85},
+        {"entity_type": "LOCATION", "start": 0, "end": 4, "score": 0.85},
+        {"entity_type": "PERSON", "start": 7, "end": 12, "score": 0.85},
+    ]
+
+    def masked(analyze_results: list[dict]) -> str:
+        return guardrail._finalize_presidio_anonymize_numbered_tokens(
+            text, analyze_results, {}, {}
+        )
+
+    assert masked(spans) == masked(list(reversed(spans))) == "<PERSON_1> и <PERSON_2>"
+
+
+@pytest.mark.asyncio
+async def test_windowed_analysis_is_logged_without_the_text() -> None:
+    from litellm.proxy.guardrails.guardrail_hooks import presidio as presidio_module
+
+    text = _seam_text()
+    session = _RecordingAnalyzerSession(respond=_finds(SEAM_NAME))
+
+    with patch.object(presidio_module.verbose_proxy_logger, "info") as info:
+        await _analyze(_windowed_presidio(), session, text)
+
+    lines = [call.args[0] % call.args[1:] for call in info.call_args_list]
+    window_lines = [line for line in lines if "windows" in line]
+    assert len(window_lines) == 1
+    assert f"windows={len(plan_windows(text))}" in window_lines[0]
+    assert f"chars={len(text)}" in window_lines[0]
+    assert re.search(r"ms=\d+", window_lines[0])
+    assert SEAM_NAME not in window_lines[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("found, logged", [(250, 201), (MAX_LOGGED_SPANS, 200)])
+async def test_trace_gets_at_most_two_hundred_spans_and_the_total(
+    found: int, logged: int
+) -> None:
+    guardrail = _windowed_presidio()
+    session = _RecordingAnalyzerSession(respond=_finds("Иван"))
+
+    with patch.object(
+        guardrail, "add_standard_logging_guardrail_information_to_request_data"
+    ) as trace:
+        await _mask_through_analyzer(guardrail, session, "Иван " * found)
+
+    response = trace.call_args.kwargs["guardrail_json_response"]
+    assert len(response) == logged
+    assert all(item["entity_type"] == "PERSON" for item in response[:MAX_LOGGED_SPANS])
+    if found > MAX_LOGGED_SPANS:
+        assert response[-1] == {
+            "total_spans": found,
+            "omitted_spans": found - MAX_LOGGED_SPANS,
+        }

@@ -597,3 +597,15 @@ def test_duplicate_stubs_replaced_by_one_cover_give_one_item():
     second = [{"entity_type": "A", "start": 10, "end": 120}]
     merged = merge_windows(windows, [first, second])
     assert [(item["start"], item["end"]) for item in merged] == [(50, 160)]
+
+
+def test_span_lru_values_are_copies_in_recency_order():
+    cache = SpanLRU(max_entries=10, max_spans=100)
+    cache.put("a", [{"start": 0}])
+    cache.put("b", [{"start": 1}])
+    cache.get("a")
+
+    values = cache.values()
+    values[0].clear()
+
+    assert cache.values() == [[{"start": 1}], [{"start": 0}]]

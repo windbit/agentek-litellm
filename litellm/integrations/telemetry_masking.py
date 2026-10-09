@@ -30,6 +30,7 @@ from typing import (
 from litellm._logging import verbose_logger
 from litellm.constants import LOGGING_WORKER_MAX_TIME_PER_COROUTINE
 from litellm.proxy.guardrails.guardrail_hooks.analysis_windows import (
+    SPAN_CACHE_MAX_SPANS,
     InvalidWindowResponse,
     OversizeError,
     SpanLRU,
@@ -87,7 +88,6 @@ MAX_TEXT_CHARS = _env_number("LITELLM_TELEMETRY_MAX_TEXT_CHARS", 200_000, int)
 # Колбэк получает всю переписку на каждом ходу: без кэша старые сообщения уходят
 # в анализатор заново столько раз, сколько было ходов.
 SPAN_CACHE_SIZE = _env_number("LITELLM_TELEMETRY_SPAN_CACHE", 5000, int)
-SPAN_CACHE_MAX_SPANS = 200_000
 MAX_INFLIGHT_SPANS = _env_number("LITELLM_TELEMETRY_MAX_INFLIGHT_SPANS", 32, int)
 MAX_INFLIGHT_CHARS = _env_number("LITELLM_TELEMETRY_MAX_INFLIGHT_CHARS", 16_000_000, int)
 # Выделенный анализатор телеметрии держит три воркера: больше окон одного спана ему не нужно,

@@ -12,14 +12,17 @@ import asyncio
 import hashlib
 import json
 import threading
-from collections import OrderedDict
-from contextlib import asynccontextmanager
+import time
+from contextlib import asynccontextmanager, contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
 from datetime import datetime
 from typing import (
     TYPE_CHECKING,
     Any,
     AsyncGenerator,
     Dict,
+    Iterator,
     List,
     Literal,
     Optional,
@@ -52,6 +55,17 @@ from litellm.types.guardrails import (
     PiiAction,
     PiiEntityType,
     PresidioPerRequestConfig,
+)
+from litellm.proxy.guardrails.guardrail_hooks.analysis_windows import (
+    InvalidWindowResponse,
+    SPAN_CACHE_MAX_SPANS,
+    OversizeError,
+    SpanLRU,
+    Window,
+    merge_windows,
+    own_items,
+    plan_windows,
+    run_windows,
 )
 from litellm.proxy.guardrails.guardrail_hooks.json_escaped_text import (
     ESCAPE_TRIGGER,
@@ -88,6 +102,13 @@ PRESIDIO_ANALYZE_MAX_CONCURRENCY = get_env_int("PRESIDIO_ANALYZE_MAX_CONCURRENCY
 # Ниже gunicornTimeout анализатора: дольше, чем живёт его воркер, ждать нечего.
 PRESIDIO_ANALYZE_TIMEOUT_SECONDS = get_env_int("PRESIDIO_ANALYZE_TIMEOUT", 30)
 
+# Дедлайн запроса включает ожидание слота; он меньше таймаута клиента Hermes.
+PRESIDIO_ANALYZE_DEADLINE_SECONDS = get_env_int("PRESIDIO_ANALYZE_DEADLINE", 90)
+MAX_REQUEST_CONCURRENCY = 4
+WINDOWS_PER_CACHED_MESSAGE = 8
+MAX_LOGGED_SPANS = 200
+TOO_LONG_MESSAGE = "Message is too long to mask"
+
 # Потолок общий на процесс, а не на запрос: он режет суммарный залп от всех ходов.
 # Семафор привязан к event-loop, поэтому по одному на loop.
 _analyze_slots: Dict[asyncio.AbstractEventLoop, asyncio.Semaphore] = {}
@@ -101,6 +122,32 @@ def _analyze_slot() -> asyncio.Semaphore:
         slot = asyncio.Semaphore(PRESIDIO_ANALYZE_MAX_CONCURRENCY)
         _analyze_slots[loop] = slot
     return slot
+
+
+@dataclass(frozen=True, slots=True)
+class _AnalyzeBudget:
+    gate: asyncio.Semaphore
+    deadline: float
+
+
+# Бюджет ставится перед gather сообщений запроса; задачи gather копируют контекст и видят один объект.
+_analyze_budget: ContextVar[Optional[_AnalyzeBudget]] = ContextVar(
+    "presidio_analyze_budget", default=None
+)
+
+
+def _new_analyze_budget() -> _AnalyzeBudget:
+    request_slots = min(
+        MAX_REQUEST_CONCURRENCY, max(1, PRESIDIO_ANALYZE_MAX_CONCURRENCY // 2)
+    )
+    return _AnalyzeBudget(
+        gate=asyncio.Semaphore(request_slots),
+        deadline=asyncio.get_running_loop().time() + PRESIDIO_ANALYZE_DEADLINE_SECONDS,
+    )
+
+
+class _InvalidAnalyzerResponse(Exception):
+    """Ответ анализатора нельзя применить; текст причины попадает в лог и в отказ гардрейла."""
 
 
 def _drop_closed_loops(per_loop: Dict[asyncio.AbstractEventLoop, Any]) -> None:
@@ -185,8 +232,11 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
         # поэтому системный промпт и переписка иначе анализируются заново по десять раз за ход.
         # Ключ считается по payload анализатора, то есть учитывает текст, язык, состав сущностей
         # и набор ad-hoc-рекогнайзеров; версия рулбука добавляется отдельно.
-        self._span_cache: "OrderedDict[str, List[PresidioAnalyzeResponseItem]]" = OrderedDict()
-        self._span_cache_limit = span_cache_size
+        self._span_cache = SpanLRU(span_cache_size, SPAN_CACHE_MAX_SPANS)
+        # Сырой ответ анализатора по тексту окна, в локальных оффсетах: владение применяется после чтения.
+        self._window_cache = SpanLRU(
+            span_cache_size * WINDOWS_PER_CACHED_MESSAGE, SPAN_CACHE_MAX_SPANS
+        )
 
         # Shared HTTP session to prevent memory leaks (issue #14540)
         self._http_session: Optional[aiohttp.ClientSession] = None
@@ -422,8 +472,7 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
         if cache_key is not None:
             cached = self._span_cache.get(cache_key)
             if cached is not None:
-                self._span_cache.move_to_end(cache_key)
-                return list(cached)
+                return cast(List[PresidioAnalyzeResponseItem], cached)
 
         # В \uXXXX анализатор букв не видит: разбираем раскодированный текст, а спаны возвращаем
         # в координатах исходной строки — маска встаёт в неё, формат не меняется.
@@ -443,9 +492,7 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
         if decoded is not None:
             merged = [self._span_in_source_text(span, decoded) for span in merged]
         if cache_key is not None:
-            self._span_cache[cache_key] = list(merged)
-            while len(self._span_cache) > self._span_cache_limit:
-                self._span_cache.popitem(last=False)
+            self._span_cache.put(cache_key, cast(List[Dict[str, object]], merged))
         return merged
 
     @staticmethod
@@ -495,7 +542,9 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
         request_data: dict,
     ) -> Union[List[PresidioAnalyzeResponseItem], Dict]:
         """
-        Send text to the Presidio analyzer endpoint and get analysis results
+        Send text to the Presidio analyzer endpoint and get analysis results.
+
+        Текст длиннее одного окна уходит окнами; отказ любого окна отклоняет весь текст.
         """
         try:
             # Skip empty or whitespace-only text to avoid Presidio errors
@@ -509,129 +558,230 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
             if self.mock_redacted_text is not None:
                 return self.mock_redacted_text
 
+            windows = plan_windows(text)
             # Use shared session to prevent memory leak (issue #14540)
             async with self._get_session_iterator() as session:
-                # Make the request to /analyze
-                analyze_url = f"{self.presidio_analyzer_api_base}analyze"
-
-                analyze_payload: PresidioAnalyzeRequest = (
-                    self._get_presidio_analyze_request_payload(
-                        text=text,
-                        presidio_config=presidio_config,
-                        request_data=request_data,
+                if len(windows) == 1:
+                    return await self._post_window(
+                        session, text, presidio_config, request_data
                     )
+                return await self._analyze_in_windows(
+                    session, text, windows, presidio_config, request_data
                 )
-
-                verbose_proxy_logger.debug(
-                    "Making request to: %s with payload: %s",
-                    analyze_url,
-                    analyze_payload,
-                )
-
-                def _fail_on_invalid_response(
-                    reason: str,
-                ) -> List[PresidioAnalyzeResponseItem]:
-                    should_fail_closed = (
-                        bool(self.pii_entities_config)
-                        or self.output_parse_pii
-                        or self.apply_to_output
-                    )
-                    if should_fail_closed:
-                        raise GuardrailRaisedException(
-                            guardrail_name=self.guardrail_name,
-                            message=f"Presidio analyzer returned invalid response; cannot verify PII when PII protection is configured: {reason}",
-                            should_wrap_with_default_message=False,
-                        )
-                    verbose_proxy_logger.warning(
-                        "Presidio analyzer %s, returning empty list", reason
-                    )
-                    return []
-
-                async with _analyze_slot():
-                    async with session.post(
-                        analyze_url,
-                        json=analyze_payload,
-                        headers={"Accept": "application/json"},
-                        timeout=aiohttp.ClientTimeout(
-                            total=PRESIDIO_ANALYZE_TIMEOUT_SECONDS
-                        ),
-                    ) as response:
-                        # Validate HTTP status
-                        if response.status >= 400:
-                            error_body = await response.text()
-                            return _fail_on_invalid_response(
-                                f"HTTP {response.status} from Presidio analyzer: {error_body[:200]}"
-                            )
-
-                        # Validate Content-Type is JSON
-                        content_type = getattr(
-                            response,
-                            "content_type",
-                            response.headers.get("Content-Type", ""),
-                        )
-                        if "application/json" not in content_type:
-                            error_body = await response.text()
-                            return _fail_on_invalid_response(
-                                f"expected application/json Content-Type but received '{content_type}'; body: '{error_body[:200]}'"
-                            )
-
-                        analyze_results = await response.json()
-                        verbose_proxy_logger.debug(
-                            "analyze_results: %s", analyze_results
-                        )
-
-                # Handle error responses from Presidio (e.g., {'error': 'No text provided'})
-                # Presidio may return a dict instead of a list when errors occur
-
-                if isinstance(analyze_results, dict):
-                    if "error" in analyze_results:
-                        return _fail_on_invalid_response(
-                            f"error: {analyze_results.get('error')}"
-                        )
-                    # If it's a dict but not an error, try to process it as a single item
-                    verbose_proxy_logger.debug(
-                        "Presidio returned dict (not list), attempting to process as single item"
-                    )
-                    try:
-                        return [PresidioAnalyzeResponseItem(**analyze_results)]
-                    except Exception as e:
-                        return _fail_on_invalid_response(
-                            f"failed to parse dict response: {e}"
-                        )
-
-                # Handle unexpected types (str, None, etc.) - e.g. from malformed/error
-                if not isinstance(analyze_results, list):
-                    return _fail_on_invalid_response(
-                        f"unexpected type {type(analyze_results).__name__} (expected list or dict), response: {str(analyze_results)[:200]}"
-                    )
-
-                # Normal case: list of results
-                final_results = []
-                for item in analyze_results:
-                    if not isinstance(item, dict):
-                        verbose_proxy_logger.warning(
-                            "Skipping invalid Presidio result item (expected dict, got %s): %s",
-                            type(item).__name__,
-                            str(item)[:100],
-                        )
-                        continue
-                    try:
-                        final_results.append(PresidioAnalyzeResponseItem(**item))
-                    except Exception as e:
-                        verbose_proxy_logger.warning(
-                            "Failed to parse Presidio result item: %s (error: %s)",
-                            item,
-                            e,
-                        )
-                        continue
-                return final_results
         except GuardrailRaisedException:
             # Re-raise GuardrailRaisedException without wrapping
             raise
+        except OversizeError:
+            return self._reject_too_long_text()
+        except (_InvalidAnalyzerResponse, InvalidWindowResponse) as e:
+            return self._fail_on_invalid_response(str(e))
         except Exception as e:
             # Sanitize exception to avoid leaking the original text (which may
             # contain API keys or other secrets) in error responses.
             raise Exception(f"Presidio PII analysis failed: {type(e).__name__}") from e
+
+    def _masks_entities(self) -> bool:
+        return (
+            bool(self.pii_entities_config)
+            or self.output_parse_pii
+            or self.apply_to_output
+        )
+
+    def _fail_on_invalid_response(
+        self, reason: str
+    ) -> list[PresidioAnalyzeResponseItem]:
+        if self._masks_entities():
+            raise GuardrailRaisedException(
+                guardrail_name=self.guardrail_name,
+                message=f"Presidio analyzer returned invalid response; cannot verify PII when PII protection is configured: {reason}",
+                should_wrap_with_default_message=False,
+            )
+        verbose_proxy_logger.warning(
+            "Presidio analyzer %s, returning empty list", reason
+        )
+        return []
+
+    def _reject_too_long_text(self) -> list[PresidioAnalyzeResponseItem]:
+        if self._masks_entities():
+            raise GuardrailRaisedException(
+                guardrail_name=self.guardrail_name,
+                message=TOO_LONG_MESSAGE,
+                should_wrap_with_default_message=False,
+            )
+        verbose_proxy_logger.warning(
+            "Message exceeds the analysis window limit, returning empty list"
+        )
+        return []
+
+    @contextmanager
+    def _request_analyze_budget(self) -> Iterator[None]:
+        """Общие слоты и дедлайн для всех окон всех сообщений, разбираемых внутри блока.
+
+        Ставить надо до `asyncio.gather`: задачи копируют контекст в момент создания.
+        """
+        token = _analyze_budget.set(_new_analyze_budget())
+        try:
+            yield
+        finally:
+            _analyze_budget.reset(token)
+
+    async def _analyze_in_windows(
+        self,
+        session: aiohttp.ClientSession,
+        text: str,
+        windows: list[Window],
+        presidio_config: Optional[PresidioPerRequestConfig],
+        request_data: dict,
+    ) -> list[PresidioAnalyzeResponseItem]:
+        started = time.monotonic()
+        budget = _analyze_budget.get() or _new_analyze_budget()
+
+        async def fetch(window: Window) -> list[dict[str, object]]:
+            return await self._analyze_window(
+                session,
+                text[window.start : window.end],
+                window,
+                presidio_config,
+                request_data,
+            )
+
+        per_window = await run_windows(
+            windows,
+            fetch,
+            gate=budget.gate,
+            timeout=max(0.0, budget.deadline - asyncio.get_running_loop().time()),
+        )
+        verbose_proxy_logger.info(
+            "Presidio windowed analysis: windows=%d chars=%d ms=%d",
+            len(windows),
+            len(text),
+            (time.monotonic() - started) * 1000,
+        )
+        return cast(
+            list[PresidioAnalyzeResponseItem], merge_windows(windows, per_window)
+        )
+
+    async def _analyze_window(
+        self,
+        session: aiohttp.ClientSession,
+        chunk: str,
+        window: Window,
+        presidio_config: Optional[PresidioPerRequestConfig],
+        request_data: dict,
+    ) -> list[dict[str, object]]:
+        if not chunk.strip():
+            return []
+        key = self._span_cache_key(
+            text=chunk, presidio_config=presidio_config, request_data=request_data
+        )
+        cached = self._window_cache.get(key) if key is not None else None
+        if cached is not None:
+            return cached
+        items = await self._post_window(session, chunk, presidio_config, request_data)
+        raw = cast(list[dict[str, object]], items)
+        own_items(window, raw)  # неверные позиции отказывают окно до записи в кэш
+        if key is not None:
+            self._window_cache.put(key, raw)
+        return raw
+
+    async def _post_window(
+        self,
+        session: aiohttp.ClientSession,
+        text: str,
+        presidio_config: Optional[PresidioPerRequestConfig],
+        request_data: dict,
+    ) -> list[PresidioAnalyzeResponseItem]:
+        """Один обмен с анализатором. Неприменимый ответ даёт `_InvalidAnalyzerResponse`."""
+        analyze_url = f"{self.presidio_analyzer_api_base}analyze"
+        analyze_payload: PresidioAnalyzeRequest = (
+            self._get_presidio_analyze_request_payload(
+                text=text,
+                presidio_config=presidio_config,
+                request_data=request_data,
+            )
+        )
+
+        verbose_proxy_logger.debug(
+            "Making request to: %s with payload: %s",
+            analyze_url,
+            analyze_payload,
+        )
+
+        async with _analyze_slot():
+            async with session.post(
+                analyze_url,
+                json=analyze_payload,
+                headers={"Accept": "application/json"},
+                timeout=aiohttp.ClientTimeout(total=PRESIDIO_ANALYZE_TIMEOUT_SECONDS),
+            ) as response:
+                # Validate HTTP status
+                if response.status >= 400:
+                    error_body = await response.text()
+                    raise _InvalidAnalyzerResponse(
+                        f"HTTP {response.status} from Presidio analyzer: {error_body[:200]}"
+                    )
+
+                # Validate Content-Type is JSON
+                content_type = getattr(
+                    response,
+                    "content_type",
+                    response.headers.get("Content-Type", ""),
+                )
+                if "application/json" not in content_type:
+                    error_body = await response.text()
+                    raise _InvalidAnalyzerResponse(
+                        f"expected application/json Content-Type but received '{content_type}'; body: '{error_body[:200]}'"
+                    )
+
+                analyze_results = await response.json()
+                verbose_proxy_logger.debug("analyze_results: %s", analyze_results)
+
+        # Handle error responses from Presidio (e.g., {'error': 'No text provided'})
+        # Presidio may return a dict instead of a list when errors occur
+        if isinstance(analyze_results, dict):
+            if "error" in analyze_results:
+                raise _InvalidAnalyzerResponse(f"error: {analyze_results.get('error')}")
+            # If it's a dict but not an error, try to process it as a single item
+            verbose_proxy_logger.debug(
+                "Presidio returned dict (not list), attempting to process as single item"
+            )
+            try:
+                return [PresidioAnalyzeResponseItem(**analyze_results)]
+            except Exception as e:
+                raise _InvalidAnalyzerResponse(
+                    f"failed to parse dict response: {e}"
+                ) from e
+
+        # Handle unexpected types (str, None, etc.) - e.g. from malformed/error
+        if not isinstance(analyze_results, list):
+            raise _InvalidAnalyzerResponse(
+                f"unexpected type {type(analyze_results).__name__} (expected list or dict), response: {str(analyze_results)[:200]}"
+            )
+
+        # Normal case: list of results
+        final_results = []
+        for item in analyze_results:
+            if isinstance(item, list):
+                raise _InvalidAnalyzerResponse(
+                    "unexpected nested list in response (expected a flat list of results)"
+                )
+            if not isinstance(item, dict):
+                verbose_proxy_logger.warning(
+                    "Skipping invalid Presidio result item (expected dict, got %s): %s",
+                    type(item).__name__,
+                    str(item)[:100],
+                )
+                continue
+            try:
+                final_results.append(PresidioAnalyzeResponseItem(**item))
+            except Exception as e:
+                verbose_proxy_logger.warning(
+                    "Failed to parse Presidio result item: %s (error: %s)",
+                    item,
+                    e,
+                )
+                continue
+        return final_results
 
     async def _post_presidio_anonymize(self, text: str, analyze_results: Any) -> Any:
         """POST to Presidio anonymize; returns parsed JSON body."""
@@ -692,7 +842,12 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
         accepted: List[Any] = []
         for ar in sorted(
             analyze_results,
-            key=lambda x: (x["score"], x["end"] - x["start"]),
+            key=lambda x: (
+                x["score"],
+                x["end"] - x["start"],
+                -x["start"],
+                x["entity_type"],
+            ),
             reverse=True,
         ):
             if not any(
@@ -1016,7 +1171,7 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
             guardrail_json_response: Union[Exception, str, dict, List[dict]] = {}
             if status == "success":
                 if isinstance(analyze_results, List):
-                    guardrail_json_response = [dict(item) for item in analyze_results]
+                    guardrail_json_response = self._spans_for_trace(analyze_results)
             else:
                 guardrail_json_response = exception_str
             self.add_standard_logging_guardrail_information_to_request_data(
@@ -1029,6 +1184,18 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
                 duration=(datetime.now() - start_time).total_seconds(),
                 masked_entity_count=masked_entity_count,
             )
+
+    @staticmethod
+    def _spans_for_trace(
+        analyze_results: list[PresidioAnalyzeResponseItem],
+    ) -> list[dict]:
+        spans: list[dict] = [dict(item) for item in analyze_results[:MAX_LOGGED_SPANS]]
+        omitted = len(analyze_results) - len(spans)
+        if omitted > 0:
+            spans.append(
+                {"total_spans": len(analyze_results), "omitted_spans": omitted}
+            )
+        return spans
 
     async def async_pre_call_hook(
         self,
@@ -1103,7 +1270,8 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
                         )
                         task_mappings.append((msg_idx, int(content_idx)))
 
-            responses = await asyncio.gather(*tasks)
+            with self._request_analyze_budget():
+                responses = await asyncio.gather(*tasks)
 
             # Map responses back to the correct message and content item
             for task_idx, r in enumerate(responses):
@@ -1211,7 +1379,8 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
                         )
                         task_mappings.append((msg_idx, int(content_idx)))
 
-            responses = await asyncio.gather(*tasks)
+            with self._request_analyze_budget():
+                responses = await asyncio.gather(*tasks)
 
             # Map responses back to the correct message and content item
             for task_idx, r in enumerate(responses):
@@ -1792,20 +1961,21 @@ class _OPTIONAL_PresidioPIIMasking(CustomGuardrail):
         ]
         # Разбор параллельный, но номера токенов раздаются по порядку текстов (см. _claim_numbering_turn).
         request_data = request_data or {}
-        masked = await asyncio.gather(
-            *(
-                self.check_pii(
-                    text=text,
-                    output_parse_pii=self.output_parse_pii,
-                    presidio_config=None,
-                    request_data=request_data,
+        with self._request_analyze_budget():
+            masked = await asyncio.gather(
+                *(
+                    self.check_pii(
+                        text=text,
+                        output_parse_pii=self.output_parse_pii,
+                        presidio_config=None,
+                        request_data=request_data,
+                    )
+                    for text in [
+                        *texts,
+                        *(function["arguments"] for function in tool_call_functions),
+                    ]
                 )
-                for text in [
-                    *texts,
-                    *(function["arguments"] for function in tool_call_functions),
-                ]
             )
-        )
         inputs["texts"] = masked[: len(texts)]
         for function, arguments in zip(tool_call_functions, masked[len(texts) :]):
             function["arguments"] = arguments

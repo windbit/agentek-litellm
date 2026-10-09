@@ -20,6 +20,7 @@ WINDOW = 8000
 OVERLAP = 1024
 MAX_WINDOWS = 128
 SNAP_BACK = 256
+SPAN_CACHE_MAX_SPANS = 200_000
 
 PARAGRAPH_BREAKS = ("\n\n", "\r\n\r\n")
 SENTENCE_END = ".!?…。！？"
@@ -205,6 +206,9 @@ class SpanLRU:
     @property
     def total_spans(self) -> int:
         return self._total_spans
+
+    def values(self) -> list[list[dict[str, object]]]:
+        return [list(spans) for spans in self._entries.values()]
 
     def get(self, key: str) -> list[dict[str, object]] | None:
         spans = self._entries.pop(key, None)
