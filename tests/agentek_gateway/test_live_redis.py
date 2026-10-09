@@ -7,6 +7,9 @@ import redis as sync_redis_module
 
 from agentek_gateway.subscriptions.leader import LeaderLease
 from agentek_gateway.subscriptions.model import (
+    Limits,
+    UsageRecord,
+    Window,
     SignalSource,
     StateReason,
     StateRecord,
@@ -359,3 +362,50 @@ async def test_renewed_lease_still_expires_after_its_ttl_without_further_renewal
         await asyncio.sleep(1.3)
 
         assert await redis.exists(KEYS.leader) == 0
+
+
+async def test_extended_slot_survives_its_original_deadline_and_a_released_one_is_not_revived() -> (
+    None
+):
+    async with live_redis() as redis:
+        clock = FakeClock()
+        slots = RedisSlotStore(redis, clock, KEYS.prefix)
+        await slots.reserve("a", "long-stream", 1, 900.0)
+        await slots.reserve("b", "gone", 1, 900.0)
+        await slots.release("b", "gone")
+
+        clock.advance(600)
+        extended = await slots.extend("a", "long-stream", 900.0)
+        revived = await slots.extend("b", "gone", 900.0)
+        clock.advance(600)
+
+        assert (extended, revived, (await slots.in_flight(["a", "b"]))) == (
+            True,
+            False,
+            {"a": 1, "b": 0},
+        )
+
+
+async def test_refresh_mark_and_sticky_binding_expire_in_real_time() -> None:
+    async with live_redis() as redis:
+        store = store_on(redis, FakeClock())
+        await store.mark_refreshed(CREDENTIAL, 1)
+        await store.write_sticky("chat-1", "a", 1)
+        before = (await store.recently_refreshed(CREDENTIAL), await store.read_sticky("chat-1"))
+
+        await asyncio.sleep(1.3)
+
+        after = (await store.recently_refreshed(CREDENTIAL), await store.read_sticky("chat-1"))
+        assert (before, after) == ((True, "a"), (False, None))
+
+
+async def test_usage_windows_round_trip_through_real_redis() -> None:
+    async with live_redis() as redis:
+        store = store_on(redis, FakeClock())
+        usage = UsageRecord(
+            Limits(Window(12.5, 2_000_000.0), Window(40.0, 3_000_000.0)), 1_000_000.0
+        )
+
+        await store.write_usage("a", usage)
+
+        assert await store.read_all_usage() == {"a": usage}
