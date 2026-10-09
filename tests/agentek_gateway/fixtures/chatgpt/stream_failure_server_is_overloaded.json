@@ -1,0 +1,12 @@
+{
+  "origin": "code and message real (dev spend logs, 'Error in response'); event envelope follows the Responses API and is not captured",
+  "event": {
+    "type": "response.failed",
+    "response": {
+      "error": {
+        "code": "server_is_overloaded",
+        "message": "Our servers are currently overloaded. Please try again later."
+      }
+    }
+  }
+}

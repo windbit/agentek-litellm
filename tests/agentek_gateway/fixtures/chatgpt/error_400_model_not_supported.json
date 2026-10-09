@@ -1,0 +1,6 @@
+{
+  "origin": "real (dev spend logs)",
+  "status": 400,
+  "headers": {},
+  "body": "{\"detail\": \"The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account.\"}"
+}

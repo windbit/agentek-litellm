@@ -1,0 +1,14 @@
+{
+  "origin": "synthetic envelope, body fields as in the real 429",
+  "event": {
+    "type": "error",
+    "error": {
+      "type": "usage_limit_reached",
+      "message": "The usage limit has been reached",
+      "plan_type": "prolite",
+      "resets_at": 1791580236,
+      "limit_window_minutes": 10080,
+      "resets_in_seconds": 236772
+    }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "origin": "real: dev gateway, Responses API stream",
+  "status": 200,
+  "headers": {
+    "llm_provider-x-codex-active-limit": "premium",
+    "llm_provider-x-codex-plan-type": "prolite",
+    "llm_provider-x-codex-primary-used-percent": "81",
+    "llm_provider-x-codex-secondary-used-percent": "0",
+    "llm_provider-x-codex-primary-window-minutes": "10080",
+    "llm_provider-x-codex-primary-over-secondary-limit-percent": "0",
+    "llm_provider-x-codex-secondary-window-minutes": "0",
+    "llm_provider-x-codex-primary-reset-after-seconds": "392210",
+    "llm_provider-x-codex-secondary-reset-after-seconds": "0",
+    "llm_provider-x-codex-primary-reset-at": "1791948566",
+    "llm_provider-x-codex-credits-has-credits": "False",
+    "llm_provider-x-codex-credits-balance": "0",
+    "llm_provider-x-codex-credits-unlimited": "False",
+    "llm_provider-x-codex-turn-state": "<opaque>",
+    "llm_provider-x-codex-safety-buffering-enabled": "true",
+    "llm_provider-x-codex-safety-buffering-faster-model": "gpt-5.6-luna"
+  }
+}
