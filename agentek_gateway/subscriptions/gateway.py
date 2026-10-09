@@ -2,6 +2,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
 import litellm
+from litellm._logging import verbose_proxy_logger
 
 from .attempts import AttemptTracker, read_request_id, request_metadata
 from .clock import Clock
@@ -142,7 +143,12 @@ class SubscriptionGateway:
             current_attempt.set(None)
             return None
         await self._note_attempt(kwargs, subscription)
-        reservation = await self._reserve(kwargs, subscription)
+        try:
+            reservation = await self._reserve(kwargs, subscription)
+        except Exception:  # noqa: BLE001
+            verbose_proxy_logger.exception("agentek_gateway slot reservation failed")
+            current_attempt.set(None)
+            raise SubscriptionBusyError(str(kwargs.get("model"))) from None
         if reservation is None:
             parts.telemetry.switched(subscription, SwitchReason.BUSY)
             raise SubscriptionBusyError(str(kwargs.get("model")))

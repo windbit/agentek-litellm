@@ -39,6 +39,16 @@ class RedisSlotStore:
     async def release(self, subscription_id: SubscriptionId, token: str) -> bool:
         return await self._redis.zrem(self._key(subscription_id), token) > 0
 
+    async def extend(
+        self, subscription_id: SubscriptionId, token: str, ttl_s: float
+    ) -> bool:
+        key = self._key(subscription_id)
+        extended = await self._redis.zadd(
+            key, {token: self._clock.now() + ttl_s}, xx=True, ch=True
+        )
+        await self._redis.expire(key, int(ttl_s + KEY_GRACE_S))
+        return extended > 0
+
     async def in_flight(
         self, subscription_ids: Sequence[SubscriptionId]
     ) -> Mapping[SubscriptionId, int]:

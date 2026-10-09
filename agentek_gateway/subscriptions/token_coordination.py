@@ -12,6 +12,7 @@ from .providers.chatgpt import ChatgptAuth
 from .redis_keys import Keys
 
 LOCK_TTL_S = 60
+RECENT_REFRESH_WINDOW_S = 60.0
 LATEST_TTL_S = 24 * 3600
 LOCK_POLL_S = 0.05
 LOCK_WAIT_S = 1.0

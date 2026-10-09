@@ -15,6 +15,7 @@ from .slots import Reservation
 ADDITIONAL_HEADERS_KEY = "additional_headers"
 STREAM_FAILURE_TYPES = frozenset({"error", "response.failed"})
 UNKNOWN_STATUS = 0
+SLOT_REFRESHES_PER_TTL = 3
 
 
 class OutcomeTracker:
@@ -37,18 +38,24 @@ class OutcomeTracker:
 
     async def on_success(self, kwargs: Mapping[str, object], response: object) -> None:
         request_id, reservation = self._attempt_of(kwargs)
-        subscription = self._subscription(reservation)
-        if reservation and subscription:
-            provider = self._provider(subscription)
-            limits = (
-                provider.parse_limits(
-                    _additional_headers(response), None, now=self._parts.clock.now()
+        try:
+            subscription = self._subscription(reservation)
+            if reservation and subscription:
+                provider = self._provider(subscription)
+                limits = (
+                    provider.parse_limits(
+                        _additional_headers(response), None, now=self._parts.clock.now()
+                    )
+                    if provider
+                    else None
                 )
-                if provider
-                else None
-            )
-            await self._parts.signals.on_success(subscription, limits)
-        await self.finish(request_id)
+                await self._parts.signals.on_success(subscription, limits)
+        finally:
+            await self.finish(request_id)
+
+    async def release_slots(self, request: Mapping[str, object]) -> None:
+        """Frees the slots of a finished non-streaming request without waiting for the success log event."""
+        await self._parts.ledger.release_request(request_key_of(request))
 
     async def on_failure_event(self, kwargs: Mapping[str, object]) -> None:
         """Failures the provider observer cannot see: no HTTP reply (connection, timeout), not an internal error."""
@@ -96,8 +103,17 @@ class OutcomeTracker:
             return
         key = (request_id, reservation.deployment_id)
         self._parts.registry.mark_streaming(key)
+        refresh_every_s = (
+            self._parts.config.defaults.slot_ttl_s / SLOT_REFRESHES_PER_TTL
+        )
+        refreshed_at = self._parts.clock.now()
         try:
             async for chunk in response:
+                if self._parts.clock.now() - refreshed_at >= refresh_every_s:
+                    refreshed_at = self._parts.clock.now()
+                    await guarded(
+                        "slot refresh", self._parts.ledger.extend(reservation), False
+                    )
                 await guarded(
                     "stream chunk",
                     self._inspect_chunk(subscription, reservation, chunk),

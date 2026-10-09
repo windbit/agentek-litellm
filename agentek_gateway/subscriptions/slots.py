@@ -1,9 +1,9 @@
-import heapq
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from .clock import Clock
+from .expiring import ExpiringMap
 from .model import Subscription, SubscriptionId
 from .ports import SlotStore
 
@@ -32,13 +32,12 @@ class ReserveRequest:
 
 
 class _RequestSlots:
-    __slots__ = ("attempts", "by_deployment", "expires_at", "released")
+    __slots__ = ("attempts", "by_deployment", "released")
 
-    def __init__(self, expires_at: float) -> None:
+    def __init__(self) -> None:
         self.by_deployment: dict[str, Reservation] = {}
         self.released: set[str] = set()
         self.attempts = 0
-        self.expires_at = expires_at
 
 
 class InMemorySlotStore:
@@ -69,6 +68,15 @@ class InMemorySlotStore:
     async def release(self, subscription_id: SubscriptionId, token: str) -> bool:
         return self._held.get(subscription_id, {}).pop(token, None) is not None
 
+    async def extend(
+        self, subscription_id: SubscriptionId, token: str, ttl_s: float
+    ) -> bool:
+        held = self._held.get(subscription_id, {})
+        if token not in held:
+            return False
+        held[token] = self._clock.now() + ttl_s
+        return True
+
     async def in_flight(
         self, subscription_ids: Sequence[SubscriptionId]
     ) -> Mapping[SubscriptionId, int]:
@@ -96,13 +104,12 @@ class SlotLedger:
         self._store = store
         self._clock = clock
         self._ttl_s = ttl_s
-        self._max_requests = max_requests
-        self._requests: dict[str, _RequestSlots] = {}
-        self._expiry: list[tuple[float, str]] = []
+        self._requests: ExpiringMap[str, _RequestSlots] = ExpiringMap(
+            clock, ttl_s, max_requests
+        )
 
     async def reserve(self, request: ReserveRequest) -> Reservation | None:
         """Idempotent per (request, deployment); moving to a new deployment releases the request's earlier slots."""
-        self._sweep()
         slots = self._requests.get(request.request_id) or self._open(request.request_id)
         existing = slots.by_deployment.get(request.deployment_id)
         if existing:
@@ -134,6 +141,12 @@ class SlotLedger:
         await self._store.release(reservation.subscription_id, reservation.token)
         return True
 
+    async def extend(self, reservation: Reservation) -> bool:
+        """Keeps the slot of a long stream alive past its TTL while the stream still delivers."""
+        return await self._store.extend(
+            reservation.subscription_id, reservation.token, self._ttl_s
+        )
+
     async def release_request(self, request_id: str | None) -> None:
         slots = self._requests.get(request_id) if request_id else None
         if slots:
@@ -143,7 +156,7 @@ class SlotLedger:
         if not request_id:
             return
         await self.release_request(request_id)
-        self._requests.pop(request_id, None)
+        self._requests.discard(request_id)
 
     def find(
         self, request_id: str | None, deployment_id: str | None
@@ -160,7 +173,6 @@ class SlotLedger:
         return max(slots.by_deployment.values(), key=lambda held: held.attempt)
 
     def size(self) -> int:
-        self._sweep()
         return len(self._requests)
 
     async def _release_live(self, slots: _RequestSlots) -> None:
@@ -168,24 +180,6 @@ class SlotLedger:
             await self.release(reservation)
 
     def _open(self, request_id: str) -> _RequestSlots:
-        expires_at = self._clock.now() + self._ttl_s
-        slots = _RequestSlots(expires_at)
-        self._requests[request_id] = slots
-        heapq.heappush(self._expiry, (expires_at, request_id))
-        self._evict_overflow()
+        slots = _RequestSlots()
+        self._requests.put(request_id, slots)
         return slots
-
-    def _sweep(self) -> None:
-        now = self._clock.now()
-        while self._expiry and self._expiry[0][0] <= now:
-            _, request_id = heapq.heappop(self._expiry)
-            slots = self._requests.get(request_id)
-            if slots and slots.expires_at <= now:
-                del self._requests[request_id]
-
-    def _evict_overflow(self) -> None:
-        overflow = len(self._requests) - self._max_requests
-        for request_id in sorted(
-            self._requests, key=lambda rid: self._requests[rid].expires_at
-        )[: max(0, overflow)]:
-            del self._requests[request_id]

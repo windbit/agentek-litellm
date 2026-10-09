@@ -152,7 +152,7 @@ class PrometheusTelemetry:
                 if record
                 else SubscriptionState.ACTIVE
             )
-            if subscription.enabled and is_working(current):
+            if subscription.enabled and not snapshot.closed and is_working(current):
                 working[subscription.provider] += 1
         for provider, count in working.items():
             self._working.labels(provider).set(count)

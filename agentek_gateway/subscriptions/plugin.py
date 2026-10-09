@@ -1,7 +1,7 @@
 import asyncio
 import os
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from urllib.parse import quote
 
 from redis import Redis as SyncRedis
@@ -132,7 +132,10 @@ async def build_proxy_runtime(
     transport = HttpxProbeTransport()
     provider = ChatGPTProvider(transport, config.tuning_for(PROVIDER_ID).probe_model)
     telemetry = PrometheusTelemetry()
-    repo = CachedSubscriptionRepo(connections.repo, clock)
+    connections = replace(
+        connections, repo=CachedSubscriptionRepo(connections.repo, clock)
+    )
+    repo = connections.repo
     runtime = build_runtime(
         RuntimeDeps(
             clock=clock,
@@ -151,7 +154,7 @@ async def build_proxy_runtime(
         listener=RedisListener(
             redis, keys.changes, runtime.parts.snapshot.request_refresh
         ),
-        duties=_leader_duties(runtime, store, connections, keys, transport, repo),
+        duties=_leader_duties(runtime, store, connections, keys, transport),
         telemetry=TelemetryLoop(
             runtime.parts.snapshot, store, runtime.parts.egress, telemetry, clock
         ),
@@ -178,11 +181,10 @@ def _leader_duties(
     connections: Connections,
     keys: Keys,
     transport: HttpxProbeTransport,
-    repo: SubscriptionRepo,
 ) -> LeaderDuties:
     parts = runtime.parts
     providers = {PROVIDER_ID: parts.providers[PROVIDER_ID]}
-    credentials = connections.credentials
+    repo, credentials = connections.repo, connections.credentials
     lease = LeaderLease(connections.redis, keys.leader)
     return LeaderDuties(
         lease,

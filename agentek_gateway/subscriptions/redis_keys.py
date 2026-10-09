@@ -71,9 +71,6 @@ class Keys:
     def sticky(self, digest: str) -> str:
         return f"{self._prefix}sticky:{digest}"
 
-    def slots(self, subscription_id: SubscriptionId) -> str:
-        return f"{self._prefix}slots:{subscription_id}"
-
 
 def route_member(route: Route) -> str:
     return f"{route.provider}\x1f{route.egress or ''}"

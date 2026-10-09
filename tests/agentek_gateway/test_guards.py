@@ -25,6 +25,7 @@ HOOKS = (
     "async_log_success_event",
     "async_log_failure_event",
     "async_post_call_failure_hook",
+    "async_post_call_success_hook",
     "async_post_call_response_headers_hook",
     "async_post_call_streaming_iterator_hook",
 )

@@ -4,9 +4,12 @@ from litellm.llms.chatgpt import authenticator
 from litellm.llms.chatgpt.common_utils import RefreshAccessTokenError
 
 from .providers.chatgpt import ChatgptAuth, jwt_expiry
-from .token_coordination import LatestAuth, SyncTokenCoordinator
+from .token_coordination import (
+    RECENT_REFRESH_WINDOW_S,
+    LatestAuth,
+    SyncTokenCoordinator,
+)
 
-RECENT_REFRESH_WINDOW_S = 60.0
 LOCK_TIMEOUT_STATUS = 503
 
 

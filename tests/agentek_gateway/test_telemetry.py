@@ -292,3 +292,16 @@ async def test_loop_publishes_what_the_store_holds_and_feeds_the_egress_book() -
         sample("agentek_subscription_seconds_since_probe", provider="chatgpt"),
         book.note(route),
     ) == (7, f"egress_ip={IP} colo=ARN")
+
+
+def test_closed_snapshot_publishes_no_working_subscriptions() -> None:
+    from dataclasses import replace
+
+    subscription = make_subscription(
+        "t1", name="metric-closed", provider="metric-closed-prov"
+    )
+    closed = replace(view(subscription).snapshot, closed=True)
+
+    PrometheusTelemetry().publish(replace(view(subscription), snapshot=closed))
+
+    assert sample("agentek_subscription_working", provider="metric-closed-prov") == 0

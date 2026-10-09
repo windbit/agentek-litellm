@@ -104,6 +104,10 @@ class SlotStore(Protocol):
 
     async def release(self, subscription_id: SubscriptionId, token: str) -> bool: ...
 
+    async def extend(
+        self, subscription_id: SubscriptionId, token: str, ttl_s: float
+    ) -> bool: ...
+
     async def in_flight(
         self, subscription_ids: Sequence[SubscriptionId]
     ) -> Mapping[SubscriptionId, int]: ...

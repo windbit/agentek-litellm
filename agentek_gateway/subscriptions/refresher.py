@@ -14,10 +14,13 @@ from .ports import StateStore, SubscriptionRepo
 from .providers.base import RefreshedTokens, RefreshOutcome, RefreshRejected
 from .providers.chatgpt import ChatgptAuth
 from .service import StateService
-from .token_coordination import LatestAuth, TokenCoordinator
+from .token_coordination import (
+    RECENT_REFRESH_WINDOW_S,
+    LatestAuth,
+    TokenCoordinator,
+)
 
 REFRESH_LEAD_S = 10 * 60
-RECENT_REFRESH_WINDOW_S = 60.0
 REFRESH_DEADLINE_S = 40.0
 
 

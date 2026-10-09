@@ -103,6 +103,19 @@ class SubscriptionCallback(CustomLogger):
                 "log_failure", runtime.outcomes.on_failure_event(kwargs), None
             )
 
+    async def async_post_call_success_hook(
+        self,
+        data: Fields,
+        user_api_key_dict: UserAPIKeyAuth,
+        response: object,
+    ) -> object:
+        runtime = self._slot.runtime
+        if runtime is not None and not data.get("stream"):
+            await guarded(
+                "post_call_success", runtime.outcomes.release_slots(data), None
+            )
+        return None
+
     async def async_post_call_failure_hook(
         self,
         request_data: Fields,
