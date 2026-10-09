@@ -1,0 +1,112 @@
+"""The probe transport against a real local HTTP server: wire format, status mapping, proxy env, transport failure."""
+
+import json
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
+
+import httpx
+import pytest
+from aiohttp import web
+
+from agentek_gateway.subscriptions.providers.transport import HttpxProbeTransport
+
+
+@dataclass
+class Seen:
+    method: str
+    path_qs: str
+    headers: dict[str, str]
+    body: str
+
+
+@dataclass
+class Server:
+    base: str
+    seen: list[Seen] = field(default_factory=list)
+
+
+@asynccontextmanager
+async def serving(status: int = 200, body: str = "{}") -> AsyncIterator[Server]:
+    server = Server("")
+
+    async def handle(request: web.Request) -> web.Response:
+        server.seen.append(
+            Seen(
+                request.method,
+                request.path_qs,
+                dict(request.headers),
+                await request.text(),
+            )
+        )
+        return web.Response(status=status, text=body, headers={"X-Codex-Test": "7"})
+
+    app = web.Application()
+    app.router.add_route("*", "/{tail:.*}", handle)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    port = site._server.sockets[0].getsockname()[1]  # type: ignore[union-attr]  # noqa: SLF001
+    server.base = f"http://127.0.0.1:{port}"
+    try:
+        yield server
+    finally:
+        await runner.cleanup()
+
+
+async def test_post_sends_json_and_headers_and_returns_status_headers_and_body() -> None:
+    async with serving(429, '{"error": "limit"}') as server:
+        reply = await HttpxProbeTransport().post_json(
+            f"{server.base}/responses", {"Authorization": "Bearer t"}, {"model": "m"}
+        )
+
+    sent = server.seen[0]
+    assert (
+        sent.method,
+        sent.headers["Authorization"],
+        json.loads(sent.body),
+        reply.status,
+        reply.body,
+        reply.headers["x-codex-test"],
+    ) == ("POST", "Bearer t", {"model": "m"}, 429, '{"error": "limit"}', "7")
+
+
+async def test_get_sends_headers_and_returns_the_reply() -> None:
+    async with serving(200, '{"ok": 1}') as server:
+        reply = await HttpxProbeTransport().get(
+            f"{server.base}/usage?x=1", {"chatgpt-account-id": "acct"}
+        )
+
+    sent = server.seen[0]
+    assert (sent.method, sent.path_qs, sent.headers["chatgpt-account-id"], reply.status) == (
+        "GET",
+        "/usage?x=1",
+        "acct",
+        200,
+    )
+
+
+async def test_requests_go_through_the_proxy_named_in_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async with serving(200, "via proxy") as proxy:
+        monkeypatch.setenv("HTTP_PROXY", proxy.base)
+        monkeypatch.setenv("http_proxy", proxy.base)
+        monkeypatch.delenv("NO_PROXY", raising=False)
+        monkeypatch.delenv("no_proxy", raising=False)
+
+        reply = await HttpxProbeTransport().get("http://upstream.invalid/usage", {})
+
+    assert (reply.body, proxy.seen[0].headers["Host"]) == (
+        "via proxy",
+        "upstream.invalid",
+    )
+
+
+async def test_a_dead_endpoint_raises_instead_of_returning_a_reply() -> None:
+    async with serving() as server:
+        dead = server.base
+
+    with pytest.raises(httpx.TransportError):
+        await HttpxProbeTransport(timeout_s=2).post_json(f"{dead}/x", {}, {})
