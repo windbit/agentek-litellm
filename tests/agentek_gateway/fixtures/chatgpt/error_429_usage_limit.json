@@ -1,0 +1,17 @@
+{
+  "origin": "body: real (dev spend logs); headers: synthetic, header names and format as in the real success responses",
+  "status": 429,
+  "headers": {
+    "x-codex-active-limit": "premium",
+    "x-codex-plan-type": "prolite",
+    "x-codex-primary-used-percent": "100",
+    "x-codex-primary-window-minutes": "10080",
+    "x-codex-primary-reset-at": "1791580236",
+    "x-codex-primary-reset-after-seconds": "236772",
+    "x-codex-secondary-used-percent": "0",
+    "x-codex-secondary-window-minutes": "0",
+    "x-codex-secondary-reset-after-seconds": "0"
+  },
+  "body": "{\"error\": {\"type\": \"usage_limit_reached\", \"message\": \"The usage limit has been reached\", \"plan_type\": \"prolite\", \"resets_at\": 1791580236, \"eligible_promo\": null, \"limit_window_minutes\": 10080, \"resets_in_seconds\": 236772}}",
+  "observed_at": 1791343464
+}

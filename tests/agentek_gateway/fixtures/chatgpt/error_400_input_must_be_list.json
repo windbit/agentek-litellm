@@ -1,0 +1,6 @@
+{
+  "origin": "real (dev gateway request)",
+  "status": 400,
+  "headers": {},
+  "body": "{\"detail\": \"Input must be a list\"}"
+}

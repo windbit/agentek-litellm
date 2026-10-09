@@ -1,0 +1,8 @@
+{
+  "origin": "real status, body shortened (dev spend logs)",
+  "status": 403,
+  "headers": {
+    "content-type": "text/html"
+  },
+  "body": "<html>\n  <head>\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n  </head>\n  <body><p>Unable to load site</p></body>\n</html>"
+}

@@ -1,0 +1,6 @@
+{
+  "origin": "real (dev spend logs)",
+  "status": 503,
+  "headers": {},
+  "body": "{\"error\": {\"message\": \"Service Unavailable\", \"type\": null, \"code\": \"biscuit_baker_service_me_circuit_open\", \"param\": null}, \"status\": 503}"
+}

@@ -1,0 +1,6 @@
+{
+  "origin": "real shape of an OpenAI deactivation response (dev spend logs, openai provider); not observed on chatgpt",
+  "status": 401,
+  "headers": {},
+  "body": "{\"error\": {\"message\": \"The OpenAI account associated with this API key has been deactivated. If you are the developer for this OpenAI app, please check your email for more information.\", \"type\": \"invalid_request_error\", \"code\": \"account_deactivated\", \"param\": null}, \"status\": 401}"
+}
