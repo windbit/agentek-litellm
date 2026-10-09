@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from .attempts import AttemptTracker
 from .clock import Clock
 from .config import GatewayConfig
+from .expiring import ExpiringMap
 from .failures import FailureRouter
 from .gateway import GatewayParts, SubscriptionGateway, request_key_of
 from .outcomes import OutcomeTracker
@@ -79,6 +80,7 @@ def build_runtime(deps: RuntimeDeps) -> SubscriptionRuntime:
         registry=AttemptRegistry(clock, ttl_s),
         telemetry=deps.telemetry,
         tasks=BackgroundTasks(),
+        offers=ExpiringMap(clock, ttl_s),
     )
     return SubscriptionRuntime(
         parts=parts,

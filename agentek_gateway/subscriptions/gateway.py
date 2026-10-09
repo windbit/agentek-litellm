@@ -8,6 +8,7 @@ from .clock import Clock
 from .config import GatewayConfig
 from .egress import EgressBook
 from .errors import NoAvailableSubscriptionsError, mark_internal
+from .expiring import ExpiringMap
 from .failures import FailureRouter, SwitchReason
 from .filtering import Deployment, FilterContext, filter_deployments
 from .model import Subscription
@@ -28,6 +29,14 @@ SUBSCRIPTION_ID_PREFIX = "sub:"
 
 
 @dataclass(frozen=True, slots=True)
+class Offer:
+    """What the filter put forward for a request; it becomes an attempt only if the router really uses it."""
+
+    deployment_id: str
+    alternatives: int
+
+
+@dataclass(frozen=True, slots=True)
 class GatewayParts:
     clock: Clock
     config: GatewayConfig
@@ -41,6 +50,7 @@ class GatewayParts:
     registry: AttemptRegistry
     telemetry: Telemetry
     tasks: BackgroundTasks
+    offers: ExpiringMap[str, Offer]
     egress: EgressBook = field(default_factory=EgressBook)
 
 
@@ -104,13 +114,10 @@ class SubscriptionGateway:
             ),
         )
         chosen = result.chosen
-        if chosen and chosen.subscription_id:
-            if request_id:
-                parts.attempts.record(
-                    request_id, chosen.deployment_id, result.alternatives
-                )
-            if cache_key and not result.sticky_hit:
-                await parts.sticky.bind(cache_key, chosen.subscription_id)
+        if request_id and chosen and chosen.subscription_id:
+            parts.offers.put(
+                request_id, Offer(chosen.deployment_id, result.alternatives)
+            )
         return result.deployments
 
     def without_subscriptions(
@@ -134,6 +141,7 @@ class SubscriptionGateway:
         if snapshot is None or subscription is None:
             current_attempt.set(None)
             return None
+        await self._note_attempt(kwargs, subscription)
         reservation = await self._reserve(kwargs, subscription)
         if reservation is None:
             parts.telemetry.switched(subscription, SwitchReason.BUSY)
@@ -149,6 +157,25 @@ class SubscriptionGateway:
         )
         _retag_credential(kwargs, subscription)
         return with_session_id(kwargs)
+
+    async def _note_attempt(
+        self, kwargs: Mapping[str, object], subscription: Subscription
+    ) -> None:
+        """Records the deployment the router actually took, and ties the chat to it."""
+        parts = self._parts
+        request_id = read_request_id(kwargs)
+        deployment_id = deployment_id_of(kwargs)
+        if request_id and deployment_id:
+            offer = parts.offers.get(request_id)
+            alternatives = (
+                offer.alternatives
+                if offer and offer.deployment_id == deployment_id
+                else 0
+            )
+            parts.attempts.record(request_id, deployment_id, alternatives)
+        cache_key = prompt_cache_key_of(kwargs)
+        if cache_key:
+            await parts.sticky.bind(cache_key, subscription.id)
 
     async def _reserve(
         self, kwargs: dict[str, object], subscription: Subscription

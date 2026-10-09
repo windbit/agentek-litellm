@@ -352,3 +352,71 @@ async def test_until_the_runtime_is_ready_a_subscription_only_group_gets_the_poo
         )
 
     assert raised.value.headers == {"retry-after": "10"}
+
+
+def hook_kwargs(
+    deployment_id: str, request_id: str = "r1", **extra: object
+) -> dict[str, object]:
+    return {
+        "model": "x",
+        "litellm_call_id": "call-1",
+        "metadata": {
+            "agentek_request_id": request_id,
+            "model_group": PLAIN_MODEL,
+            "model_info": {"id": deployment_id},
+        },
+        **extra,
+    }
+
+
+async def test_filter_alone_records_no_attempt_and_no_chat_binding() -> None:
+    plain = plain_runtime(["a"], shared=True)
+    await plain.runtime.parts.snapshot.refresh()
+
+    await plain.pick("r1", prompt_cache_key="chat-1")
+
+    parts = plain.runtime.parts
+    assert (parts.attempts.attempted("r1"), await parts.sticky.lookup("chat-1")) == (
+        frozenset(),
+        None,
+    )
+
+
+async def test_attempt_and_chat_binding_follow_the_deployment_the_router_took() -> None:
+    from agentek_gateway.subscriptions.runtime import RuntimeSlot
+
+    plain = plain_runtime(["a"], shared=True)
+    await plain.runtime.parts.snapshot.refresh()
+    callback = SubscriptionCallback(RuntimeSlot(plain.runtime))
+    await plain.pick("r1", prompt_cache_key="chat-1")
+
+    await callback.async_pre_call_deployment_hook(
+        hook_kwargs("sub:a:gpt-x", prompt_cache_key="chat-1"), None
+    )
+
+    parts = plain.runtime.parts
+    assert (parts.attempts.attempted("r1"), await parts.sticky.lookup("chat-1")) == (
+        frozenset({"sub:a:gpt-x"}),
+        "a",
+    )
+
+
+async def test_router_taking_a_shared_deployment_leaves_no_attempt_and_no_binding() -> (
+    None
+):
+    from agentek_gateway.subscriptions.runtime import RuntimeSlot
+
+    plain = plain_runtime(["a"], shared=True)
+    await plain.runtime.parts.snapshot.refresh()
+    callback = SubscriptionCallback(RuntimeSlot(plain.runtime))
+    await plain.pick("r1", prompt_cache_key="chat-1")
+
+    await callback.async_pre_call_deployment_hook(
+        hook_kwargs("deepseek-1", prompt_cache_key="chat-1"), None
+    )
+
+    parts = plain.runtime.parts
+    assert (parts.attempts.attempted("r1"), await parts.sticky.lookup("chat-1")) == (
+        frozenset(),
+        None,
+    )
