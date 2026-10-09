@@ -2,7 +2,7 @@ import base64
 import json
 import os
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 import httpx
 
@@ -28,6 +28,11 @@ DEVICE_CODE_TIMEOUT_SECONDS = 15 * 60
 DEVICE_CODE_COOLDOWN_SECONDS = 5 * 60
 DEVICE_CODE_POLL_SLEEP_SECONDS = 5
 SENSITIVE_OAUTH_RESPONSE_FIELDS = {"access_token", "refresh_token", "id_token"}
+
+# (credential name, stale refresh token, refresh call) -> tokens; set by the gateway plugin to serialize refreshes across replicas
+REFRESH_GUARD: Optional[
+    Callable[[str, str, Callable[[], Dict[str, str]]], Dict[str, str]]
+] = None
 
 
 def _oauth_response_missing_fields_message(
@@ -424,6 +429,20 @@ class Authenticator:
         }
 
     def _refresh_tokens(self, refresh_token: str) -> Dict[str, str]:
+        guard = REFRESH_GUARD
+        if guard is not None and self._credential_name:
+            refreshed = guard(
+                self._credential_name,
+                refresh_token,
+                lambda: self._request_refreshed_tokens(refresh_token),
+            )
+        else:
+            refreshed = self._request_refreshed_tokens(refresh_token)
+        auth_data = self._build_auth_record(refreshed)
+        self._write_auth_file(auth_data)
+        return refreshed
+
+    def _request_refreshed_tokens(self, refresh_token: str) -> Dict[str, str]:
         try:
             client = _get_httpx_client()
             resp = client.post(
@@ -458,14 +477,11 @@ class Authenticator:
                 status_code=400,
             )
 
-        refreshed = {
+        return {
             "access_token": access_token,
             "refresh_token": data.get("refresh_token", refresh_token),
             "id_token": id_token,
         }
-        auth_data = self._build_auth_record(refreshed)
-        self._write_auth_file(auth_data)
-        return refreshed
 
     def _build_auth_record(self, tokens: Dict[str, str]) -> Dict[str, Any]:
         access_token = tokens.get("access_token")
@@ -521,13 +537,18 @@ class Authenticator:
 def refresh_chatgpt_credential_values(
     credential_values: Dict[str, Any],
     lead_seconds: int,
+    credential_name: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """Return credential_values with a refreshed chatgpt_auth when its access token
     expires within lead_seconds; None when there is nothing to refresh."""
     auth = credential_values.get("chatgpt_auth")
     if not isinstance(auth, dict):
         return None
-    authenticator = Authenticator(auth_inline=auth, credential_required=True)
+    authenticator = Authenticator(
+        auth_inline=auth,
+        credential_required=True,
+        credential_name=credential_name,
+    )
     try:
         refreshed = authenticator.refresh_if_expiring(lead_seconds)
     except RefreshAccessTokenError as exc:

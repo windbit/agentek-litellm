@@ -794,6 +794,36 @@ async def test_chatgpt_credential_refresh_job_skipped_when_disabled(monkeypatch)
     assert "get_credentials_job" in job_ids
 
 
+@pytest.mark.asyncio
+async def test_chatgpt_credential_refresh_job_names_the_credential_it_refreshes():
+    from litellm.models.credentials import CredentialItem
+    from litellm.proxy import proxy_server
+
+    record = MagicMock()
+    item = CredentialItem(
+        credential_name="cred-a",
+        credential_info={},
+        credential_values={"chatgpt_auth": {"access_token": "a", "refresh_token": "r"}},
+    )
+    repo = MagicMock()
+    repo.find_all = AsyncMock(return_value=[record])
+    refresh = MagicMock(return_value=None)
+
+    with (
+        patch.object(proxy_server, "CredentialsRepository", return_value=repo),
+        patch.object(
+            proxy_server.ProxyConfig, "decrypt_credentials", return_value=item
+        ),
+        patch(
+            "litellm.llms.chatgpt.authenticator.refresh_chatgpt_credential_values",
+            refresh,
+        ),
+    ):
+        await proxy_server.ProxyConfig().refresh_chatgpt_credentials(MagicMock())
+
+    assert refresh.call_args.kwargs["credential_name"] == "cred-a"
+
+
 def test_update_config_fields_deep_merge_db_wins():
     from litellm.proxy.proxy_server import ProxyConfig
 

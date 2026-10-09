@@ -24,6 +24,7 @@ from .chatgpt_classify import (
     STATUS_BAD_REQUEST,
     STATUS_UNAUTHORIZED,
     classify_error,
+    classify_stream_failure,
     stream_outcome,
 )
 from .chatgpt_json import json_object, number_of, text_of
@@ -92,6 +93,11 @@ class ChatGPTProvider:
         self, status: int, headers: Headers, body: str, *, now: float
     ) -> ErrorClass:
         return classify_error(status, headers, body, now=now)
+
+    def classify_stream_failure(
+        self, event: Mapping[str, object], *, now: float
+    ) -> ErrorClass:
+        return classify_stream_failure(event, now=now)
 
     async def probe_health(self, auth: ChatgptAuth, *, now: float) -> ProbeResult:
         reply = await self._transport.post_json(

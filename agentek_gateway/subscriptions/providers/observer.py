@@ -1,6 +1,5 @@
-import contextlib
 import contextvars
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -33,15 +32,6 @@ class ObservedFailure:
 current_attempt: contextvars.ContextVar[AttemptContext | None] = contextvars.ContextVar(
     "agentek_attempt", default=None
 )
-
-
-@contextlib.contextmanager
-def attempt_scope(context: AttemptContext) -> Iterator[None]:
-    token = current_attempt.set(context)
-    try:
-        yield
-    finally:
-        current_attempt.reset(token)
 
 
 class FailureSink(Protocol):

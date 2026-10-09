@@ -99,7 +99,7 @@ class SignalProcessor:
             and peer.egress == route.egress
             and peer.enabled
         ]
-        states = await self._store.read_all_states()
+        states = await self._store.read_states([peer.id for peer in peers])
         counts = await self._store.unclassified_counts(
             [peer.id for peer in peers], window_s
         )

@@ -29,6 +29,7 @@ class ProviderTuning(BaseModel):
     unsupported_model_ttl_s: PositiveFloat = 24 * 3600
     sticky_ttl_s: PositiveFloat = 24 * 3600
     no_capacity_retry_after_s: PositiveInt = 10
+    probe_model: str = Field(default="gpt-5.4", min_length=1)
 
 
 class GatewayConfig(BaseModel):

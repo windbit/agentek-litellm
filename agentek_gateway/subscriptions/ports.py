@@ -1,12 +1,23 @@
 from collections.abc import Mapping, Sequence
 from typing import Protocol
 
-from .model import Route, StateRecord, Subscription, SubscriptionId, UsageRecord
+from .model import (
+    EgressInfo,
+    Route,
+    StateRecord,
+    Subscription,
+    SubscriptionId,
+    UsageRecord,
+)
 from .policy import Policy
 
 
 class SubscriptionRepo(Protocol):
     async def list_subscriptions(self) -> Sequence[Subscription]: ...
+
+    async def set_enabled(
+        self, subscription_id: SubscriptionId, enabled: bool
+    ) -> None: ...
 
 
 class PolicyRepo(Protocol):
@@ -18,7 +29,9 @@ class StateStore(Protocol):
         self, subscription_id: SubscriptionId
     ) -> StateRecord | None: ...
 
-    async def read_all_states(self) -> Mapping[SubscriptionId, StateRecord]: ...
+    async def read_states(
+        self, subscription_ids: Sequence[SubscriptionId]
+    ) -> Mapping[SubscriptionId, StateRecord]: ...
 
     async def compare_and_set_state(
         self,
@@ -60,3 +73,63 @@ class StateStore(Protocol):
     ) -> None: ...
 
     async def read_all_usage(self) -> Mapping[SubscriptionId, UsageRecord]: ...
+
+    async def write_enabled_flag(
+        self, subscription_id: SubscriptionId, enabled: bool
+    ) -> None: ...
+
+    async def read_enabled_flags(self) -> Mapping[SubscriptionId, bool]: ...
+
+    async def mark_refreshed(self, credential_name: str, window_s: float) -> None: ...
+
+    async def mark_probed(self, provider: str, at: float) -> None: ...
+
+    async def read_probe_times(self) -> Mapping[str, float]: ...
+
+    async def write_egress(self, route: Route, info: EgressInfo) -> None: ...
+
+    async def read_egress(self) -> Mapping[Route, EgressInfo]: ...
+
+    async def recently_refreshed(self, credential_name: str) -> bool: ...
+
+
+class SlotStore(Protocol):
+    async def reserve(
+        self,
+        subscription_id: SubscriptionId,
+        token: str,
+        limit: int | None,
+        ttl_s: float,
+    ) -> bool: ...
+
+    async def release(self, subscription_id: SubscriptionId, token: str) -> bool: ...
+
+    async def extend(
+        self, subscription_id: SubscriptionId, token: str, ttl_s: float
+    ) -> bool: ...
+
+    async def in_flight(
+        self, subscription_ids: Sequence[SubscriptionId]
+    ) -> Mapping[SubscriptionId, int]: ...
+
+
+class StateDb(Protocol):
+    """Durable mirror of subscription states; a write or delete older than the stored row is ignored."""
+
+    async def read_state(
+        self, subscription_id: SubscriptionId
+    ) -> StateRecord | None: ...
+
+    async def read_states(
+        self, subscription_ids: Sequence[SubscriptionId]
+    ) -> Mapping[SubscriptionId, StateRecord]: ...
+
+    async def read_all_states(self) -> Mapping[SubscriptionId, StateRecord]: ...
+
+    async def write_state(
+        self, subscription_id: SubscriptionId, record: StateRecord
+    ) -> None: ...
+
+    async def delete_state(
+        self, subscription_id: SubscriptionId, version: int
+    ) -> None: ...

@@ -129,6 +129,13 @@ class Route:
 
 
 @dataclass(frozen=True, slots=True)
+class EgressInfo:
+    ip: str
+    colo: str
+    observed_at: float
+
+
+@dataclass(frozen=True, slots=True)
 class Window:
     used_percent: float
     reset_at: float

@@ -1,3 +1,4 @@
+import contextlib
 import asyncio
 import json
 import math
@@ -46,7 +47,6 @@ from agentek_gateway.subscriptions.providers.chatgpt_limits import (
 from agentek_gateway.subscriptions.providers.chatgpt_json import number_of
 from agentek_gateway.subscriptions.providers.observer import (
     AttemptContext,
-    attempt_scope,
     current_attempt,
     install_error_observer,
     uninstall_error_observer,
@@ -572,6 +572,15 @@ def test_jwt_straddling_the_log_cut_is_masked() -> None:
 # observer
 
 
+@contextlib.contextmanager
+def attempt_scope(context):  # type: ignore[no-untyped-def]
+    token = current_attempt.set(context)
+    try:
+        yield
+    finally:
+        current_attempt.reset(token)
+
+
 def test_failing_sink_does_not_change_the_provider_error() -> None:
     def broken(failure):  # type: ignore[no-untyped-def]
         raise RuntimeError("sink down")
@@ -587,13 +596,6 @@ def test_failing_sink_does_not_change_the_provider_error() -> None:
         uninstall_error_observer(ChatGPTResponsesAPIConfig)
 
     assert raised.value.status_code == 503
-
-
-def test_attempt_scope_resets_the_context() -> None:
-    with attempt_scope(AttemptContext("r", 1, "s", "d", 0)):
-        inside = current_attempt.get()
-
-    assert (inside is not None, current_attempt.get()) == (True, None)
 
 
 # startup

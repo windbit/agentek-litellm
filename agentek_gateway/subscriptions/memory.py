@@ -1,7 +1,15 @@
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 
 from .clock import Clock
-from .model import Route, StateRecord, Subscription, SubscriptionId, UsageRecord
+from .model import (
+    EgressInfo,
+    Route,
+    StateRecord,
+    Subscription,
+    SubscriptionId,
+    UsageRecord,
+)
 from .policy import Policy
 
 
@@ -13,6 +21,11 @@ class InMemorySubscriptionRepo:
 
     async def list_subscriptions(self) -> Sequence[Subscription]:
         return tuple(self._subscriptions.values())
+
+    async def set_enabled(self, subscription_id: SubscriptionId, enabled: bool) -> None:
+        self._subscriptions[subscription_id] = replace(
+            self._subscriptions[subscription_id], enabled=enabled
+        )
 
     def put(self, subscription: Subscription) -> None:
         self._subscriptions[subscription.id] = subscription
@@ -39,12 +52,22 @@ class InMemoryStateStore:
         self._sticky: dict[str, tuple[SubscriptionId, float]] = {}
         self._unsupported: dict[tuple[SubscriptionId, str], float] = {}
         self._usage: dict[SubscriptionId, UsageRecord] = {}
+        self._flags: dict[SubscriptionId, bool] = {}
+        self._refreshed: dict[str, float] = {}
+        self._probed: dict[str, float] = {}
+        self._egress: dict[Route, EgressInfo] = {}
 
     async def read_state(self, subscription_id: SubscriptionId) -> StateRecord | None:
         return self._states.get(subscription_id)
 
-    async def read_all_states(self) -> Mapping[SubscriptionId, StateRecord]:
-        return dict(self._states)
+    async def read_states(
+        self, subscription_ids: Sequence[SubscriptionId]
+    ) -> Mapping[SubscriptionId, StateRecord]:
+        return {
+            sub_id: self._states[sub_id]
+            for sub_id in subscription_ids
+            if sub_id in self._states
+        }
 
     async def compare_and_set_state(
         self,
@@ -132,3 +155,29 @@ class InMemoryStateStore:
 
     async def read_all_usage(self) -> Mapping[SubscriptionId, UsageRecord]:
         return dict(self._usage)
+
+    async def write_enabled_flag(
+        self, subscription_id: SubscriptionId, enabled: bool
+    ) -> None:
+        self._flags[subscription_id] = enabled
+
+    async def read_enabled_flags(self) -> Mapping[SubscriptionId, bool]:
+        return dict(self._flags)
+
+    async def mark_refreshed(self, credential_name: str, window_s: float) -> None:
+        self._refreshed[credential_name] = self._clock.now() + window_s
+
+    async def recently_refreshed(self, credential_name: str) -> bool:
+        return self._refreshed.get(credential_name, 0.0) > self._clock.now()
+
+    async def mark_probed(self, provider: str, at: float) -> None:
+        self._probed[provider] = at
+
+    async def read_probe_times(self) -> Mapping[str, float]:
+        return dict(self._probed)
+
+    async def write_egress(self, route: Route, info: EgressInfo) -> None:
+        self._egress[route] = info
+
+    async def read_egress(self) -> Mapping[Route, EgressInfo]:
+        return dict(self._egress)

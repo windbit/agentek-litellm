@@ -83,3 +83,7 @@ class SubscriptionProvider(Protocol):
     def classify_error(
         self, status: int, headers: Headers, body: str, *, now: float
     ) -> ErrorClass: ...
+
+    def classify_stream_failure(
+        self, event: Mapping[str, object], *, now: float
+    ) -> ErrorClass: ...

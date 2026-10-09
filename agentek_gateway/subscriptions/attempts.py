@@ -1,9 +1,9 @@
-import heapq
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 
 from .clock import Clock
+from .expiring import ExpiringMap
 
 REQUEST_ID_FIELD = "agentek_request_id"
 DEFAULT_MAX_TRACKED_REQUESTS = 50_000
@@ -14,9 +14,13 @@ def issue_request_id() -> str:
 
 
 def request_metadata(request_kwargs: Mapping[str, object]) -> Mapping[str, object]:
-    for name in ("litellm_metadata", "metadata"):
+    """The container the router writes into: litellm_metadata when the request carries one, else metadata."""
+    preferred = (
+        "litellm_metadata" if "litellm_metadata" in request_kwargs else "metadata"
+    )
+    for name in (preferred, "metadata", "litellm_metadata"):
         value = request_kwargs.get(name)
-        if isinstance(value, Mapping):
+        if isinstance(value, Mapping) and value:
             return value
     return {}
 
@@ -46,7 +50,6 @@ def read_request_id(request_kwargs: Mapping[str, object]) -> str | None:
 class AttemptRecord:
     deployment_ids: frozenset[str]
     alternatives: int
-    expires_at: float
 
 
 class AttemptTracker:
@@ -58,60 +61,28 @@ class AttemptTracker:
         ttl_s: float,
         max_requests: int = DEFAULT_MAX_TRACKED_REQUESTS,
     ) -> None:
-        self._clock = clock
-        self._ttl_s = ttl_s
-        self._max_requests = max_requests
-        self._records: dict[str, AttemptRecord] = {}
-        self._expiry: list[tuple[float, str]] = []
+        self._records: ExpiringMap[str, AttemptRecord] = ExpiringMap(
+            clock, ttl_s, max_requests
+        )
 
     def attempted(self, request_id: str | None) -> frozenset[str]:
-        record = self._live(request_id)
+        record = self._records.get(request_id) if request_id else None
         return record.deployment_ids if record else frozenset()
 
     def alternatives(self, request_id: str | None) -> int:
-        record = self._live(request_id)
+        record = self._records.get(request_id) if request_id else None
         return record.alternatives if record else 0
 
     def record(self, request_id: str, deployment_id: str, alternatives: int) -> None:
-        self.sweep()
-        previous = self._live(request_id)
+        previous = self._records.get(request_id)
         tried = previous.deployment_ids if previous else frozenset()
-        expires_at = self._clock.now() + self._ttl_s
-        self._records[request_id] = AttemptRecord(
-            deployment_ids=tried | {deployment_id},
-            alternatives=alternatives,
-            expires_at=expires_at,
+        self._records.put(
+            request_id, AttemptRecord(tried | {deployment_id}, alternatives)
         )
-        heapq.heappush(self._expiry, (expires_at, request_id))
-        self._evict_overflow()
 
     def finish(self, request_id: str | None) -> None:
         if request_id:
-            self._records.pop(request_id, None)
-
-    def sweep(self) -> None:
-        now = self._clock.now()
-        for request_id in [
-            rid for rid, record in self._records.items() if record.expires_at <= now
-        ]:
-            del self._records[request_id]
+            self._records.discard(request_id)
 
     def size(self) -> int:
-        self.sweep()
         return len(self._records)
-
-    def _live(self, request_id: str | None) -> AttemptRecord | None:
-        record = self._records.get(request_id) if request_id else None
-        if record is None or record.expires_at <= self._clock.now():
-            return None
-        return record
-
-    def _evict_overflow(self) -> None:
-        overflow = len(self._records) - self._max_requests
-        if overflow <= 0:
-            return
-        oldest = sorted(self._records, key=lambda rid: self._records[rid].expires_at)[
-            :overflow
-        ]
-        for request_id in oldest:
-            del self._records[request_id]

@@ -6671,6 +6671,7 @@ class ProxyConfig:
                 updated_values = refresh_chatgpt_credential_values(
                     decrypted.credential_values,
                     CHATGPT_CREDENTIAL_REFRESH_LEAD_SECONDS,
+                    credential_name=decrypted.credential_name,
                 )
                 if updated_values is None:
                     continue

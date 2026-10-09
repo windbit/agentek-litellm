@@ -101,3 +101,24 @@ def test_metric_registration_is_idempotent() -> None:
         first is second,
         get_or_create_metric("gauge", "agentek_test_idem_gauge", "doc", ["l"]) is gauge,
     ) == (True, True)
+
+
+async def test_failing_ready_handler_is_logged_and_leaves_the_gateway_not_ready(caplog) -> None:  # type: ignore[no-untyped-def]
+    import logging
+
+    host, state = FakeHost(), GatewayState()
+
+    async def broken() -> None:
+        raise RuntimeError("redis unreachable")
+
+    with caplog.at_level(logging.ERROR):
+        try:
+            await run(host, state, [broken])
+        except RuntimeError:
+            pass
+        await asyncio.sleep(0)
+
+    assert (state.ready.is_set(), "readiness task failed" in caplog.text) == (
+        False,
+        True,
+    )

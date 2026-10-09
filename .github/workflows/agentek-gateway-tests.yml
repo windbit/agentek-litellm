@@ -1,0 +1,62 @@
+# Runs the agentek_gateway plugin tests, including the ones that need a real Redis and a real Postgres
+# (atomicity of WATCH, leases, slots, pub/sub, and the Prisma-backed repositories).
+name: agentek-gateway-tests
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: agentek-gateway-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  gateway-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+      AGENTEK_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+      AGENTEK_TEST_REDIS_URL: redis://127.0.0.1:6379/0
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Install dependencies
+        run: uv sync --frozen --all-groups --all-extras --python 3.12
+
+      - name: Generate the Prisma client and create the schema
+        run: |
+          uv run --no-sync python -m prisma generate --schema schema.prisma
+          uv run --no-sync python -m prisma db push --schema schema.prisma --skip-generate
+
+      - name: Plugin tests against fakeredis, real Redis and real Postgres
+        run: uv run --no-sync python -m pytest tests/agentek_gateway -v -p no:cacheprovider
+
+      - name: Authenticator guard tests
+        run: uv run --no-sync python -m pytest tests/test_litellm/llms/chatgpt/test_chatgpt_authenticator.py -v -p no:cacheprovider

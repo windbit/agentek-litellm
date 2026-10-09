@@ -142,3 +142,113 @@ class TestRefreshChatgptCredentialValues:
             return_value=client,
         ):
             assert refresh_chatgpt_credential_values(values, 600) is None
+
+
+class TestRefreshGuard:
+    """REFRESH_GUARD lets a gateway plugin serialize refreshes of a named credential."""
+
+    @staticmethod
+    def _expired_inline_authenticator(credential_name):
+        return Authenticator(
+            auth_inline={
+                "access_token": "old-access",
+                "refresh_token": "old-refresh",
+                "expires_at": time.time() - 10,
+            },
+            credential_required=True,
+            credential_name=credential_name,
+        )
+
+    @pytest.fixture(autouse=True)
+    def _reset_guard(self):
+        from litellm.llms.chatgpt import authenticator as authenticator_module
+
+        yield authenticator_module
+        authenticator_module.REFRESH_GUARD = None
+
+    def test_guard_receives_the_stale_refresh_token_and_its_tokens_are_used(
+        self, _reset_guard
+    ):
+        calls = []
+
+        def guard(credential_name, stale_refresh_token, refresh):
+            calls.append((credential_name, stale_refresh_token))
+            return {
+                "access_token": "guarded-access",
+                "refresh_token": "guarded-refresh",
+                "id_token": "guarded-id",
+            }
+
+        _reset_guard.REFRESH_GUARD = guard
+        authenticator = self._expired_inline_authenticator("cred-a")
+
+        token = authenticator.get_access_token()
+
+        assert (token, calls, authenticator._auth_inline["refresh_token"]) == (
+            "guarded-access",
+            [("cred-a", "old-refresh")],
+            "guarded-refresh",
+        )
+
+    def test_guard_is_skipped_without_a_credential_name(self, _reset_guard):
+        _reset_guard.REFRESH_GUARD = MagicMock(side_effect=AssertionError("guard used"))
+        authenticator = self._expired_inline_authenticator(None)
+        refreshed = {
+            "access_token": "direct-access",
+            "refresh_token": "direct-refresh",
+            "id_token": "direct-id",
+        }
+
+        with patch.object(
+            Authenticator, "_request_refreshed_tokens", return_value=refreshed
+        ):
+            assert authenticator.get_access_token() == "direct-access"
+
+    def test_guard_can_run_the_network_refresh_itself(self, _reset_guard):
+        refreshed = {
+            "access_token": "network-access",
+            "refresh_token": "network-refresh",
+            "id_token": "network-id",
+        }
+        _reset_guard.REFRESH_GUARD = (
+            lambda credential_name, stale_refresh_token, refresh: refresh()
+        )
+        authenticator = self._expired_inline_authenticator("cred-a")
+
+        with patch.object(
+            Authenticator, "_request_refreshed_tokens", return_value=refreshed
+        ) as request:
+            token = authenticator.get_access_token()
+
+        assert (token, request.call_args.args) == ("network-access", ("old-refresh",))
+
+    def test_proactive_refresh_goes_through_the_guard_when_given_the_credential_name(
+        self, _reset_guard
+    ):
+        seen = []
+
+        def guard(credential_name, stale_refresh_token, refresh):
+            seen.append(credential_name)
+            return {
+                "access_token": _make_jwt({"exp": time.time() + 3600}),
+                "refresh_token": "guarded-refresh",
+                "id_token": "guarded-id",
+            }
+
+        _reset_guard.REFRESH_GUARD = guard
+        values = {
+            "chatgpt_auth": {
+                "access_token": "old",
+                "refresh_token": "old-refresh",
+                "expires_at": time.time() + 10,
+            }
+        }
+
+        result = refresh_chatgpt_credential_values(
+            values, 600, credential_name="cred-a"
+        )
+
+        assert (seen, result["chatgpt_auth"]["refresh_token"]) == (
+            ["cred-a"],
+            "guarded-refresh",
+        )
