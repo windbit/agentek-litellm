@@ -30,6 +30,7 @@ class LeaderDuties:
         egress: EgressWatcher,
         clock: Clock,
         catalog: Upkeep | None = None,
+        time_in_state: Upkeep | None = None,
     ) -> None:
         self._lease = lease
         self._probes = probes
@@ -37,6 +38,7 @@ class LeaderDuties:
         self._egress = egress
         self._clock = clock
         self._catalog = catalog
+        self._time_in_state = time_in_state
         self._last_catalog_at = float("-inf")
         self._last_refresh_at = float("-inf")
         self._last_egress_at = float("-inf")
@@ -56,6 +58,8 @@ class LeaderDuties:
             return False
         try:
             await self._probes.tick()
+            if self._time_in_state:
+                await self._time_in_state.tick()
             now = self._clock.now()
             if self._catalog and now - self._last_catalog_at >= COPY_SYNC_INTERVAL_S:
                 self._last_catalog_at = now

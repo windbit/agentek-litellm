@@ -2,6 +2,7 @@ import asyncio
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import date
 from typing import Protocol
 
 from .audit import AuditEntry
@@ -27,6 +28,8 @@ from .providers.chatgpt import ChatgptAuth
 from .providers.chatgpt_login import DeviceLogin
 from .providers.chatgpt_profile import Profile, profile_of
 from .service import StateService
+from .stats import utc_day
+from .stats_report import MAX_DAYS, StatsReport
 from .toggle import SubscriptionToggle
 from .unit import Unit
 from .token_coordination import RECENT_REFRESH_WINDOW_S, TokenCoordinator
@@ -66,6 +69,12 @@ class InvalidRequestError(AdminError):
 
 class UsageProvider(Protocol):
     async def probe_usage(self, auth: ChatgptAuth, *, now: float) -> Limits | None: ...
+
+
+class StatsSource(Protocol):
+    async def report(
+        self, subscriptions: Sequence[Subscription], days: int, today: date
+    ) -> Mapping[SubscriptionId, StatsReport]: ...
 
 
 class LoginFlow(Protocol):
@@ -121,6 +130,7 @@ class AdminDeps:
     logins: Mapping[str, LoginFlow]
     on_changed: Callable[[], None]
     lock_wait_s: float = DEFAULT_LOCK_WAIT_S
+    stats: StatsSource | None = None
 
 
 class SubscriptionAdmin:
@@ -145,6 +155,18 @@ class SubscriptionAdmin:
             )
         )
         return await self._providers(subscriptions, states), list(views)
+
+    async def stats(self, days: int) -> dict[SubscriptionId, StatsReport]:
+        """Statistics of every subscription for the last days, today included."""
+        deps = self._deps
+        if deps.stats is None:
+            raise NotFoundError("statistics are not available")
+        if not 1 <= days <= MAX_DAYS:
+            raise InvalidRequestError(f"days must be between 1 and {MAX_DAYS}")
+        subscriptions = await deps.repo.list_subscriptions()
+        return dict(
+            await deps.stats.report(subscriptions, days, utc_day(deps.clock.now()))
+        )
 
     async def get(self, subscription_id: SubscriptionId) -> SubscriptionView:
         return await self._view_of(await self._find(subscription_id))

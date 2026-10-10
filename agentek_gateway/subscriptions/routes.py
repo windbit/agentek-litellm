@@ -17,6 +17,7 @@ from .admin import (
     SubscriptionAdmin,
 )
 from .providers.chatgpt_login import ProviderLoginError
+from .stats_report import MAX_DAYS
 
 T = TypeVar("T")
 
@@ -105,6 +106,16 @@ def subscriptions_router(admin: Admin) -> APIRouter:
         return {
             "providers": [provider.as_json() for provider in providers],
             "subscriptions": [item.as_json() for item in subscriptions],
+        }
+
+    @router.get("/stats")
+    async def subscription_stats(days: int = MAX_DAYS) -> dict[str, object]:
+        reports = await _guarded(service().stats(days))
+        return {
+            "subscriptions": {
+                subscription_id: report.as_json()
+                for subscription_id, report in reports.items()
+            }
         }
 
     @router.put("/providers/{provider}")
