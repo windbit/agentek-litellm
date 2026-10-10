@@ -1,4 +1,4 @@
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -41,6 +41,10 @@ class ModelStore(Protocol):
     async def update_copy(self, row: ModelRow) -> None: ...
 
     async def delete_copies(self, model_ids: Sequence[str]) -> None: ...
+
+    def normalized(self, row: ModelRow) -> ModelRow:
+        """The row as the store would read it back after writing it."""
+        ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +96,7 @@ def plan_copies(
     templates: Sequence[ModelRow],
     subscriptions: Sequence[Subscription],
     existing: Sequence[ModelRow],
+    normalized: Callable[[ModelRow], ModelRow] = lambda row: row,
 ) -> CopyPlan:
     """One copy per (subscription, template of its provider); every other copy is removed."""
     wanted = {
@@ -99,7 +104,7 @@ def plan_copies(
         for subscription in subscriptions
         for template in templates
         if template_provider(template) == subscription.provider
-        for row in (copy_of(template, subscription),)
+        for row in (normalized(copy_of(template, subscription)),)
     }
     present = {row.model_id: row for row in existing}
     return CopyPlan(
@@ -130,7 +135,12 @@ class CopySync:
         existing = await self._store.list_copies()
         subscriptions = await self._repo.list_subscriptions()
         templates = await self._store.list_templates()
-        plan = plan_copies(templates, subscriptions, existing)
+        plan = plan_copies(
+            templates,
+            subscriptions,
+            [self._store.normalized(row) for row in existing],
+            self._store.normalized,
+        )
         raced = [row for row in plan.create if not await self._store.create_copy(row)]
         for row in (*plan.update, *raced):
             await self._store.update_copy(row)

@@ -390,3 +390,69 @@ async def _encrypted_params(proxy, name: str, price: float):  # type: ignore[no-
         should_create_model_in_db=False,
     )
     return stored.litellm_params
+
+
+@needs_postgres
+async def test_a_template_repriced_the_way_the_console_does_is_copied_once_not_every_pass() -> (
+    None
+):
+    from litellm.proxy._types import UserAPIKeyAuth
+    from litellm.proxy.management_endpoints.model_management_endpoints import (
+        _add_model_to_db,
+    )
+    from litellm.types.router import Deployment, LiteLLM_Params, ModelInfo
+
+    async with live_db() as db:
+        proxy = SimpleNamespace(db=db)
+        store = PrismaModelStore(lambda: db.litellm_proxymodeltable, lambda: proxy)
+        repo = InMemorySubscriptionRepo([make_subscription("a")])
+        await _add_model_to_db(
+            Deployment(
+                model_name="m1",
+                litellm_params=LiteLLM_Params(
+                    model="chatgpt/m1", input_cost_per_token=1e-06
+                ),
+                model_info=ModelInfo(id="template:m1", mode="responses"),
+            ),
+            UserAPIKeyAuth(user_id="console"),
+            proxy,  # type: ignore[arg-type]
+        )
+        sync = CopySync(store, repo)
+        await sync.run_once()
+        await db.litellm_proxymodeltable.update(
+            where={"model_id": "template:m1"},
+            data={
+                "litellm_params": json.dumps(
+                    await _encrypted_params(proxy, "m1", price=4e-06)
+                ),
+                "model_info": json.dumps(
+                    {
+                        "id": "template:m1",
+                        "mode": "responses",
+                        "input_cost_per_token": 4e-06,
+                        "updated_at": "2026-10-10T12:00:00.123456",
+                        "updated_by": "console",
+                    }
+                ),
+            },
+        )
+
+        await sync.run_once()
+        stamp = (
+            await db.litellm_proxymodeltable.find_unique(where={"model_id": "sub:a:m1"})
+        ).updated_at  # type: ignore[union-attr]
+        again = await sync.run_once()
+
+        copy = (await store.list_copies())[0]
+        assert (copy.litellm_params["input_cost_per_token"], again.update) == (
+            4e-06,
+            (),
+        )
+        assert (
+            stamp
+            == (
+                await db.litellm_proxymodeltable.find_unique(
+                    where={"model_id": "sub:a:m1"}
+                )
+            ).updated_at
+        )  # type: ignore[union-attr]

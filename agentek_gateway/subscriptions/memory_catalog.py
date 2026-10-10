@@ -120,6 +120,9 @@ class InMemoryModelStore:
         for model_id in model_ids:
             self.rows.pop(model_id, None)
 
+    def normalized(self, row: ModelRow) -> ModelRow:
+        return row
+
     def _with_prefix(self, prefix: str) -> Sequence[ModelRow]:
         return tuple(
             row for model_id, row in self.rows.items() if model_id.startswith(prefix)

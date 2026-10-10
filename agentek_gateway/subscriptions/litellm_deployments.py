@@ -94,6 +94,15 @@ class PrismaModelStore:
             where={"model_id": {"in": list(model_ids), "startswith": COPY_ID_PREFIX}}
         )
 
+    def normalized(self, row: ModelRow) -> ModelRow:
+        deployment = _deployment_of(row)
+        return ModelRow(
+            model_id=row.model_id,
+            model_name=row.model_name,
+            litellm_params=deployment.litellm_params.model_dump(exclude_none=True),
+            model_info=deployment.model_info.model_dump(exclude_none=True),
+        )
+
     async def _rows(self, prefix: str) -> Sequence[ModelRow]:
         records = await self._table().find_many(
             where={"model_id": {"startswith": prefix}}
