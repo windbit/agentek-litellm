@@ -1,9 +1,13 @@
 """Atomicity that only a real Redis shows: contention, WATCH, pub/sub, MGET, TTLs."""
 
 import asyncio
+import logging
 
 import pytest
+from redis.asyncio import Redis
 import redis as sync_redis_module
+
+from litellm._logging import verbose_proxy_logger
 
 from agentek_gateway.subscriptions.leader import LeaderLease
 from agentek_gateway.subscriptions.model import (
@@ -279,6 +283,41 @@ async def test_change_notification_reaches_a_listener_on_another_connection() ->
             task.cancel()
 
         assert received.is_set()
+
+
+class FailureLog(logging.Handler):
+    def __init__(self) -> None:
+        super().__init__(logging.ERROR)
+        self.messages: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.messages.append(record.getMessage())
+
+
+async def test_idle_listener_outlives_the_client_socket_timeout_without_failing() -> (
+    None
+):
+    socket_timeout_s = 0.3
+    failures = FailureLog()
+    verbose_proxy_logger.addHandler(failures)
+    subscriber = Redis.from_url(
+        REDIS_URL, decode_responses=True, socket_timeout=socket_timeout_s  # type: ignore[arg-type]
+    )
+    received = asyncio.Event()
+    task = asyncio.get_running_loop().create_task(
+        RedisListener(subscriber, KEYS.changes, received.set).run()
+    )
+    try:
+        await asyncio.sleep(socket_timeout_s * 6)
+        async with live_redis() as publisher:
+            await RedisNotifier(publisher, KEYS.changes).publish()
+            await asyncio.wait_for(received.wait(), 2.0)
+    finally:
+        task.cancel()
+        verbose_proxy_logger.removeHandler(failures)
+        await subscriber.aclose()
+
+    assert (failures.messages, received.is_set()) == ([], True)
 
 
 async def test_state_write_notifies_other_replicas_through_real_pub_sub() -> None:
