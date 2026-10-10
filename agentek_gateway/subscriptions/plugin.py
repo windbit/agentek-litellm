@@ -269,7 +269,12 @@ async def _start_catalog(wiring: Wiring) -> CatalogUpkeep | None:
     parts = runtime.parts
     copies = CopySync(catalog.models, source_repo)
     importer = CredentialImporter(
-        catalog.directory, source_repo, catalog.writer, runtime.toggle, catalog.audit
+        catalog.directory,
+        source_repo,
+        catalog.writer,
+        runtime.toggle,
+        catalog.audit,
+        catalog.models,
     )
     upkeep = CatalogUpkeep(importer, copies, [PROVIDER_ID])
 

@@ -1,4 +1,5 @@
 import logging
+from types import SimpleNamespace
 
 import pytest
 
@@ -12,6 +13,8 @@ from agentek_gateway.subscriptions.prisma_repos import (
     PrismaSubscriptionRepo,
     PrismaSubscriptionWriter,
 )
+
+from agentek_gateway.subscriptions.litellm_deployments import PrismaModelStore
 
 from .catalog_stack import PROVIDER, auth_of, catalog_stack
 from .conftest import make_subscription
@@ -133,7 +136,7 @@ async def test_a_subscription_created_by_another_replica_counts_as_existing() ->
             raise AssertionError
 
     racing = CredentialImporter(
-        stack.directory, Racing(), stack.writer, stack.toggle, stack.audit  # type: ignore[arg-type]
+        stack.directory, Racing(), stack.writer, stack.toggle, stack.audit, stack.models  # type: ignore[arg-type]
     )
     await stack.importer.run(PROVIDER)
 
@@ -151,10 +154,13 @@ class RecordingWriter:
         self.created.append(new)
         return await self._inner.create_subscription(new)
 
+    async def delete_subscription(self, subscription_id):  # type: ignore[no-untyped-def]
+        await self._inner.delete_subscription(subscription_id)
+
 
 def importer_with(stack, writer):  # type: ignore[no-untyped-def]
     return CredentialImporter(
-        stack.directory, stack.repo, writer, stack.toggle, stack.audit
+        stack.directory, stack.repo, writer, stack.toggle, stack.audit, stack.models
     )
 
 
@@ -201,6 +207,45 @@ async def test_a_credential_behind_a_renamed_subscription_is_not_imported_twice(
     )
 
 
+async def test_a_credential_whose_deployments_are_all_paused_is_imported_disabled() -> (
+    None
+):
+    stack = catalog_stack()
+    stack.tokens.put("paused", auth_of("1"))
+    stack.tokens.put("partly", auth_of("2"))
+    stack.models.blocked_credentials.add("paused")
+    writer = RecordingWriter(stack.writer)
+
+    await importer_with(stack, writer).run(PROVIDER)
+
+    assert (
+        [(new.name, new.enabled) for new in writer.created],
+        await states_of(stack),
+    ) == (
+        [("paused", False), ("partly", True)],
+        {"paused": S.DISABLED, "partly": S.ACTIVE},
+    )
+
+
+async def test_a_credential_removed_while_the_pass_ran_does_not_bring_its_subscription_back() -> (
+    None
+):
+    stack = catalog_stack()
+    stack.tokens.put("team-a", auth_of())
+
+    class RemovedRightAfterCreate(RecordingWriter):
+        async def create_subscription(self, new):  # type: ignore[no-untyped-def]
+            created = await super().create_subscription(new)
+            await stack.directory.delete_credential(new.credential_name)
+            return created
+
+    report = await importer_with(stack, RemovedRightAfterCreate(stack.writer)).run(
+        PROVIDER
+    )
+
+    assert (tuple(await stack.repo.list_subscriptions()), report.imported) == ((), ())
+
+
 @needs_postgres
 async def test_on_a_real_database_two_replicas_import_each_credential_once() -> None:
     import asyncio
@@ -244,6 +289,9 @@ async def test_on_a_real_database_two_replicas_import_each_credential_once() -> 
                 PrismaSubscriptionWriter(lambda: db.litellm_agenteksubscription),
                 SubscriptionToggle(stack.store, repo, stack.states),
                 stack.audit,
+                PrismaModelStore(
+                    lambda: db.litellm_proxymodeltable, lambda: SimpleNamespace(db=db)
+                ),
             )
 
         first, second = await asyncio.gather(

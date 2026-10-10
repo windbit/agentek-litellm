@@ -95,6 +95,7 @@ class InMemoryModelStore:
     def __init__(self) -> None:
         self.rows: dict[str, ModelRow] = {}
         self.writes = 0
+        self.blocked_credentials: set[str] = set()
 
     def add_template(self, row: ModelRow) -> None:
         self.rows[row.model_id] = row
@@ -119,6 +120,9 @@ class InMemoryModelStore:
     async def delete_copies(self, model_ids: Sequence[str]) -> None:
         for model_id in model_ids:
             self.rows.pop(model_id, None)
+
+    async def fully_blocked_credentials(self) -> frozenset[str]:
+        return frozenset(self.blocked_credentials)
 
     def normalized(self, row: ModelRow) -> ModelRow:
         return row

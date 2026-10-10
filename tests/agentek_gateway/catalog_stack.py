@@ -98,5 +98,5 @@ def catalog_stack(subscriptions: list[Subscription] | None = None) -> CatalogSta
         states=states,
         toggle=toggle,
         copies=copies,
-        importer=CredentialImporter(directory, repo, writer, toggle, audit),
+        importer=CredentialImporter(directory, repo, writer, toggle, audit, models),
     )

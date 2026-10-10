@@ -270,3 +270,41 @@ async def test_an_operator_can_sign_in_reauthorize_and_remove_a_subscription_on_
             "subscription.limits_refreshed",
             "subscription.removed",
         ]
+
+
+async def test_a_credential_is_paused_only_when_every_deployment_using_it_is_blocked() -> (
+    None
+):
+    from litellm.proxy._types import UserAPIKeyAuth
+    from litellm.proxy.management_endpoints.model_management_endpoints import (
+        _add_model_to_db,
+    )
+    from litellm.types.router import Deployment, LiteLLM_Params, ModelInfo
+
+    async with live_db() as db:
+        proxy = SimpleNamespace(db=db)
+        store = PrismaModelStore(lambda: db.litellm_proxymodeltable, lambda: proxy)
+        for model_id, credential, blocked in (
+            ("d1", "off", True),
+            ("d2", "off", True),
+            ("d3", "half", True),
+            ("d4", "half", False),
+            ("sub:x:m", "copy-only", True),
+            ("template:m", "tpl-only", True),
+        ):
+            await _add_model_to_db(
+                Deployment(
+                    model_name="m",
+                    litellm_params=LiteLLM_Params(
+                        model="chatgpt/m", litellm_credential_name=credential
+                    ),
+                    model_info=ModelInfo(id=model_id),
+                ),
+                UserAPIKeyAuth(user_id="console"),
+                proxy,  # type: ignore[arg-type]
+            )
+            await db.litellm_proxymodeltable.update(
+                where={"model_id": model_id}, data={"blocked": blocked}
+            )
+
+        assert await store.fully_blocked_credentials() == frozenset({"off"})

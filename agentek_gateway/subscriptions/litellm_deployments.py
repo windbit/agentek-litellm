@@ -11,7 +11,12 @@ from litellm.proxy.management_endpoints.model_management_endpoints import (
 )
 from litellm.types.router import Deployment, LiteLLM_Params, ModelInfo
 
-from .model_copies import COPY_ID_PREFIX, TEMPLATE_ID_PREFIX, ModelRow
+from .model_copies import (
+    COPY_ID_PREFIX,
+    CREDENTIAL_PARAM,
+    TEMPLATE_ID_PREFIX,
+    ModelRow,
+)
 
 ACTOR = "agentek_gateway"
 
@@ -21,6 +26,7 @@ class ModelRecord(Protocol):
     model_name: str
     litellm_params: object
     model_info: object
+    blocked: bool
 
 
 class ModelTable(Protocol):
@@ -92,6 +98,24 @@ class PrismaModelStore:
     async def delete_copies(self, model_ids: Sequence[str]) -> None:
         await self._table().delete_many(
             where={"model_id": {"in": list(model_ids), "startswith": COPY_ID_PREFIX}}
+        )
+
+    async def fully_blocked_credentials(self) -> frozenset[str]:
+        records = await self._table().find_many(
+            where={
+                "NOT": [
+                    {"model_id": {"startswith": TEMPLATE_ID_PREFIX}},
+                    {"model_id": {"startswith": COPY_ID_PREFIX}},
+                ]
+            }
+        )
+        blocked_by_credential: dict[str, list[bool]] = {}
+        for record in records:
+            credential = _row_of(record).litellm_params.get(CREDENTIAL_PARAM)
+            if isinstance(credential, str):
+                blocked_by_credential.setdefault(credential, []).append(record.blocked)
+        return frozenset(
+            name for name, flags in blocked_by_credential.items() if all(flags)
         )
 
     def normalized(self, row: ModelRow) -> ModelRow:

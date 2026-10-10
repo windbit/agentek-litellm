@@ -42,6 +42,10 @@ class ModelStore(Protocol):
 
     async def delete_copies(self, model_ids: Sequence[str]) -> None: ...
 
+    async def fully_blocked_credentials(self) -> frozenset[str]:
+        """Credentials whose deployments all carry the pause flag; a credential nothing uses is not listed."""
+        ...
+
     def normalized(self, row: ModelRow) -> ModelRow:
         """The row as the store would read it back after writing it."""
         ...
