@@ -19,6 +19,12 @@ from .model_copies import (
 )
 
 ACTOR = "agentek_gateway"
+_NOT_OURS: Mapping[str, object] = {
+    "NOT": [
+        {"model_id": {"startswith": TEMPLATE_ID_PREFIX}},
+        {"model_id": {"startswith": COPY_ID_PREFIX}},
+    ]
+}
 
 
 class ModelRecord(Protocol):
@@ -32,13 +38,9 @@ class ModelRecord(Protocol):
 class ModelTable(Protocol):
     """The slice of the generated Prisma delegate for LiteLLM_ProxyModelTable the store uses."""
 
-    async def find_many(
-        self, *, where: Mapping[str, object]
-    ) -> Sequence[ModelRecord]: ...
+    async def find_many(self, *, where: Mapping[str, object]) -> Sequence[ModelRecord]: ...
 
-    async def update(
-        self, *, where: Mapping[str, object], data: Mapping[str, object]
-    ) -> object: ...
+    async def update(self, *, where: Mapping[str, object], data: Mapping[str, object]) -> object: ...
 
     async def delete_many(self, *, where: Mapping[str, object]) -> int: ...
 
@@ -55,9 +57,7 @@ class PrismaModelStore:
     Rows are written by LiteLLM's own writer, so litellm_params are encrypted exactly as for a model added in the UI.
     """
 
-    def __init__(
-        self, table: Callable[[], ModelTable], proxy_db: Callable[[], ProxyDb]
-    ) -> None:
+    def __init__(self, table: Callable[[], ModelTable], proxy_db: Callable[[], ProxyDb]) -> None:
         self._table = table
         self._proxy_db = proxy_db
 
@@ -66,6 +66,14 @@ class PrismaModelStore:
 
     async def list_copies(self) -> Sequence[ModelRow]:
         return await self._rows(COPY_ID_PREFIX)
+
+    async def list_legacy(self) -> Sequence[ModelRow]:
+        records = await self._table().find_many(where=_NOT_OURS)
+        rows = (_row_of(record) for record in records)
+        return tuple(row for row in rows if isinstance(row.litellm_params.get(CREDENTIAL_PARAM), str))
+
+    async def delete_legacy(self, model_ids: Sequence[str]) -> None:
+        await self._table().delete_many(where={"model_id": {"in": list(model_ids)}, **_NOT_OURS})
 
     async def create_copy(self, row: ModelRow) -> bool:
         try:
@@ -96,27 +104,16 @@ class PrismaModelStore:
         )
 
     async def delete_copies(self, model_ids: Sequence[str]) -> None:
-        await self._table().delete_many(
-            where={"model_id": {"in": list(model_ids), "startswith": COPY_ID_PREFIX}}
-        )
+        await self._table().delete_many(where={"model_id": {"in": list(model_ids), "startswith": COPY_ID_PREFIX}})
 
     async def fully_blocked_credentials(self) -> frozenset[str]:
-        records = await self._table().find_many(
-            where={
-                "NOT": [
-                    {"model_id": {"startswith": TEMPLATE_ID_PREFIX}},
-                    {"model_id": {"startswith": COPY_ID_PREFIX}},
-                ]
-            }
-        )
+        records = await self._table().find_many(where=_NOT_OURS)
         blocked_by_credential: dict[str, list[bool]] = {}
         for record in records:
             credential = _row_of(record).litellm_params.get(CREDENTIAL_PARAM)
             if isinstance(credential, str):
                 blocked_by_credential.setdefault(credential, []).append(record.blocked)
-        return frozenset(
-            name for name, flags in blocked_by_credential.items() if all(flags)
-        )
+        return frozenset(name for name, flags in blocked_by_credential.items() if all(flags))
 
     def normalized(self, row: ModelRow) -> ModelRow:
         deployment = _deployment_of(row)
@@ -128,9 +125,7 @@ class PrismaModelStore:
         )
 
     async def _rows(self, prefix: str) -> Sequence[ModelRow]:
-        records = await self._table().find_many(
-            where={"model_id": {"startswith": prefix}}
-        )
+        records = await self._table().find_many(where={"model_id": {"startswith": prefix}})
         return tuple(_row_of(record) for record in records)
 
 
