@@ -1,5 +1,9 @@
+import uuid
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Protocol
+
+from prisma.errors import UniqueViolationError
 
 from litellm._logging import verbose_proxy_logger
 
@@ -26,6 +30,10 @@ class SubscriptionTable(Protocol):
     async def update(
         self, *, where: Mapping[str, str], data: Mapping[str, object]
     ) -> object: ...
+
+    async def create(self, *, data: Mapping[str, object]) -> object: ...
+
+    async def delete_many(self, *, where: Mapping[str, object]) -> int: ...
 
 
 class PolicyRow(Protocol):
@@ -54,6 +62,73 @@ class PrismaSubscriptionRepo:
         await self._table().update(
             where={"id": subscription_id}, data={"enabled": enabled}
         )
+
+
+DEFAULT_PRIORITY = 50
+EDITABLE_FIELDS = frozenset({"priority", "max_concurrency"})
+
+
+@dataclass(frozen=True, slots=True)
+class NewSubscription:
+    provider: str
+    name: str
+    credential_name: str
+    priority: int = DEFAULT_PRIORITY
+    enabled: bool = True
+
+
+class SubscriptionWriter(Protocol):
+    async def create_subscription(self, new: NewSubscription) -> Subscription | None:
+        """None when a subscription with this name exists."""
+        ...
+
+    async def update_subscription(
+        self, subscription_id: SubscriptionId, fields: Mapping[str, int | None]
+    ) -> None: ...
+
+    async def delete_subscription(self, subscription_id: SubscriptionId) -> None: ...
+
+
+class PrismaSubscriptionWriter:
+    """Writes LiteLLM_AgentekSubscription; deleting a subscription cascades to its state, policy and statistics rows."""
+
+    def __init__(self, table: Callable[[], SubscriptionTable]) -> None:
+        self._table = table
+
+    async def create_subscription(self, new: NewSubscription) -> Subscription | None:
+        subscription = Subscription(
+            id=str(uuid.uuid4()),
+            provider=new.provider,
+            name=new.name,
+            credential_name=new.credential_name,
+            priority=new.priority,
+            enabled=new.enabled,
+        )
+        try:
+            await self._table().create(
+                data={
+                    "id": subscription.id,
+                    "provider": subscription.provider,
+                    "name": subscription.name,
+                    "credential_name": subscription.credential_name,
+                    "priority": subscription.priority,
+                    "enabled": subscription.enabled,
+                }
+            )
+        except UniqueViolationError:
+            return None
+        return subscription
+
+    async def update_subscription(
+        self, subscription_id: SubscriptionId, fields: Mapping[str, int | None]
+    ) -> None:
+        unknown = set(fields) - EDITABLE_FIELDS
+        if unknown:
+            raise ValueError(f"not editable: {sorted(unknown)}")
+        await self._table().update(where={"id": subscription_id}, data=dict(fields))
+
+    async def delete_subscription(self, subscription_id: SubscriptionId) -> None:
+        await self._table().delete_many(where={"id": subscription_id})
 
 
 class PrismaPolicyRepo:
