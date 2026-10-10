@@ -14,6 +14,7 @@ from .token_coordination import (
 
 LOCK_TIMEOUT_STATUS = 503
 TOKEN_EXPIRY_SKEW_S = 60
+MIN_USABLE_LIFETIME_S = 10
 
 
 class RefreshGuard:
@@ -40,6 +41,9 @@ class RefreshGuard:
             return newer
         lock = self._coordinator.acquire(credential_name)
         if lock is None:
+            still_valid = self._still_valid(credential_name, stale_refresh_token)
+            if still_valid is not None:
+                return still_valid
             raise RefreshAccessTokenError(
                 message="Timed out waiting for another refresh of this credential",
                 status_code=LOCK_TIMEOUT_STATUS,
@@ -73,6 +77,24 @@ class RefreshGuard:
                     "id_token": candidate.id_token or "",
                 }
         return None
+
+    def _still_valid(
+        self, credential_name: str, stale_refresh_token: str
+    ) -> dict[str, str] | None:
+        """The caller's own pair, when its access token will outlive the wait for another replica's refresh."""
+        current = self._stored_pairs.read(credential_name)
+        if (
+            current is None
+            or current.refresh_token != stale_refresh_token
+            or current.expires_at is None
+            or current.expires_at - self._now() <= MIN_USABLE_LIFETIME_S
+        ):
+            return None
+        return {
+            "access_token": current.access_token,
+            "refresh_token": current.refresh_token,
+            "id_token": current.id_token or "",
+        }
 
     def _supersedes(self, candidate: ChatgptAuth, stale_refresh_token: str) -> bool:
         if candidate.refresh_token != stale_refresh_token:

@@ -68,13 +68,14 @@ def plain_runtime(
     timing: SnapshotTiming | None = None,
     subscriptions: list[Subscription] | None = None,
     repo: InMemorySubscriptionRepo | None = None,
+    store_class: type[RedisStateStore] = RedisStateStore,
 ) -> Plain:
     clock = clock or FakeClock()
     server = server or fakeredis.FakeServer()
     redis = fakeredis.FakeAsyncRedis(server=server, decode_responses=True)
     db = db or InMemoryStateDb()
     keys = Keys("t:")
-    store = RedisStateStore(redis, db, clock, keys)
+    store = store_class(redis, db, clock, keys)
     subs = subscriptions or [make_subscription(sub_id) for sub_id in sub_ids]
     deployments = [deployment(sub_id) for sub_id in sub_ids]
     if shared:

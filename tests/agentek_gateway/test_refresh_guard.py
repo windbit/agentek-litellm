@@ -5,7 +5,10 @@ import fakeredis
 import pytest
 from litellm.llms.chatgpt import authenticator
 from litellm.llms.chatgpt.authenticator import Authenticator
-from litellm.llms.chatgpt.common_utils import RefreshAccessTokenError
+from litellm.llms.chatgpt.common_utils import (
+    GetAccessTokenError,
+    RefreshAccessTokenError,
+)
 
 from agentek_gateway.subscriptions.credential_pairs import CredentialPairs
 from agentek_gateway.subscriptions.providers.chatgpt import ChatgptAuth
@@ -144,6 +147,96 @@ def test_unobtainable_lock_fails_the_refresh_instead_of_calling_the_provider(coo
         expired_authenticator()._refresh_tokens("rt-old")  # noqa: SLF001
 
     assert CountingAuthenticator.calls == []
+
+
+def expiring_authenticator(lifetime_s: float) -> CountingAuthenticator:
+    return CountingAuthenticator(
+        auth_inline={
+            "access_token": "at-old",
+            "refresh_token": "rt-old",
+            "expires_at": time.time() + lifetime_s,
+        },
+        credential_required=True,
+        credential_name=CREDENTIAL,
+    )
+
+
+def guard_waiting_for_a_held_lock(coordinator, lifetime_s: float) -> None:  # type: ignore[no-untyped-def]
+    holder = coordinator.acquire(CREDENTIAL)
+    assert holder is not None
+    pairs = CredentialPairs()
+    pairs.replace(
+        {
+            CREDENTIAL: ChatgptAuth(
+                "at-old", "rt-old", expires_at=time.time() + lifetime_s
+            )
+        }
+    )
+    install_refresh_guard(
+        RefreshGuard(
+            SyncTokenCoordinator(
+                coordinator._redis, Keys("t:"), lock_wait_s=0.1
+            ),  # noqa: SLF001
+            pairs,
+        )
+    )
+
+
+def test_waiter_keeps_its_unexpired_access_token_when_the_refresh_takes_longer_than_the_wait(coordinator) -> None:  # type: ignore[no-untyped-def]
+    guard_waiting_for_a_held_lock(coordinator, lifetime_s=30)
+
+    token = expiring_authenticator(30).get_access_token()
+
+    assert (token, CountingAuthenticator.calls) == ("at-old", [])
+
+
+def test_concurrent_requests_all_get_a_token_while_one_slow_refresh_runs(coordinator) -> None:  # type: ignore[no-untyped-def]
+    pairs = CredentialPairs()
+    pairs.replace(
+        {CREDENTIAL: ChatgptAuth("at-old", "rt-old", expires_at=time.time() + 30)}
+    )
+    install_refresh_guard(
+        RefreshGuard(
+            SyncTokenCoordinator(
+                coordinator._redis, Keys("t:"), lock_wait_s=0.05
+            ),  # noqa: SLF001
+            pairs,
+        )
+    )
+    results: list[str] = []
+    errors: list[Exception] = []
+
+    def work() -> None:
+        try:
+            results.append(expiring_authenticator(30).get_access_token())
+        except Exception as error:  # noqa: BLE001
+            errors.append(error)
+
+    threads = [threading.Thread(target=work) for _ in range(6)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert (errors, len(CountingAuthenticator.calls), sorted(results)) == (
+        [],
+        1,
+        ["at-new1"] + ["at-old"] * 5,
+    )
+
+
+def test_waiter_fails_when_its_access_token_is_already_expired(coordinator) -> None:  # type: ignore[no-untyped-def]
+    guard_waiting_for_a_held_lock(coordinator, lifetime_s=-5)
+
+    with pytest.raises(GetAccessTokenError):
+        expiring_authenticator(-5).get_access_token()
+
+
+def test_waiter_does_not_keep_an_access_token_that_expires_within_seconds(coordinator) -> None:  # type: ignore[no-untyped-def]
+    guard_waiting_for_a_held_lock(coordinator, lifetime_s=5)
+
+    with pytest.raises(GetAccessTokenError):
+        expiring_authenticator(5).get_access_token()
 
 
 def test_authenticator_exposes_the_hook_the_plugin_installs() -> None:

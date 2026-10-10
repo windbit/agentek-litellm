@@ -34,7 +34,11 @@ class OutcomeTracker:
         self._parts.registry.remember_upstream(
             context.request_id, UpstreamReply(failure.status, dict(failure.headers))
         )
-        self._parts.tasks.spawn(self._handle_observed(failure))
+        attempt = self._observed_attempt(failure)
+        if attempt is None:
+            return
+        self._parts.failures.hold_now(attempt, failure.error)
+        self._parts.tasks.spawn(self._apply_attempt(attempt, failure.error))
 
     async def on_success(self, kwargs: Mapping[str, object], response: object) -> None:
         request_id, reservation = self._attempt_of(kwargs)
@@ -42,11 +46,12 @@ class OutcomeTracker:
             subscription = self._subscription(reservation)
             if reservation and subscription:
                 provider = self._provider(subscription)
+                headers = _additional_headers(response)
                 limits = (
-                    provider.parse_limits(
-                        _additional_headers(response), None, now=self._parts.clock.now()
+                    await self._parts.failures.record_usage(
+                        provider, subscription, headers
                     )
-                    if provider
+                    if provider and headers
                     else None
                 )
                 await self._parts.signals.on_success(subscription, limits)
@@ -138,20 +143,20 @@ class OutcomeTracker:
         self._parts.attempts.finish(request_id)
         await self._parts.ledger.finish(request_id)
 
-    async def _handle_observed(self, failure: ObservedFailure) -> None:
+    def _observed_attempt(self, failure: ObservedFailure) -> FailedAttempt | None:
         context = failure.context
         reservation = self._parts.ledger.find(context.request_id, context.deployment_id)
         subscription = self._subscription(reservation)
-        if reservation and subscription:
-            attempt = FailedAttempt(
-                subscription,
-                reservation,
-                failure.status,
-                failure.headers,
-                failure.body,
-                self._egress_note(subscription),
-            )
-            await self._apply_attempt(attempt, failure.error)
+        if not (reservation and subscription):
+            return None
+        return FailedAttempt(
+            subscription,
+            reservation,
+            failure.status,
+            failure.headers,
+            failure.body,
+            self._egress_note(subscription),
+        )
 
     async def _inspect_chunk(
         self, subscription: Subscription, reservation: Reservation, chunk: object
@@ -192,16 +197,19 @@ class OutcomeTracker:
             "",
             self._egress_note(subscription),
         )
+        self._parts.failures.hold_now(attempt, error)
         await self._apply_attempt(attempt, error)
 
     async def _apply_attempt(self, attempt: FailedAttempt, error: ErrorClass) -> None:
         provider = self._provider(attempt.subscription)
         if provider is None:
             return
-        reason = await self._parts.failures.handle(provider, attempt, error)
-        if reason and attempt.reservation.alternatives > 0:
-            self._parts.telemetry.switched(attempt.subscription, reason)
-        await self._parts.ledger.release(attempt.reservation)
+        try:
+            reason = await self._parts.failures.handle(provider, attempt, error)
+            if reason and attempt.reservation.alternatives > 0:
+                self._parts.telemetry.switched(attempt.subscription, reason)
+        finally:
+            await self._parts.ledger.release(attempt.reservation)
 
     def _retry_after(self, data: Mapping[str, object]) -> dict[str, str] | None:
         request_id = request_key_of(data)

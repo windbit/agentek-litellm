@@ -13,6 +13,8 @@ from agentek_gateway.subscriptions.service import StateService
 from agentek_gateway.subscriptions.snapshot import SnapshotTiming
 
 from .conftest import make_subscription
+from agentek_gateway.subscriptions.redis_state import RedisStateStore
+
 from .plain import SHARED_ID, deployment, plain_runtime
 
 HOUR_S = 3600.0
@@ -161,6 +163,52 @@ async def test_chat_binding_store_outage_does_not_stop_routing_on_the_last_snaps
     picked = await plain.pick(prompt_cache_key="chat-1")
 
     assert picked == ["sub:a:gpt-x", SHARED_ID]
+
+
+class UnreadableUsage(RedisStateStore):
+    broken = True
+
+    async def read_all_usage(self):  # type: ignore[no-untyped-def]
+        if self.broken:
+            raise TimeoutError("Timeout reading from redis")
+        return await super().read_all_usage()
+
+
+async def test_unreadable_usage_windows_do_not_age_the_snapshot_toward_closing_the_pool() -> (
+    None
+):
+    plain = plain_runtime(["a"], store_class=UnreadableUsage)
+    snapshot = plain.runtime.parts.snapshot
+    await snapshot.refresh()
+    plain.clock.advance(STALE_AFTER_S - 1)
+    await snapshot.refresh()
+    plain.clock.advance(STALE_AFTER_S - 1)
+
+    assert (snapshot.current is not None and not snapshot.current.closed) is True
+
+
+async def test_unreadable_states_do_age_the_snapshot_toward_closing_the_pool() -> None:
+    plain = plain_runtime(["a"])
+    snapshot = plain.runtime.parts.snapshot
+    await snapshot.refresh()
+    plain.server.connected = False
+    with pytest.raises(Exception):
+        await snapshot.refresh()
+    plain.clock.advance(STALE_AFTER_S + 1)
+
+    assert snapshot.current is not None and snapshot.current.closed
+
+
+async def test_unreadable_usage_windows_close_the_pool_after_max_stale() -> None:
+    plain = plain_runtime(["a"], store_class=UnreadableUsage)
+    snapshot = plain.runtime.parts.snapshot
+    plain.store.broken = False  # type: ignore[attr-defined]
+    await snapshot.refresh()
+    plain.store.broken = True  # type: ignore[attr-defined]
+    plain.clock.advance(61)
+
+    with pytest.raises(TimeoutError):
+        await snapshot.refresh()
 
 
 async def test_a_provider_limit_applies_to_subscriptions_that_set_none_of_their_own() -> (

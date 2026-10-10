@@ -144,3 +144,18 @@ async def test_ledger_forgets_requests_after_the_ttl(clock: FakeClock) -> None:
     clock.advance(TTL_S + 1)
 
     assert ledger.size() == 0
+
+
+class UnreachableSlots(InMemorySlotStore):
+    async def release(self, subscription_id, token):  # type: ignore[no-untyped-def]
+        raise ConnectionError("redis is down")
+
+
+async def test_release_does_not_fail_the_request_when_the_slot_store_is_unreachable() -> (
+    None
+):
+    clock = FakeClock()
+    ledger = SlotLedger(UnreachableSlots(clock), clock, TTL_S)
+    reservation = await ledger.reserve(request_for("r1", "d1"))
+
+    assert await ledger.release(reservation) is True  # type: ignore[arg-type]

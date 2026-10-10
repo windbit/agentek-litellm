@@ -50,7 +50,5 @@ class CredentialPairsLoop:
 
     async def refresh_once(self) -> None:
         names = [sub.credential_name for sub in await self._repo.list_subscriptions()]
-        stored = [await self._credentials.read_auth(name) for name in names]
-        self._pairs.replace(
-            {name: item.auth for name, item in zip(names, stored) if item is not None}
-        )
+        stored = await self._credentials.read_auths(names)
+        self._pairs.replace({name: item.auth for name, item in stored.items()})

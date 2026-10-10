@@ -199,6 +199,7 @@ class Stack:
         for name, items in self.callbacks_before.items():
             setattr(litellm, name, items)
         await self.runtime.parts.tasks.cancel_all()
+        await self.runtime.writes.cancel_all()
         await self.mock.stop()
         await self.redis.aclose()
 
@@ -214,6 +215,7 @@ async def _build_stack(
     config: GatewayConfig | None = None,
     num_retries: int = 4,
     priorities: dict[str, int] | None = None,
+    store_class: type[RedisStateStore] = RedisStateStore,
 ) -> Stack:
     callbacks_before = saved_callbacks()
     mock = MockCodex()
@@ -237,7 +239,7 @@ async def _build_stack(
     for subscription in subscriptions.values():
         if subscription.id not in await _known(shared.repo):
             shared.repo.put(subscription)
-    state_store = RedisStateStore(
+    state_store = store_class(
         redis, shared.db, clock, keys, RedisNotifier(redis, keys.changes)
     )
     slot_store = RedisSlotStore(redis, clock, keys.prefix)

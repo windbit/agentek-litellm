@@ -46,6 +46,7 @@ class SubscriptionRuntime:
     outcomes: OutcomeTracker
     toggle: SubscriptionToggle
     states: StateService
+    writes: BackgroundTasks = field(default_factory=BackgroundTasks)
 
     def request_key(self, request: dict[str, object]) -> str | None:
         return request_key_of(request)
@@ -54,6 +55,7 @@ class SubscriptionRuntime:
 def build_runtime(deps: RuntimeDeps) -> SubscriptionRuntime:
     config, clock, store = deps.config, deps.clock, deps.state_store
     ttl_s = config.defaults.slot_ttl_s
+    ledger = SlotLedger(deps.slot_store, clock, ttl_s)
     snapshot = SnapshotCache(
         SnapshotSources(
             repo=deps.repo,
@@ -61,19 +63,28 @@ def build_runtime(deps: RuntimeDeps) -> SubscriptionRuntime:
             store=store,
             slots=deps.slot_store,
             model_list=deps.model_list,
+            local_in_flight=ledger.in_flight_here,
             provider_settings=deps.provider_settings,
         ),
         clock,
         deps.timing,
     )
-    states = StateService(store, clock, config, snapshot.request_refresh)
+    tasks, writes = BackgroundTasks(), BackgroundTasks()
+    states = StateService(
+        store,
+        clock,
+        config,
+        snapshot.request_refresh,
+        view=snapshot,
+        spawn=writes.spawn,
+    )
     signals = SignalProcessor(store, deps.repo, states, clock, config)
     parts = GatewayParts(
         clock=clock,
         config=config,
         snapshot=snapshot,
         attempts=AttemptTracker(clock, ttl_s),
-        ledger=SlotLedger(deps.slot_store, clock, ttl_s),
+        ledger=ledger,
         sticky=StickyBook(
             store, clock, config.defaults.sticky_ttl_s, LOCAL_STICKY_TTL_S
         ),
@@ -82,7 +93,7 @@ def build_runtime(deps: RuntimeDeps) -> SubscriptionRuntime:
         signals=signals,
         registry=AttemptRegistry(clock, ttl_s),
         telemetry=deps.telemetry,
-        tasks=BackgroundTasks(),
+        tasks=tasks,
         offers=ExpiringMap(clock, ttl_s),
     )
     return SubscriptionRuntime(
@@ -91,6 +102,7 @@ def build_runtime(deps: RuntimeDeps) -> SubscriptionRuntime:
         outcomes=OutcomeTracker(parts),
         toggle=SubscriptionToggle(store, deps.repo, states),
         states=states,
+        writes=writes,
     )
 
 

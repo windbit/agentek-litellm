@@ -284,6 +284,18 @@ async def test_tokens_are_read_from_the_credentials_table() -> None:
         )
 
 
+async def test_tokens_of_many_credentials_are_read_with_one_query() -> None:
+    async with live_db() as db:
+        await add_credential(db)
+        store = PrismaCredentialStore(lambda: db.litellm_credentialstable)
+
+        found = await store.read_auths(["cred-a", "cred-missing"])
+
+        assert {name: stored.auth.refresh_token for name, stored in found.items()} == {
+            "cred-a": "rt-old"
+        }
+
+
 async def test_token_write_keeps_the_other_credential_values_and_bumps_the_version() -> (
     None
 ):

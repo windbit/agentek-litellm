@@ -1,6 +1,8 @@
 import litellm
 import pytest
 
+from agentek_gateway.subscriptions.errors import NoAvailableSubscriptionsError
+
 from .stack import account_of, running_stack
 
 
@@ -23,7 +25,7 @@ async def test_attempt_set_is_cleared_after_the_final_failure() -> None:
         for sub_id in ("a", "b"):
             stack.mock.script(account_of(sub_id), "usage_limit")
 
-        with pytest.raises(litellm.RateLimitError):
+        with pytest.raises(NoAvailableSubscriptionsError):
             await stack.call()
 
         assert await tracked(stack) == (0, 0)

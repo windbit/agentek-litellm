@@ -63,6 +63,7 @@ ENV_REDIS_PREFIX = "AGENTEK_GATEWAY_REDIS_PREFIX"
 DEFAULT_REDIS_PREFIX = "agentek:"
 RECONCILE_INTERVAL_S = 30.0
 REDIS_TIMEOUT_S = 2.0
+SHUTDOWN_DRAIN_S = 10.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,9 +97,10 @@ def redis_url_from_env(environ: Mapping[str, str]) -> str:
         return url
     host = environ.get("REDIS_HOST", "localhost")
     port = environ.get("REDIS_PORT", "6379")
+    database = environ.get("REDIS_DB", "0")
     password = environ.get("REDIS_PASSWORD")
     credentials = f":{quote(password, safe='')}@" if password else ""
-    return f"redis://{credentials}{host}:{port}"
+    return f"redis://{credentials}{host}:{port}/{database}"
 
 
 def redis_from_env(environ: Mapping[str, str]) -> Redis:
@@ -146,9 +148,9 @@ async def start_subscription_runtime() -> None:
             runtime=LiteLLMCredentialRuntime(),
         ),
     )
-    GLOBAL_SLOT.runtime = await build_proxy_runtime(
-        host, environ, SystemClock(), connections
-    )
+    runtime = await build_proxy_runtime(host, environ, SystemClock(), connections)
+    GLOBAL_SLOT.runtime = runtime
+    host.on_shutdown(lambda: runtime.writes.drain_within(SHUTDOWN_DRAIN_S))
 
 
 async def build_proxy_runtime(

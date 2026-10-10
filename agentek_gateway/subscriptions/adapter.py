@@ -39,6 +39,9 @@ class SubscriptionCallback(CustomLogger):
         call_type: CallTypesLiteral,
     ) -> Fields:
         await guarded("pre_call", _prepare(data, call_type), None)
+        runtime = self._slot.runtime
+        if runtime is not None:
+            data.update(runtime.gateway.retry_settings(data))
         return data
 
     async def async_filter_deployments(

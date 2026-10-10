@@ -5,6 +5,8 @@ from litellm.integrations.custom_logger import CustomLogger
 from agentek_gateway.subscriptions.errors import NoAvailableSubscriptionsError
 from agentek_gateway.subscriptions.model import SubscriptionState as S
 
+from agentek_gateway.subscriptions.redis_state import RedisStateStore
+
 from .stack import MODEL, Stack, account_of, running_stack
 
 
@@ -60,19 +62,19 @@ async def test_usage_limit_moves_the_request_to_the_next_subscription_without_er
         )
 
 
-async def test_upstream_429_that_ends_the_request_gets_retry_after_from_the_hook() -> (
+async def test_every_subscription_exhausted_by_upstream_429_ends_the_request_with_the_plugin_429() -> (
     None
 ):
     async with running_stack(["a", "b"]) as stack:
         for sub_id in ("a", "b"):
             stack.mock.script(account_of(sub_id), "usage_limit")
 
-        with pytest.raises(litellm.RateLimitError) as raised:
+        with pytest.raises(NoAvailableSubscriptionsError) as raised:
             await stack.call()
 
         assert (
             raised.value.status_code,
-            await stack.response_headers(),
+            raised.value.headers,
             stack.mock.accounts_served(),
         ) == (429, {"retry-after": "10"}, [account_of("a"), account_of("b")])
 
@@ -83,7 +85,7 @@ async def test_new_request_with_every_deployment_in_router_cooldown_gets_the_plu
     async with running_stack(["a", "b"]) as stack:
         for sub_id in ("a", "b"):
             stack.mock.script(account_of(sub_id), "usage_limit")
-        with pytest.raises(litellm.RateLimitError):
+        with pytest.raises(NoAvailableSubscriptionsError):
             await stack.call()
         served_before = len(stack.mock.received)
 
@@ -313,6 +315,7 @@ async def test_model_not_supported_is_remembered_for_a_day_then_the_subscription
     day_s = 24 * 3600
     async with running_stack(["a", "b"]) as stack:
         stack.mock.script(account_of("a"), "model_not_supported")
+        stack.mock.script(account_of("b"), default="ok_nolimits")
         await stack.call()
         await stack.refresh()
 
@@ -352,6 +355,118 @@ async def test_401_right_after_a_token_refresh_does_not_start_another_refresh() 
             await state_of(stack, "a"),
             stack.mock.accounts_served(),
         ) == ("Hello from mock", None, [account_of("a"), account_of("b")])
+
+
+async def test_successful_chat_completion_records_the_limit_windows_of_its_subscription() -> (
+    None
+):
+    async with running_stack(["a", "b"]) as stack:
+        await stack.call()
+
+        usage = await stack.store.read_all_usage()
+
+        assert {
+            sub_id: (record.limits.five_hour.used_percent, record.limits.weekly.used_percent)  # type: ignore[union-attr]
+            for sub_id, record in usage.items()
+        } == {"a": (12.0, 31.0)}
+
+
+async def test_successful_responses_request_records_the_limit_windows_of_its_subscription() -> (
+    None
+):
+    async with running_stack(["a", "b"]) as stack:
+        await stack.respond()
+
+        assert set(await stack.store.read_all_usage()) == {"a"}
+
+
+class UnwritableState(RedisStateStore):
+    """Redis answers reads but every state write times out, as with a starved event loop."""
+
+    async def compare_and_set_state(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        raise TimeoutError("Timeout reading from redis")
+
+
+async def test_dead_subscription_is_not_tried_again_while_its_state_cannot_be_written() -> (
+    None
+):
+    async with running_stack(["a", "b"], store_class=UnwritableState) as stack:
+        stack.mock.script(account_of("a"), default="usage_limit")
+
+        for _ in range(6):
+            await stack.call()
+
+        assert stack.mock.accounts_served().count(account_of("a")) == 1
+
+
+async def test_ten_dead_subscriptions_of_twelve_never_show_a_429_to_the_client_from_a_cold_start() -> (
+    None
+):
+    sub_ids = [f"s{index:02d}" for index in range(12)]
+    async with running_stack(sub_ids) as stack:
+        for sub_id in sub_ids[:10]:
+            stack.mock.script(account_of(sub_id), default="usage_limit")
+
+        answers = [await stack.call() for _ in range(3)]
+
+        assert [
+            answer.choices[0].message.content  # type: ignore[attr-defined]
+            for answer in answers
+        ] == ["Hello from mock"] * 3
+
+
+async def test_flushed_redis_does_not_send_a_request_to_dead_subscriptions_into_a_429() -> (
+    None
+):
+    sub_ids = [f"s{index:02d}" for index in range(12)]
+    async with running_stack(sub_ids) as stack:
+        for sub_id in sub_ids[:10]:
+            stack.mock.script(account_of(sub_id), default="usage_limit")
+        await stack.call()
+        await stack.redis.flushall()
+        stack.mock.received.clear()
+
+        answer = await stack.call()
+
+        assert answer.choices[0].message.content == "Hello from mock"  # type: ignore[attr-defined]
+
+
+async def test_server_errors_on_every_subscription_keep_the_routers_own_retry_count() -> (
+    None
+):
+    sub_ids = [f"s{index:02d}" for index in range(12)]
+    async with running_stack(sub_ids) as stack:
+        for sub_id in sub_ids:
+            stack.mock.script(account_of(sub_id), default="overloaded")
+
+        with pytest.raises(Exception):
+            await stack.call()
+
+        assert len(stack.mock.received) == 5
+
+
+async def test_client_asking_for_no_retries_still_gets_past_dead_subscriptions() -> (
+    None
+):
+    sub_ids = [f"s{index:02d}" for index in range(12)]
+    async with running_stack(sub_ids) as stack:
+        for sub_id in sub_ids[:10]:
+            stack.mock.script(account_of(sub_id), default="usage_limit")
+
+        answer = await stack.call(num_retries=0)
+
+        assert answer.choices[0].message.content == "Hello from mock"  # type: ignore[attr-defined]
+
+
+async def test_responses_path_gets_past_dead_subscriptions_too() -> None:
+    sub_ids = [f"s{index:02d}" for index in range(12)]
+    async with running_stack(sub_ids) as stack:
+        for sub_id in sub_ids[:10]:
+            stack.mock.script(account_of(sub_id), default="usage_limit")
+
+        answer = await stack.respond()
+
+        assert answer is not None
 
 
 async def test_a_replica_with_the_old_tokens_does_not_fail_a_subscription_just_reauthorized_elsewhere() -> (
