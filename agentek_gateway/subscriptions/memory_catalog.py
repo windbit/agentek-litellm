@@ -32,16 +32,18 @@ class InMemorySubscriptionWriter:
         return subscription
 
     async def update_subscription(
-        self, subscription_id: SubscriptionId, fields: Mapping[str, int | None]
+        self, subscription_id: SubscriptionId, fields: Mapping[str, int | bool | None]
     ) -> None:
         current = next(
             sub
             for sub in await self._repo.list_subscriptions()
             if sub.id == subscription_id
         )
-        changes: dict[str, int | None] = {}
+        changes: dict[str, int | bool | None] = {}
         if "priority" in fields:
             changes["priority"] = fields["priority"]
+        if "enabled" in fields:
+            changes["enabled"] = fields["enabled"]
         if "max_concurrency" in fields:
             changes["concurrency_limit"] = fields["max_concurrency"]
         self._repo.put(replace(current, **changes))  # type: ignore[arg-type]
@@ -83,8 +85,11 @@ class InMemoryCredentialDirectory:
         self._store.put(name, auth)
         return True
 
-    async def replace_auth(self, name: str, auth: ChatgptAuth) -> None:
+    async def replace_auth(self, name: str, auth: ChatgptAuth) -> bool:
+        if name not in self._store.values:
+            return False
         self._store.put(name, auth)
+        return True
 
     async def delete_credential(self, name: str) -> None:
         self._store.values.pop(name, None)

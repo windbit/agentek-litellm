@@ -1,4 +1,8 @@
+from collections.abc import Awaitable
 from dataclasses import dataclass
+from typing import TypeVar
+
+import httpx
 
 from litellm.llms.chatgpt.common_utils import (
     CHATGPT_AUTH_BASE,
@@ -16,6 +20,18 @@ from .chatgpt_profile import account_id_of, jwt_expiry
 DEVICE_REDIRECT_URI = f"{CHATGPT_AUTH_BASE}/deviceauth/callback"
 PENDING_STATUSES = frozenset({403, 404})
 JSON_HEADERS = {"Content-Type": "application/json"}
+
+
+T = TypeVar("T")
+
+
+async def _reachable(call: Awaitable[T]) -> T:
+    try:
+        return await call
+    except httpx.HTTPError as error:
+        raise ProviderLoginError(
+            f"provider unreachable, {type(error).__name__}"
+        ) from None
 
 
 class ProviderLoginError(Exception):
@@ -36,8 +52,10 @@ class ChatgptLogin:
         self._transport = transport
 
     async def start(self) -> DeviceLogin:
-        reply = await self._transport.post_json(
-            CHATGPT_DEVICE_CODE_URL, JSON_HEADERS, {"client_id": CHATGPT_CLIENT_ID}
+        reply = await _reachable(
+            self._transport.post_json(
+                CHATGPT_DEVICE_CODE_URL, JSON_HEADERS, {"client_id": CHATGPT_CLIENT_ID}
+            )
         )
         payload = json_object(reply.body) or {}
         device_auth_id = text_of(payload.get("device_auth_id"))
@@ -50,10 +68,12 @@ class ChatgptLogin:
 
     async def poll(self, device_auth_id: str, user_code: str) -> ChatgptAuth | None:
         """None while the operator has not finished the browser step."""
-        reply = await self._transport.post_json(
-            CHATGPT_DEVICE_TOKEN_URL,
-            JSON_HEADERS,
-            {"device_auth_id": device_auth_id, "user_code": user_code},
+        reply = await _reachable(
+            self._transport.post_json(
+                CHATGPT_DEVICE_TOKEN_URL,
+                JSON_HEADERS,
+                {"device_auth_id": device_auth_id, "user_code": user_code},
+            )
         )
         if reply.status in PENDING_STATUSES:
             return None
@@ -65,16 +85,18 @@ class ChatgptLogin:
         return await self._exchange_code(code, verifier)
 
     async def _exchange_code(self, code: str, verifier: str) -> ChatgptAuth:
-        reply = await self._transport.post_form(
-            CHATGPT_OAUTH_TOKEN_URL,
-            {},
-            {
-                "grant_type": "authorization_code",
-                "code": code,
-                "redirect_uri": DEVICE_REDIRECT_URI,
-                "client_id": CHATGPT_CLIENT_ID,
-                "code_verifier": verifier,
-            },
+        reply = await _reachable(
+            self._transport.post_form(
+                CHATGPT_OAUTH_TOKEN_URL,
+                {},
+                {
+                    "grant_type": "authorization_code",
+                    "code": code,
+                    "redirect_uri": DEVICE_REDIRECT_URI,
+                    "client_id": CHATGPT_CLIENT_ID,
+                    "code_verifier": verifier,
+                },
+            )
         )
         return auth_from_exchange(reply)
 

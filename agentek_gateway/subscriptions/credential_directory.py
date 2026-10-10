@@ -31,7 +31,9 @@ class CredentialDirectory(Protocol):
         """False when a credential with this name exists."""
         ...
 
-    async def replace_auth(self, name: str, auth: ChatgptAuth) -> None: ...
+    async def replace_auth(self, name: str, auth: ChatgptAuth) -> bool:
+        """False when no credential has this name."""
+        ...
 
     async def delete_credential(self, name: str) -> None: ...
 
@@ -90,9 +92,11 @@ class PrismaCredentialDirectory:
             return False
         return True
 
-    async def replace_auth(self, name: str, auth: ChatgptAuth) -> None:
+    async def replace_auth(self, name: str, auth: ChatgptAuth) -> bool:
         rows = await self._table().find_many(where={"credential_name": name})
-        values = _object_of(rows[0].credential_values) if rows else {}
+        if not rows:
+            return False
+        values = _object_of(rows[0].credential_values)
         await self._table().update_many(
             where={"credential_name": name},
             data={
@@ -102,6 +106,7 @@ class PrismaCredentialDirectory:
                 "updated_by": UPDATED_BY,
             },
         )
+        return True
 
     async def delete_credential(self, name: str) -> None:
         await self._table().delete_many(where={"credential_name": name})

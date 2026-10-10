@@ -218,3 +218,17 @@ async def test_changing_the_provider_limit_reaches_the_next_snapshot() -> None:
     after = (await cache.refresh()).subscriptions["a"].concurrency_limit
 
     assert (before, after) == (None, 3)
+
+
+async def test_a_requested_refresh_sees_a_subscription_added_within_the_directory_ttl() -> (
+    None
+):
+    plain = plain_runtime(["a"])
+    snapshot_cache = plain.runtime.parts.snapshot
+    await snapshot_cache.refresh()
+
+    plain.repo.put(make_subscription("b"))
+    snapshot_cache.request_refresh()
+    refreshed = await snapshot_cache.refresh()
+
+    assert sorted(refreshed.subscriptions) == ["a", "b"]

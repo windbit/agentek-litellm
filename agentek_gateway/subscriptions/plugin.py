@@ -19,6 +19,8 @@ from .catalog import Catalog, CatalogUpkeep
 from .clock import Clock, SystemClock
 from .config import config_from_env
 from .credential_directory import PrismaCredentialDirectory
+from .credential_runtime import LiteLLMCredentialRuntime
+from .unit import PrismaUnit
 from .credentials import CredentialStore, PrismaCredentialStore
 from .duties import LeaderDuties
 from .credential_pairs import CredentialPairs, CredentialPairsLoop
@@ -140,6 +142,8 @@ async def start_subscription_runtime() -> None:
             models=PrismaModelStore(host.model_table, host.proxy_db),
             audit=PrismaAuditLog(host.audit_table),
             settings=PrismaProviderSettingsRepo(host.config_table),
+            unit=PrismaUnit(lambda: host.proxy_db().db),  # type: ignore[arg-type,return-value]
+            runtime=LiteLLMCredentialRuntime(),
         ),
     )
     GLOBAL_SLOT.runtime = await build_proxy_runtime(
@@ -283,12 +287,13 @@ async def _start_catalog(wiring: Wiring) -> CatalogUpkeep | None:
             repo.invalidate()
         parts.snapshot.request_refresh()
 
-    ADMIN_SLOT.admin = SubscriptionAdmin(
+    admin = SubscriptionAdmin(
         AdminDeps(
             clock=parts.clock,
             repo=source_repo,
-            writer=catalog.writer,
+            unit=catalog.unit,
             directory=catalog.directory,
+            runtime=catalog.runtime,
             credentials=connections.credentials,
             store=wiring.store,
             toggle=runtime.toggle,
@@ -296,13 +301,13 @@ async def _start_catalog(wiring: Wiring) -> CatalogUpkeep | None:
             coordinator=TokenCoordinator(connections.redis, wiring.keys),
             copies=copies,
             settings=catalog.settings,
-            audit=catalog.audit,
             usage_providers={PROVIDER_ID: wiring.provider},
             logins={PROVIDER_ID: ChatgptLogin(wiring.transport)},
             on_changed=on_changed,
         )
     )
     await upkeep.import_at_start()
+    ADMIN_SLOT.admin = admin
     return upkeep
 
 

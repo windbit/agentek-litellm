@@ -90,18 +90,39 @@ def test_default_plugin_registers_the_subscription_callback_once() -> None:
     assert plugin.callback_factories == (SubscriptionCallback,)
 
 
+def memory_catalog(credentials, repo, models, directory=None):  # type: ignore[no-untyped-def]
+    from agentek_gateway.subscriptions.audit import InMemoryAuditLog
+    from agentek_gateway.subscriptions.catalog import Catalog
+    from agentek_gateway.subscriptions.credential_runtime import NullCredentialRuntime
+    from agentek_gateway.subscriptions.memory_catalog import (
+        InMemoryCredentialDirectory,
+        InMemoryProviderSettings,
+        InMemorySubscriptionWriter,
+    )
+    from agentek_gateway.subscriptions.unit import Writes, fixed_unit
+
+    directory = directory or InMemoryCredentialDirectory(credentials, "chatgpt")
+    writer, settings, audit = (
+        InMemorySubscriptionWriter(repo),
+        InMemoryProviderSettings(),
+        InMemoryAuditLog(),
+    )
+    return Catalog(
+        directory=directory,
+        writer=writer,
+        models=models,
+        audit=audit,
+        settings=settings,
+        unit=fixed_unit(Writes(writer, directory, settings, audit)),
+        runtime=NullCredentialRuntime(),
+    )
+
+
 async def test_the_catalog_opens_the_operator_api_and_imports_credentials_at_start() -> (
     None
 ):
     from agentek_gateway.subscriptions.admin import ADMIN_SLOT
-    from agentek_gateway.subscriptions.audit import InMemoryAuditLog
-    from agentek_gateway.subscriptions.catalog import Catalog
-    from agentek_gateway.subscriptions.memory_catalog import (
-        InMemoryCredentialDirectory,
-        InMemoryModelStore,
-        InMemoryProviderSettings,
-        InMemorySubscriptionWriter,
-    )
+    from agentek_gateway.subscriptions.memory_catalog import InMemoryModelStore
 
     from .catalog_stack import auth_of, template_row
 
@@ -116,13 +137,7 @@ async def test_the_catalog_opens_the_operator_api_and_imports_credentials_at_sta
         credentials,
         repo,
         InMemoryPolicyRepo(),
-        Catalog(
-            directory=InMemoryCredentialDirectory(credentials, "chatgpt"),
-            writer=InMemorySubscriptionWriter(repo),
-            models=models,
-            audit=InMemoryAuditLog(),
-            settings=InMemoryProviderSettings(),
-        ),
+        memory_catalog(credentials, repo, models),
     )
     runtime = await build_proxy_runtime(FakeHost(), {}, FakeClock(), connections)  # type: ignore[arg-type]
     try:
@@ -140,6 +155,47 @@ async def test_the_catalog_opens_the_operator_api_and_imports_credentials_at_sta
         await asyncio.gather(
             *runtime.parts.tasks._running, return_exceptions=True
         )  # noqa: SLF001
+        await redis.aclose()
+
+
+async def test_the_operator_api_stays_closed_when_the_first_import_fails() -> None:
+    import pytest
+
+    from agentek_gateway.subscriptions.admin import ADMIN_SLOT
+    from agentek_gateway.subscriptions.memory_catalog import (
+        InMemoryCredentialDirectory,
+        InMemoryModelStore,
+    )
+
+    class Broken(InMemoryCredentialDirectory):
+        async def list_credentials(self, provider):  # type: ignore[no-untyped-def]
+            raise RuntimeError("database down")
+
+    redis = fakeredis.FakeAsyncRedis(decode_responses=True)
+    credentials, repo = InMemoryCredentialStore(), InMemorySubscriptionRepo()
+    connections = Connections(
+        redis,
+        fakeredis.FakeRedis(decode_responses=True),
+        credentials,
+        repo,
+        InMemoryPolicyRepo(),
+        memory_catalog(
+            credentials,
+            repo,
+            InMemoryModelStore(),
+            Broken(credentials, "chatgpt"),
+        ),
+    )
+    try:
+        with pytest.raises(RuntimeError):
+            await build_proxy_runtime(FakeHost(), {}, FakeClock(), connections)  # type: ignore[arg-type]
+        assert ADMIN_SLOT.admin is None
+    finally:
+        uninstall_error_observer(ChatGPTResponsesAPIConfig)
+        uninstall_refresh_guard()
+        for task in asyncio.all_tasks():
+            if task is not asyncio.current_task() and "Redis" in repr(task):
+                task.cancel()
         await redis.aclose()
 
 

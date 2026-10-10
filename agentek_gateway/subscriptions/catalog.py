@@ -7,7 +7,9 @@ from .audit import AuditLog
 from .credential_directory import CredentialDirectory
 from .importer import CredentialImporter
 from .model_copies import CopySync, ModelStore
+from .credential_runtime import CredentialRuntime
 from .prisma_repos import SubscriptionWriter
+from .unit import Unit
 from .provider_settings import ProviderSettingsRepo
 
 
@@ -20,6 +22,8 @@ class Catalog:
     models: ModelStore
     audit: AuditLog
     settings: ProviderSettingsRepo
+    unit: Unit
+    runtime: CredentialRuntime
 
 
 class CatalogUpkeep:

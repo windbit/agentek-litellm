@@ -65,7 +65,7 @@ class PrismaSubscriptionRepo:
 
 
 DEFAULT_PRIORITY = 50
-EDITABLE_FIELDS = frozenset({"priority", "max_concurrency"})
+EDITABLE_FIELDS = frozenset({"priority", "max_concurrency", "enabled"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,7 +83,7 @@ class SubscriptionWriter(Protocol):
         ...
 
     async def update_subscription(
-        self, subscription_id: SubscriptionId, fields: Mapping[str, int | None]
+        self, subscription_id: SubscriptionId, fields: Mapping[str, int | bool | None]
     ) -> None: ...
 
     async def delete_subscription(self, subscription_id: SubscriptionId) -> None: ...
@@ -120,7 +120,7 @@ class PrismaSubscriptionWriter:
         return subscription
 
     async def update_subscription(
-        self, subscription_id: SubscriptionId, fields: Mapping[str, int | None]
+        self, subscription_id: SubscriptionId, fields: Mapping[str, int | bool | None]
     ) -> None:
         unknown = set(fields) - EDITABLE_FIELDS
         if unknown:

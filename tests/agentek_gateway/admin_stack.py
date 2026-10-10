@@ -7,6 +7,7 @@ from agentek_gateway.subscriptions.model import Limits, Subscription, Window
 from agentek_gateway.subscriptions.providers.chatgpt import ChatgptAuth
 from agentek_gateway.subscriptions.providers.chatgpt_login import DeviceLogin
 from agentek_gateway.subscriptions.token_coordination import TokenCoordinator
+from agentek_gateway.subscriptions.unit import Writes, fixed_unit
 
 from .catalog_stack import PROVIDER, CatalogStack, catalog_stack
 
@@ -36,6 +37,14 @@ class ScriptedUsage:
         return self.limits
 
 
+class RecordingRuntime:
+    def __init__(self) -> None:
+        self.applied: list[tuple[str, str, ChatgptAuth]] = []
+
+    def apply(self, name: str, provider: str, auth: ChatgptAuth) -> None:
+        self.applied.append((name, provider, auth))
+
+
 @dataclass
 class AdminStack:
     base: CatalogStack
@@ -44,6 +53,7 @@ class AdminStack:
     admin: SubscriptionAdmin
     coordinator: TokenCoordinator
     changes: list[int]
+    runtime: RecordingRuntime
 
 
 def admin_stack(subscriptions: list[Subscription] | None = None) -> AdminStack:
@@ -51,12 +61,16 @@ def admin_stack(subscriptions: list[Subscription] | None = None) -> AdminStack:
     login, usage = ScriptedLogin(), ScriptedUsage()
     coordinator = TokenCoordinator(base.redis, base.keys)
     changes: list[int] = []
+    runtime = RecordingRuntime()
     admin = SubscriptionAdmin(
         AdminDeps(
             clock=base.clock,
             repo=base.repo,
-            writer=base.writer,
+            unit=fixed_unit(
+                Writes(base.writer, base.directory, base.settings, base.audit)
+            ),
             directory=base.directory,
+            runtime=runtime,
             credentials=base.tokens,
             store=base.store,
             toggle=base.toggle,
@@ -64,10 +78,9 @@ def admin_stack(subscriptions: list[Subscription] | None = None) -> AdminStack:
             coordinator=coordinator,
             copies=base.copies,
             settings=base.settings,
-            audit=base.audit,
             usage_providers={PROVIDER: usage},
             logins={PROVIDER: login},
             on_changed=lambda: changes.append(1),
         )
     )
-    return AdminStack(base, login, usage, admin, coordinator, changes)
+    return AdminStack(base, login, usage, admin, coordinator, changes, runtime)

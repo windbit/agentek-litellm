@@ -4,10 +4,12 @@ import json
 from types import SimpleNamespace
 
 import fakeredis
+import pytest
 
 from agentek_gateway.subscriptions.admin import (
     AdminDeps,
-    LoginTarget,
+    NewSubscriptionTarget,
+    ReauthorizeTarget,
     SubscriptionAdmin,
 )
 from agentek_gateway.subscriptions.audit import AuditEntry, PrismaAuditLog
@@ -31,7 +33,9 @@ from agentek_gateway.subscriptions.state_db import PrismaStateDb
 from agentek_gateway.subscriptions.toggle import SubscriptionToggle
 from agentek_gateway.subscriptions.token_coordination import TokenCoordinator
 
-from .admin_stack import ScriptedLogin, ScriptedUsage
+from agentek_gateway.subscriptions.unit import PrismaUnit, Writes
+
+from .admin_stack import RecordingRuntime, ScriptedLogin, ScriptedUsage
 from .catalog_stack import PROVIDER, auth_of
 from .conftest import FakeClock
 from .live import live_db, needs_postgres
@@ -210,7 +214,8 @@ async def test_an_operator_can_sign_in_reauthorize_and_remove_a_subscription_on_
             AdminDeps(
                 clock=clock,
                 repo=repo,
-                writer=PrismaSubscriptionWriter(lambda: db.litellm_agenteksubscription),
+                unit=PrismaUnit(lambda: db),  # type: ignore[arg-type]
+                runtime=RecordingRuntime(),
                 directory=PrismaCredentialDirectory(
                     lambda: db.litellm_credentialstable
                 ),
@@ -221,7 +226,6 @@ async def test_an_operator_can_sign_in_reauthorize_and_remove_a_subscription_on_
                 coordinator=TokenCoordinator(redis, keys),
                 copies=CopySync(models, repo),
                 settings=PrismaProviderSettingsRepo(lambda: db.litellm_config),
-                audit=PrismaAuditLog(lambda: db.litellm_agentekaudit),
                 usage_providers={PROVIDER: usage},
                 logins={PROVIDER: login},
                 on_changed=lambda: None,
@@ -230,13 +234,11 @@ async def test_an_operator_can_sign_in_reauthorize_and_remove_a_subscription_on_
 
         login.polls = [auth_of("one")]
         created = await admin.login_poll(
-            "op", PROVIDER, "d", "u", LoginTarget(name="fresh")
+            "op", PROVIDER, "d", "u", NewSubscriptionTarget("fresh")
         )
         sub_id = created.subscription.id  # type: ignore[union-attr]
         login.polls = [auth_of("two")]
-        await admin.login_poll(
-            "op", PROVIDER, "d", "u", LoginTarget(subscription_id=sub_id)
-        )
+        await admin.login_poll("op", PROVIDER, "d", "u", ReauthorizeTarget(sub_id))
         await admin.set_enabled("op", sub_id, False)
         await admin.update_settings("op", sub_id, {"priority": 9})
         refreshed = await admin.refresh_limits("op", sub_id)
@@ -256,6 +258,7 @@ async def test_an_operator_can_sign_in_reauthorize_and_remove_a_subscription_on_
             credential,
             "access-secret" in stored,
         ) == (True, [("fresh", 9, False)], 0, 0, (), [], False)
+        assert await db.litellm_agentekaudit.count() == 6
         actions = [
             row.action
             for row in await db.litellm_agentekaudit.find_many(
@@ -308,3 +311,84 @@ async def test_a_credential_is_paused_only_when_every_deployment_using_it_is_blo
             )
 
         assert await store.fully_blocked_credentials() == frozenset({"off"})
+
+
+class BrokenAudit:
+    async def record(self, entry: object) -> None:
+        raise RuntimeError("audit down")
+
+
+def admin_with_broken_audit(db, store, repo, states, redis, keys, clock):  # type: ignore[no-untyped-def]
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def unit():  # type: ignore[no-untyped-def]
+        async with db.tx() as tx:
+            yield Writes(
+                PrismaSubscriptionWriter(lambda: tx.litellm_agenteksubscription),
+                PrismaCredentialDirectory(lambda: tx.litellm_credentialstable),
+                PrismaProviderSettingsRepo(lambda: tx.litellm_config),
+                BrokenAudit(),
+            )
+
+    return SubscriptionAdmin(
+        AdminDeps(
+            clock=clock,
+            repo=repo,
+            unit=unit,
+            directory=PrismaCredentialDirectory(lambda: db.litellm_credentialstable),
+            runtime=RecordingRuntime(),
+            credentials=PrismaCredentialStore(lambda: db.litellm_credentialstable),
+            store=store,
+            toggle=SubscriptionToggle(store, repo, states),
+            states=states,
+            coordinator=TokenCoordinator(redis, keys),
+            copies=CopySync(
+                PrismaModelStore(
+                    lambda: db.litellm_proxymodeltable, lambda: SimpleNamespace(db=db)
+                ),
+                repo,
+            ),
+            settings=PrismaProviderSettingsRepo(lambda: db.litellm_config),
+            usage_providers={},
+            logins={PROVIDER: ScriptedLogin()},
+            on_changed=lambda: None,
+        )
+    )
+
+
+async def test_an_action_whose_audit_entry_cannot_be_written_leaves_the_database_untouched() -> (
+    None
+):
+    async with live_db() as db:
+        clock, redis = FakeClock(), fakeredis.FakeAsyncRedis(decode_responses=True)
+        keys = Keys("t:")
+        store = RedisStateStore(
+            redis,
+            PrismaStateDb(lambda: db.litellm_agenteksubscriptionstate),
+            clock,
+            keys,
+        )
+        repo = PrismaSubscriptionRepo(lambda: db.litellm_agenteksubscription)
+        states = StateService(store, clock, GatewayConfig())
+        directory = PrismaCredentialDirectory(lambda: db.litellm_credentialstable)
+        writer = PrismaSubscriptionWriter(lambda: db.litellm_agenteksubscription)
+        await directory.create_credential("c", PROVIDER, auth_of("1"))
+        created = await writer.create_subscription(NewSubscription(PROVIDER, "n", "c"))
+        admin = admin_with_broken_audit(db, store, repo, states, redis, keys, clock)
+
+        with pytest.raises(RuntimeError):
+            await admin.remove("op", created.id)  # type: ignore[union-attr]
+        with pytest.raises(RuntimeError):
+            await admin.update_settings("op", created.id, {"priority": 1})  # type: ignore[union-attr]
+        with pytest.raises(RuntimeError):
+            await admin.set_provider_concurrency("op", PROVIDER, 4)
+
+        row = await db.litellm_agenteksubscription.find_unique(
+            where={"id": created.id}  # type: ignore[union-attr]
+        )
+        assert (
+            await db.litellm_credentialstable.count(),
+            row.priority,  # type: ignore[union-attr]
+            await db.litellm_config.count(),
+        ) == (1, 50, 0)
