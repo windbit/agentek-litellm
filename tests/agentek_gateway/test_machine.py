@@ -335,6 +335,7 @@ TABLE = [
     (S.BANNED, None, 0, TokenRevoked(), S.BANNED, None, 0),
     (S.AUTH_FAILED, None, 0, Reauthorized(), S.HALF_OPEN, None, 0),
     (S.AUTH_REFRESHING, NOW + 100, 0, Reauthorized(), S.HALF_OPEN, None, 0),
+    (S.BANNED, None, 0, Reauthorized(), S.HALF_OPEN, None, 0),
     (S.ACTIVE, None, 0, Reauthorized(), S.ACTIVE, None, 0),
     (S.BROKEN, None, 5, Reauthorized(), S.BROKEN, None, 5),
     (S.BROKEN, None, 5, Unauthorized(), S.BROKEN, None, 5),

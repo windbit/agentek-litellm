@@ -83,6 +83,7 @@ class SnapshotCache:
         return self._closed_variant[1]
 
     def request_refresh(self) -> None:
+        self._directory = None
         self._wake.set()
 
     async def refresh(self) -> Snapshot:
