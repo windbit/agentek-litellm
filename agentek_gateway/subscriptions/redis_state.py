@@ -18,6 +18,7 @@ from .model import (
     Subscription,
     SubscriptionId,
     UsageRecord,
+    UsageSource,
     Window,
 )
 from .notify import Notifier, NullNotifier
@@ -30,6 +31,7 @@ DISABLED = "0"
 EXPIRY_GRACE_S = 60
 ACTIVE_RECORD_TTL_S = 24 * 3600
 ABSENT_IN_DB_TTL_S = 30.0
+MAX_VERSION = 2**31 - 1
 SERIES_KEY_FACTOR = 2
 UNSUPPORTED_SEPARATOR = "\x1f"
 
@@ -240,6 +242,29 @@ class RedisStateStore:
         raw = await self._redis.hgetall(self._keys.enabled)
         return {sub_id: value == ENABLED for sub_id, value in raw.items()}
 
+    async def claim_limits_refresh(
+        self, subscription_id: SubscriptionId, window_s: float
+    ) -> bool:
+        taken = await self._redis.set(
+            self._keys.limits_refresh(subscription_id), "1", nx=True, ex=int(window_s)
+        )
+        return bool(taken)
+
+    async def forget_subscription(self, subscription_id: SubscriptionId) -> None:
+        """Drops everything Redis holds about a deleted subscription; the database row goes with the subscription."""
+        await self._redis.delete(
+            self._keys.state(subscription_id),
+            self._keys.errors(subscription_id),
+            self._keys.series(subscription_id),
+            self._keys.limits_refresh(subscription_id),
+        )
+        await self._redis.hdel(self._keys.usage, subscription_id)
+        await self._redis.hdel(self._keys.enabled, subscription_id)
+        await self.clear_unsupported(subscription_id)
+        await self._db.delete_state(subscription_id, MAX_VERSION)
+        self._absent_in_db.discard(subscription_id)
+        await self._notifier.publish()
+
     async def mark_refreshed(self, credential_name: str, window_s: float) -> None:
         await self._redis.set(
             self._keys.refreshed(credential_name), "1", ex=int(window_s)
@@ -334,6 +359,7 @@ def encode_usage(usage: UsageRecord) -> str:
             "five_hour": window(usage.limits.five_hour),
             "weekly": window(usage.limits.weekly),
             "observed_at": usage.observed_at,
+            "source": usage.source.value,
         }
     )
 
@@ -347,4 +373,5 @@ def decode_usage(raw: str) -> UsageRecord:
     return UsageRecord(
         Limits(five_hour=window(fields["five_hour"]), weekly=window(fields["weekly"])),
         fields["observed_at"],
+        UsageSource(fields.get("source", UsageSource.RESPONSE_HEADERS)),
     )

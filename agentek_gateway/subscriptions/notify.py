@@ -7,6 +7,7 @@ from redis.asyncio import Redis
 from litellm._logging import verbose_proxy_logger
 
 RESUBSCRIBE_DELAY_S = 1.0
+LISTEN_POLL_S = 1.0
 
 
 class Notifier(Protocol):
@@ -58,8 +59,11 @@ class RedisListener:
         pubsub = self._redis.pubsub()
         try:
             await pubsub.subscribe(self._channel)
-            async for message in pubsub.listen():
-                if message.get("type") == "message":
+            while True:
+                message = await pubsub.get_message(
+                    ignore_subscribe_messages=True, timeout=LISTEN_POLL_S
+                )
+                if message is not None:
                     self._on_change()
         finally:
             await pubsub.aclose()

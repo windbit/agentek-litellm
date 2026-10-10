@@ -13,6 +13,7 @@ from .expiring import ExpiringMap
 from .failures import FailureRouter, SwitchReason
 from .filtering import Deployment, FilterContext, filter_deployments
 from .model import Subscription
+from .model_copies import TEMPLATE_ID_PREFIX
 from .providers.base import SubscriptionProvider
 from .providers.observer import AttemptContext, current_attempt
 from .registry import AttemptRegistry
@@ -97,6 +98,7 @@ class SubscriptionGateway:
     ) -> list[Deployment]:
         parts = self._parts
         snapshot = parts.snapshot.current
+        deployments = without_templates(deployments)
         if snapshot is None:
             return self.without_subscriptions(model, deployments)
         request_id = read_request_id(request_kwargs)
@@ -214,6 +216,21 @@ class SubscriptionGateway:
         return snapshot.subscriptions.get(subscription_id) if subscription_id else None
 
 
+def without_templates(deployments: Sequence[Deployment]) -> list[Deployment]:
+    """A model template carries no credential and is blocked; should the block ever lapse it must still never be picked."""
+    return [
+        deployment
+        for deployment in deployments
+        if not _deployment_id_of(deployment).startswith(TEMPLATE_ID_PREFIX)
+    ]
+
+
+def _deployment_id_of(deployment: Deployment) -> str:
+    model_info = deployment.get("model_info")
+    deployment_id = model_info.get("id") if isinstance(model_info, Mapping) else None
+    return deployment_id if isinstance(deployment_id, str) else ""
+
+
 def drop_subscription_deployments(
     model: str,
     deployments: Sequence[Deployment],
@@ -223,7 +240,7 @@ def drop_subscription_deployments(
     """What is left when subscriptions cannot be chosen: the plugin's id prefix or a known credential marks one."""
     remaining = [
         deployment
-        for deployment in deployments
+        for deployment in without_templates(deployments)
         if not _looks_like_subscription(deployment, snapshot)
     ]
     if not remaining:

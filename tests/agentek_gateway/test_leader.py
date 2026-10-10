@@ -130,3 +130,23 @@ async def test_a_lease_that_cannot_be_checked_is_not_reported_as_leadership() ->
         0,
         0,
     )
+
+
+async def test_the_catalog_runs_every_fifteen_seconds_and_only_on_the_leader() -> None:
+    from agentek_gateway.subscriptions.model_copies import COPY_SYNC_INTERVAL_S
+
+    (first, second), _ = leases(2)
+    clock, catalog = FakeClock(), Counting()
+    idle = Counting()
+    leader = LeaderDuties(first, idle, idle, idle, clock, catalog)  # type: ignore[arg-type]
+    follower = LeaderDuties(second, idle, idle, idle, clock, catalog)  # type: ignore[arg-type]
+
+    await leader.tick()
+    await follower.tick()
+    await leader.tick()
+    clock.advance(COPY_SYNC_INTERVAL_S - 1)
+    await leader.tick()
+    clock.advance(1)
+    await leader.tick()
+
+    assert catalog.ticks == 2

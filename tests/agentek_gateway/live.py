@@ -22,6 +22,7 @@ needs_redis = pytest.mark.skipif(
 )
 
 AGENTEK_TABLES = (
+    "litellm_agentekaudit",
     "litellm_agenteksubscriptionstate",
     "litellm_agenteksubscriptionpolicy",
     "litellm_agenteksubscription",
@@ -38,6 +39,8 @@ async def live_db():  # type: ignore[no-untyped-def]
         for table in AGENTEK_TABLES:
             await getattr(client, table).delete_many()
         await client.litellm_credentialstable.delete_many()
+        await client.litellm_proxymodeltable.delete_many()
+        await client.litellm_config.delete_many()
         yield client
     finally:
         await client.disconnect()

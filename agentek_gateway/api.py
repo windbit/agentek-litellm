@@ -1,25 +1,18 @@
-from typing import Annotated
+from fastapi import APIRouter, Depends
 
-from fastapi import APIRouter, Depends, HTTPException, status
-
-from litellm.proxy._types import LitellmUserRoles, UserAPIKeyAuth
-from litellm.proxy.auth.user_api_key_auth import user_api_key_auth
-
+from .auth import require_proxy_admin
 from .startup import GATEWAY_STATE
+from .subscriptions.admin import ADMIN_SLOT, AdminSlot
+from .subscriptions.routes import subscriptions_router
 
 API_PREFIX = "/agentek"
 
 
-async def require_proxy_admin(
-    auth: Annotated[UserAPIKeyAuth, Depends(user_api_key_auth)],
-) -> UserAPIKeyAuth:
-    if auth.user_role != LitellmUserRoles.PROXY_ADMIN:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Admin role required")
-    return auth
-
-
-def build_api_router() -> APIRouter:
+def build_api_router(admin_slot: AdminSlot = ADMIN_SLOT) -> APIRouter:
     router = APIRouter(prefix=API_PREFIX, dependencies=[Depends(require_proxy_admin)])
+    router.include_router(
+        subscriptions_router(lambda: admin_slot.admin), prefix="/subscriptions"
+    )
 
     @router.get("/status")
     async def plugin_status() -> dict[str, str]:

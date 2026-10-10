@@ -7,6 +7,7 @@ from litellm._logging import verbose_proxy_logger
 from .clock import Clock
 from .model import Subscription
 from .ports import PolicyRepo, SlotStore, StateStore, SubscriptionRepo
+from .provider_settings import ProviderSettingsRepo
 from .selection import Snapshot, subscription_of
 
 Deployment = Mapping[str, object]
@@ -22,6 +23,7 @@ class SnapshotSources:
     store: StateStore
     slots: SlotStore
     model_list: ModelList = EMPTY_MODEL_LIST
+    provider_settings: ProviderSettingsRepo | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,6 +83,7 @@ class SnapshotCache:
         return self._closed_variant[1]
 
     def request_refresh(self) -> None:
+        self._directory = None
         self._wake.set()
 
     async def refresh(self) -> Snapshot:
@@ -94,9 +97,13 @@ class SnapshotCache:
             sources.store.read_enabled_flags(),
             sources.slots.in_flight(ids),
         )
+        provider_limits = await self._provider_limits()
         subscriptions = [
             replace(
-                subscription, enabled=flags.get(subscription.id, subscription.enabled)
+                subscription,
+                enabled=flags.get(subscription.id, subscription.enabled),
+                concurrency_limit=subscription.concurrency_limit
+                or provider_limits.get(subscription.provider),
             )
             for subscription in directory
         ]
@@ -131,6 +138,15 @@ class SnapshotCache:
             except asyncio.TimeoutError:
                 pass
             self._wake.clear()
+
+    async def _provider_limits(self) -> Mapping[str, int | None]:
+        settings = self._sources.provider_settings
+        if settings is None:
+            return {}
+        return {
+            provider: item.concurrency_limit
+            for provider, item in (await settings.load()).items()
+        }
 
     async def _subscriptions(self) -> Sequence[Subscription]:
         now = self._clock.now()

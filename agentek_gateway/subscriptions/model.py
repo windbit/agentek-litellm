@@ -147,7 +147,13 @@ class Limits:
     weekly: Window | None = None
 
 
+class UsageSource(StrEnum):
+    RESPONSE_HEADERS = "response_headers"
+    USAGE_CHECK = "usage_check"
+
+
 @dataclass(frozen=True, slots=True)
 class UsageRecord:
     limits: Limits
     observed_at: float
+    source: UsageSource = UsageSource.RESPONSE_HEADERS

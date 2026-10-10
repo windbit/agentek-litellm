@@ -55,6 +55,7 @@ class InMemoryStateStore:
         self._flags: dict[SubscriptionId, bool] = {}
         self._refreshed: dict[str, float] = {}
         self._probed: dict[str, float] = {}
+        self._limits_claims: dict[SubscriptionId, float] = {}
         self._egress: dict[Route, EgressInfo] = {}
 
     async def read_state(self, subscription_id: SubscriptionId) -> StateRecord | None:
@@ -163,6 +164,24 @@ class InMemoryStateStore:
 
     async def read_enabled_flags(self) -> Mapping[SubscriptionId, bool]:
         return dict(self._flags)
+
+    async def claim_limits_refresh(
+        self, subscription_id: SubscriptionId, window_s: float
+    ) -> bool:
+        now = self._clock.now()
+        if self._limits_claims.get(subscription_id, 0.0) > now:
+            return False
+        self._limits_claims[subscription_id] = now + window_s
+        return True
+
+    async def forget_subscription(self, subscription_id: SubscriptionId) -> None:
+        self._states.pop(subscription_id, None)
+        self._errors.pop(subscription_id, None)
+        self._series.pop(subscription_id, None)
+        self._usage.pop(subscription_id, None)
+        self._flags.pop(subscription_id, None)
+        self._limits_claims.pop(subscription_id, None)
+        await self.clear_unsupported(subscription_id)
 
     async def mark_refreshed(self, credential_name: str, window_s: float) -> None:
         self._refreshed[credential_name] = self._clock.now() + window_s
