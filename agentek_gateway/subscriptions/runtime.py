@@ -9,6 +9,7 @@ from .failures import FailureRouter
 from .gateway import GatewayParts, SubscriptionGateway, request_key_of
 from .outcomes import OutcomeTracker
 from .ports import PolicyRepo, SlotStore, StateStore, SubscriptionRepo
+from .provider_settings import ProviderSettingsRepo
 from .providers.base import SubscriptionProvider
 from .registry import AttemptRegistry
 from .service import StateService
@@ -33,6 +34,7 @@ class RuntimeDeps:
     policy: PolicyRepo
     providers: Mapping[str, SubscriptionProvider]
     model_list: ModelList
+    provider_settings: ProviderSettingsRepo | None = None
     telemetry: Telemetry = field(default_factory=NullTelemetry)
     timing: SnapshotTiming = field(default_factory=SnapshotTiming)
 
@@ -59,6 +61,7 @@ def build_runtime(deps: RuntimeDeps) -> SubscriptionRuntime:
             store=store,
             slots=deps.slot_store,
             model_list=deps.model_list,
+            provider_settings=deps.provider_settings,
         ),
         clock,
         deps.timing,

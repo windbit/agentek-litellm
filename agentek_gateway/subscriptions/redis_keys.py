@@ -56,6 +56,9 @@ class Keys:
     def refreshed(self, credential_name: str) -> str:
         return f"{self._prefix}refreshed:{credential_name}"
 
+    def limits_refresh(self, subscription_id: SubscriptionId) -> str:
+        return f"{self._prefix}limits-refresh:{subscription_id}"
+
     def state(self, subscription_id: SubscriptionId) -> str:
         return f"{self._prefix}state:{subscription_id}"
 

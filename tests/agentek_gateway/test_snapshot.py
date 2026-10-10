@@ -161,3 +161,60 @@ async def test_chat_binding_store_outage_does_not_stop_routing_on_the_last_snaps
     picked = await plain.pick(prompt_cache_key="chat-1")
 
     assert picked == ["sub:a:gpt-x", SHARED_ID]
+
+
+async def test_a_provider_limit_applies_to_subscriptions_that_set_none_of_their_own() -> (
+    None
+):
+    from agentek_gateway.subscriptions.memory_catalog import InMemoryProviderSettings
+    from agentek_gateway.subscriptions.snapshot import SnapshotCache, SnapshotSources
+
+    plain = plain_runtime(["a", "b"])
+    plain.repo.put(make_subscription("b", concurrency_limit=5))
+    settings = InMemoryProviderSettings()
+    await settings.set_concurrency("chatgpt", 2)
+    parts = plain.runtime.parts
+    cache = SnapshotCache(
+        SnapshotSources(
+            repo=plain.repo,
+            policy=parts.snapshot._sources.policy,  # noqa: SLF001
+            store=plain.store,
+            slots=parts.ledger._store,  # noqa: SLF001
+            provider_settings=settings,
+        ),
+        plain.clock,
+    )
+
+    snapshot = await cache.refresh()
+
+    assert {
+        sub.id: sub.concurrency_limit for sub in snapshot.subscriptions.values()
+    } == {
+        "a": 2,
+        "b": 5,
+    }
+
+
+async def test_changing_the_provider_limit_reaches_the_next_snapshot() -> None:
+    from agentek_gateway.subscriptions.memory_catalog import InMemoryProviderSettings
+    from agentek_gateway.subscriptions.snapshot import SnapshotCache, SnapshotSources
+
+    plain = plain_runtime(["a"])
+    settings = InMemoryProviderSettings()
+    parts = plain.runtime.parts
+    cache = SnapshotCache(
+        SnapshotSources(
+            repo=plain.repo,
+            policy=parts.snapshot._sources.policy,  # noqa: SLF001
+            store=plain.store,
+            slots=parts.ledger._store,  # noqa: SLF001
+            provider_settings=settings,
+        ),
+        plain.clock,
+    )
+    before = (await cache.refresh()).subscriptions["a"].concurrency_limit
+
+    await settings.set_concurrency("chatgpt", 3)
+    after = (await cache.refresh()).subscriptions["a"].concurrency_limit
+
+    assert (before, after) == (None, 3)

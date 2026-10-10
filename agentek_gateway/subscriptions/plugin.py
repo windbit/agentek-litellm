@@ -13,19 +13,32 @@ from litellm.llms.chatgpt.responses.transformation import ChatGPTResponsesAPICon
 from ..proxy_host import ProxyHost
 from ..startup import Plugin
 from .adapter import SubscriptionCallback
+from .admin import ADMIN_SLOT, AdminDeps, SubscriptionAdmin
+from .audit import PrismaAuditLog
+from .catalog import Catalog, CatalogUpkeep
 from .clock import Clock, SystemClock
 from .config import config_from_env
+from .credential_directory import PrismaCredentialDirectory
 from .credentials import CredentialStore, PrismaCredentialStore
 from .duties import LeaderDuties
 from .credential_pairs import CredentialPairs, CredentialPairsLoop
 from .egress import EgressWatcher
+from .importer import CredentialImporter
 from .leader import LeaderLease
+from .litellm_deployments import PrismaModelStore
+from .model_copies import CopySync
 from .notify import RedisListener, RedisNotifier
 from .ports import PolicyRepo, SubscriptionRepo
-from .prisma_repos import PrismaPolicyRepo, PrismaSubscriptionRepo
+from .prisma_repos import (
+    PrismaPolicyRepo,
+    PrismaSubscriptionRepo,
+    PrismaSubscriptionWriter,
+)
+from .provider_settings import PrismaProviderSettingsRepo
 from .probes import ProbeDeps, ProbeLoop
 from .prometheus_telemetry import PrometheusTelemetry, TelemetryLoop
 from .providers.chatgpt import PROVIDER_ID, ChatGPTProvider
+from .providers.chatgpt_login import ChatgptLogin
 from .providers.observer import install_error_observer
 from .providers.transport import HttpxProbeTransport
 from .redis_keys import Keys
@@ -59,6 +72,20 @@ class Connections:
     credentials: CredentialStore
     repo: SubscriptionRepo
     policy: PolicyRepo
+    catalog: Catalog | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Wiring:
+    """Pieces the background duties and the operator API are assembled from."""
+
+    runtime: SubscriptionRuntime
+    store: RedisStateStore
+    connections: Connections
+    keys: Keys
+    transport: HttpxProbeTransport
+    provider: ChatGPTProvider
+    source_repo: SubscriptionRepo
 
 
 def redis_url_from_env(environ: Mapping[str, str]) -> str:
@@ -107,6 +134,13 @@ async def start_subscription_runtime() -> None:
         credentials=PrismaCredentialStore(host.credentials_table),
         repo=PrismaSubscriptionRepo(host.subscription_table),
         policy=PrismaPolicyRepo(host.policy_table),
+        catalog=Catalog(
+            directory=PrismaCredentialDirectory(host.directory_table),
+            writer=PrismaSubscriptionWriter(host.subscription_table),
+            models=PrismaModelStore(host.model_table, host.proxy_db),
+            audit=PrismaAuditLog(host.audit_table),
+            settings=PrismaProviderSettingsRepo(host.config_table),
+        ),
     )
     GLOBAL_SLOT.runtime = await build_proxy_runtime(
         host, environ, SystemClock(), connections
@@ -147,15 +181,20 @@ async def build_proxy_runtime(
             policy=connections.policy,
             providers={PROVIDER_ID: provider},
             model_list=host.model_list,
+            provider_settings=(
+                connections.catalog.settings if connections.catalog else None
+            ),
             telemetry=telemetry,
         )
     )
     await runtime.parts.snapshot.refresh()
+    wiring = Wiring(runtime, store, connections, keys, transport, provider, source_repo)
+    upkeep = await _start_catalog(wiring)
     background = Background(
         listener=RedisListener(
             redis, keys.changes, runtime.parts.snapshot.request_refresh
         ),
-        duties=_leader_duties(runtime, store, connections, keys, transport),
+        duties=_leader_duties(wiring, upkeep),
         telemetry=TelemetryLoop(
             runtime.parts.snapshot, store, runtime.parts.egress, telemetry, clock
         ),
@@ -178,13 +217,9 @@ async def build_proxy_runtime(
     return runtime
 
 
-def _leader_duties(
-    runtime: SubscriptionRuntime,
-    store: RedisStateStore,
-    connections: Connections,
-    keys: Keys,
-    transport: HttpxProbeTransport,
-) -> LeaderDuties:
+def _leader_duties(wiring: Wiring, upkeep: CatalogUpkeep | None) -> LeaderDuties:
+    runtime, store, connections = wiring.runtime, wiring.store, wiring.connections
+    keys, transport = wiring.keys, wiring.transport
     parts = runtime.parts
     providers = {PROVIDER_ID: parts.providers[PROVIDER_ID]}
     repo, credentials = connections.repo, connections.credentials
@@ -217,7 +252,53 @@ def _leader_duties(
         ),
         EgressWatcher(transport, store, repo, parts.clock),
         parts.clock,
+        upkeep,
     )
+
+
+async def _start_catalog(wiring: Wiring) -> CatalogUpkeep | None:
+    """Opens the operator API and imports existing credentials; every replica does it, the unique names keep it safe."""
+    runtime, connections = wiring.runtime, wiring.connections
+    catalog, repo, source_repo = (
+        connections.catalog,
+        connections.repo,
+        wiring.source_repo,
+    )
+    if catalog is None:
+        return None
+    parts = runtime.parts
+    copies = CopySync(catalog.models, source_repo)
+    importer = CredentialImporter(
+        catalog.directory, source_repo, catalog.writer, runtime.toggle, catalog.audit
+    )
+    upkeep = CatalogUpkeep(importer, copies, [PROVIDER_ID])
+
+    def on_changed() -> None:
+        if isinstance(repo, CachedSubscriptionRepo):
+            repo.invalidate()
+        parts.snapshot.request_refresh()
+
+    ADMIN_SLOT.admin = SubscriptionAdmin(
+        AdminDeps(
+            clock=parts.clock,
+            repo=source_repo,
+            writer=catalog.writer,
+            directory=catalog.directory,
+            credentials=connections.credentials,
+            store=wiring.store,
+            toggle=runtime.toggle,
+            states=runtime.states,
+            coordinator=TokenCoordinator(connections.redis, wiring.keys),
+            copies=copies,
+            settings=catalog.settings,
+            audit=catalog.audit,
+            usage_providers={PROVIDER_ID: wiring.provider},
+            logins={PROVIDER_ID: ChatgptLogin(wiring.transport)},
+            on_changed=on_changed,
+        )
+    )
+    await upkeep.import_at_start()
+    return upkeep
 
 
 @dataclass(frozen=True, slots=True)

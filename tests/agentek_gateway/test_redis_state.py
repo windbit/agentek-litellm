@@ -12,6 +12,7 @@ from agentek_gateway.subscriptions.model import (
     StateRecord,
     SubscriptionState as S,
     UsageRecord,
+    UsageSource,
     Window,
 )
 from agentek_gateway.subscriptions.redis_keys import Keys
@@ -372,3 +373,54 @@ async def test_in_memory_database_ignores_a_delete_older_than_its_row() -> None:
     await db.delete_state("a", 4)
 
     assert "a" in db.rows
+
+
+async def test_usage_keeps_the_source_it_was_observed_from(store) -> None:  # type: ignore[no-untyped-def]
+    usage = UsageRecord(
+        Limits(Window(12.5, 2_000_000.0)), 1_000_000.0, UsageSource.USAGE_CHECK
+    )
+
+    await store.write_usage("a", usage)
+
+    assert (await store.read_all_usage())["a"].source is UsageSource.USAGE_CHECK
+
+
+async def test_usage_stored_without_a_source_reads_as_response_headers(harness) -> None:  # type: ignore[no-untyped-def]
+    await harness.redis.hset(
+        harness.keys.usage,
+        "a",
+        '{"five_hour": null, "weekly": {"used": 1.0, "reset_at": 2.0}, "observed_at": 3.0}',
+    )
+
+    usage = await harness.store().read_all_usage()
+
+    assert usage["a"].source is UsageSource.RESPONSE_HEADERS
+
+
+async def test_a_limits_refresh_is_granted_once_per_window(store) -> None:  # type: ignore[no-untyped-def]
+    first = await store.claim_limits_refresh("a", 30.0)
+    second = await store.claim_limits_refresh("a", 30.0)
+    other = await store.claim_limits_refresh("b", 30.0)
+
+    assert (first, second, other) == (True, False, True)
+
+
+async def test_forgetting_a_subscription_drops_every_trace_of_it(store) -> None:  # type: ignore[no-untyped-def]
+    await store.compare_and_set_state("a", None, record(S.BANNED))
+    await store.compare_and_set_state("b", None, record(S.BANNED))
+    await store.write_usage("a", UsageRecord(Limits(Window(1.0, 2.0)), 3.0))
+    await store.write_enabled_flag("a", False)
+    await store.mark_model_unsupported("a", "m", 60.0)
+    await store.claim_limits_refresh("a", 30.0)
+    await store.record_unclassified("a", 60.0)
+
+    await store.forget_subscription("a")
+
+    assert (
+        await store.read_state("a"),
+        dict(await store.read_all_usage()),
+        dict(await store.read_enabled_flags()),
+        await store.unsupported_pairs(),
+        await store.claim_limits_refresh("a", 30.0),
+        (await store.read_state("b")).state,  # type: ignore[union-attr]
+    ) == (None, {}, {}, frozenset(), True, S.BANNED)

@@ -26,4 +26,7 @@ class CachedSubscriptionRepo:
 
     async def set_enabled(self, subscription_id: SubscriptionId, enabled: bool) -> None:
         await self._repo.set_enabled(subscription_id, enabled)
+        self.invalidate()
+
+    def invalidate(self) -> None:
         self._cached = None

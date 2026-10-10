@@ -88,3 +88,81 @@ def test_default_plugin_registers_the_subscription_callback_once() -> None:
     (plugin,) = default_plugins()
 
     assert plugin.callback_factories == (SubscriptionCallback,)
+
+
+async def test_the_catalog_opens_the_operator_api_and_imports_credentials_at_start() -> (
+    None
+):
+    from agentek_gateway.subscriptions.admin import ADMIN_SLOT
+    from agentek_gateway.subscriptions.audit import InMemoryAuditLog
+    from agentek_gateway.subscriptions.catalog import Catalog
+    from agentek_gateway.subscriptions.memory_catalog import (
+        InMemoryCredentialDirectory,
+        InMemoryModelStore,
+        InMemoryProviderSettings,
+        InMemorySubscriptionWriter,
+    )
+
+    from .catalog_stack import auth_of, template_row
+
+    redis = fakeredis.FakeAsyncRedis(decode_responses=True)
+    credentials, repo = InMemoryCredentialStore(), InMemorySubscriptionRepo()
+    credentials.put("team-a", auth_of())
+    models = InMemoryModelStore()
+    models.add_template(template_row("m1"))
+    connections = Connections(
+        redis,
+        fakeredis.FakeRedis(decode_responses=True),
+        credentials,
+        repo,
+        InMemoryPolicyRepo(),
+        Catalog(
+            directory=InMemoryCredentialDirectory(credentials, "chatgpt"),
+            writer=InMemorySubscriptionWriter(repo),
+            models=models,
+            audit=InMemoryAuditLog(),
+            settings=InMemoryProviderSettings(),
+        ),
+    )
+    runtime = await build_proxy_runtime(FakeHost(), {}, FakeClock(), connections)  # type: ignore[arg-type]
+    try:
+        overview = await ADMIN_SLOT.admin.overview()  # type: ignore[union-attr]
+        assert (
+            [view.name for view in overview[1]],
+            sorted(row for row in models.rows if row.startswith("sub:")),
+        ) == (["team-a"], [f"sub:{overview[1][0].id}:m1"])
+    finally:
+        ADMIN_SLOT.admin = None
+        uninstall_error_observer(ChatGPTResponsesAPIConfig)
+        uninstall_refresh_guard()
+        for task in tuple(runtime.parts.tasks._running):  # noqa: SLF001
+            task.cancel()
+        await asyncio.gather(
+            *runtime.parts.tasks._running, return_exceptions=True
+        )  # noqa: SLF001
+        await redis.aclose()
+
+
+async def test_without_a_catalog_the_operator_api_stays_closed() -> None:
+    from agentek_gateway.subscriptions.admin import ADMIN_SLOT
+
+    redis = fakeredis.FakeAsyncRedis(decode_responses=True)
+    connections = Connections(
+        redis,
+        fakeredis.FakeRedis(decode_responses=True),
+        InMemoryCredentialStore(),
+        InMemorySubscriptionRepo(),
+        InMemoryPolicyRepo(),
+    )
+    runtime = await build_proxy_runtime(FakeHost(), {}, FakeClock(), connections)  # type: ignore[arg-type]
+    try:
+        assert ADMIN_SLOT.admin is None
+    finally:
+        uninstall_error_observer(ChatGPTResponsesAPIConfig)
+        uninstall_refresh_guard()
+        for task in tuple(runtime.parts.tasks._running):  # noqa: SLF001
+            task.cancel()
+        await asyncio.gather(
+            *runtime.parts.tasks._running, return_exceptions=True
+        )  # noqa: SLF001
+        await redis.aclose()
