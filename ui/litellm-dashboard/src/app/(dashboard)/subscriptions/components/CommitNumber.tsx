@@ -6,11 +6,20 @@ interface CommitNumberProps {
   min?: number;
   placeholder?: string;
   disabled?: boolean;
-  onCommit: (value: number | null) => void;
+  /** Rejects when saving failed; the field then shows the saved value again. */
+  onCommit: (value: number | null) => Promise<unknown>;
+  allowEmpty?: boolean;
 }
 
 /** A number field that saves on blur or Enter, not on every keystroke. */
-export default function CommitNumber({ value, min, placeholder, disabled, onCommit }: CommitNumberProps) {
+export default function CommitNumber({
+  value,
+  min,
+  placeholder,
+  disabled,
+  onCommit,
+  allowEmpty = true,
+}: CommitNumberProps) {
   const [draft, setDraft] = useState<number | null>(value);
   const [seen, setSeen] = useState<number | null>(value);
   if (seen !== value) {
@@ -18,9 +27,18 @@ export default function CommitNumber({ value, min, placeholder, disabled, onComm
     setDraft(value);
   }
 
-  const commit = () => {
-    if (draft !== value) {
-      onCommit(draft);
+  const commit = async () => {
+    if (draft === null && !allowEmpty) {
+      setDraft(value);
+      return;
+    }
+    if (draft === value) {
+      return;
+    }
+    try {
+      await onCommit(draft);
+    } catch {
+      setDraft(value);
     }
   };
 

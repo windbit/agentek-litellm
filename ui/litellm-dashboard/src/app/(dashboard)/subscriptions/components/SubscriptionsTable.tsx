@@ -72,8 +72,9 @@ export default function SubscriptionsTable({
       render: (_, subscription) => (
         <CommitNumber
           value={subscription.priority}
+          allowEmpty={false}
           onCommit={(priority) =>
-            priority !== null && actions.updateSettings.mutate({ id: subscription.id, change: { priority } })
+            actions.updateSettings.mutateAsync({ id: subscription.id, change: { priority: priority ?? undefined } })
           }
         />
       ),
@@ -87,10 +88,15 @@ export default function SubscriptionsTable({
           min={1}
           placeholder="provider"
           onCommit={(limit) =>
-            actions.updateSettings.mutate({ id: subscription.id, change: { max_concurrency: limit } })
+            actions.updateSettings.mutateAsync({ id: subscription.id, change: { max_concurrency: limit } })
           }
         />
       ),
+    },
+    {
+      title: "Now",
+      dataIndex: "in_flight",
+      key: "in_flight",
     },
     {
       title: "Today (UTC)",

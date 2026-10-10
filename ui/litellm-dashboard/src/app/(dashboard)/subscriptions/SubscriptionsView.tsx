@@ -7,6 +7,10 @@ import SubscriptionsTable from "./components/SubscriptionsTable";
 import { useSubscriptionActions, useSubscriptions, useSubscriptionStats } from "./hooks/useSubscriptions";
 import type { SubscriptionView } from "./api";
 
+function errorText(error: unknown): string | undefined {
+  return error instanceof Error ? error.message : undefined;
+}
+
 interface SubscriptionsViewProps {
   accessToken: string | null;
 }
@@ -20,13 +24,13 @@ export default function SubscriptionsView({ accessToken }: SubscriptionsViewProp
   if (overview.isLoading) {
     return <Spin className="m-8" />;
   }
-  if (overview.error || !overview.data) {
+  if (!overview.data) {
     return (
       <Alert
         className="m-6"
         type="error"
         message="Subscriptions are unavailable"
-        description={overview.error instanceof Error ? overview.error.message : undefined}
+        description={errorText(overview.error)}
       />
     );
   }
@@ -44,6 +48,22 @@ export default function SubscriptionsView({ accessToken }: SubscriptionsViewProp
       <Typography.Paragraph type="secondary">
         Provider subscriptions and their state. Actions here are performed by the gateway.
       </Typography.Paragraph>
+      {overview.error && (
+        <Alert
+          className="mb-4"
+          type="warning"
+          message="Could not refresh the subscriptions; showing the last data"
+          description={errorText(overview.error)}
+        />
+      )}
+      {stats.error && (
+        <Alert
+          className="mb-4"
+          type="warning"
+          message="Statistics are unavailable"
+          description={errorText(stats.error)}
+        />
+      )}
       <div className="flex flex-wrap items-center gap-4 mb-4">
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setLogin({ provider: defaultProvider })}>
           Subscription
@@ -55,7 +75,7 @@ export default function SubscriptionsView({ accessToken }: SubscriptionsViewProp
               value={provider.concurrency_limit}
               min={1}
               placeholder="no limit"
-              onCommit={(limit) => actions.setProviderConcurrency.mutate({ provider: provider.provider, limit })}
+              onCommit={(limit) => actions.setProviderConcurrency.mutateAsync({ provider: provider.provider, limit })}
             />
           </span>
         ))}
@@ -70,7 +90,7 @@ export default function SubscriptionsView({ accessToken }: SubscriptionsViewProp
       <Alert
         className="mt-4"
         type="info"
-        message="Selection order: priority (lower first), then not soft-limited, then the window that resets sooner, then load."
+        message="Selection order: healthy before soft-limited, then priority (lower first), then the weekly window that resets sooner, then load."
       />
       <LoginModal
         accessToken={accessToken}

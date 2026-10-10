@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatRemaining, sumCounts } from "./utils";
+import { formatDuration, formatRemaining, sumCounts } from "./utils";
 
 const NOW = Date.parse("2026-10-10T12:00:00Z");
 
@@ -33,5 +33,11 @@ describe("sumCounts", () => {
       state_seconds: {},
     });
     expect(sumCounts([day(2), day(3)], "failures")).toEqual({ limit: 5 });
+  });
+});
+
+describe("formatDuration", () => {
+  it("never shows 60 minutes", () => {
+    expect(formatDuration(3599.9 + 3600)).toBe("2 h 0 min");
   });
 });

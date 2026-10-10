@@ -36,6 +36,7 @@ export interface SubscriptionView {
   concurrency_limit: number | null;
   state: StateView;
   limits: LimitsView | null;
+  in_flight: number;
 }
 
 export interface ProviderView {
