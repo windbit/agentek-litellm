@@ -14,7 +14,9 @@ CREDENTIAL_PARAM = "litellm_credential_name"
 UPSTREAM_PARAM = "model"
 COPY_SYNC_INTERVAL_S = 15.0
 LEGACY_GRACE_S = 60.0
-VOLATILE_INFO_KEYS = frozenset({"id", "blocked", "created_at", "created_by", "updated_at", "updated_by"})
+VOLATILE_INFO_KEYS = frozenset(
+    {"id", "blocked", "created_at", "created_by", "updated_at", "updated_by"}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,7 +72,11 @@ def copy_id(subscription: Subscription, model_name: str) -> str:
 
 def template_provider(template: ModelRow) -> str | None:
     upstream = template.litellm_params.get(UPSTREAM_PARAM)
-    return upstream.partition("/")[0] if isinstance(upstream, str) and "/" in upstream else None
+    return (
+        upstream.partition("/")[0]
+        if isinstance(upstream, str) and "/" in upstream
+        else None
+    )
 
 
 def copy_of(template: ModelRow, subscription: Subscription) -> ModelRow:
@@ -114,9 +120,13 @@ def plan_copies(
     }
     present = {row.model_id: row for row in existing}
     return CopyPlan(
-        create=tuple(row for model_id, row in wanted.items() if model_id not in present),
+        create=tuple(
+            row for model_id, row in wanted.items() if model_id not in present
+        ),
         update=tuple(
-            row for model_id, row in wanted.items() if model_id in present and not _same_content(present[model_id], row)
+            row
+            for model_id, row in wanted.items()
+            if model_id in present and not _same_content(present[model_id], row)
         ),
         delete=tuple(model_id for model_id in present if model_id not in wanted),
     )
@@ -132,7 +142,9 @@ def legacy_pairs_to_retire(
     retired = []
     for row in legacy:
         credential = row.litellm_params.get(CREDENTIAL_PARAM)
-        subscription = by_credential.get(credential) if isinstance(credential, str) else None
+        subscription = (
+            by_credential.get(credential) if isinstance(credential, str) else None
+        )
         if subscription and copy_id(subscription, row.model_name) in settled_copies:
             retired.append(row.model_id)
     return tuple(retired)
@@ -178,7 +190,9 @@ class CopySync:
             await self._store.delete_copies(plan.delete)
         await self._retire_legacy(
             subscriptions,
-            {row.model_id for row in existing}.union(row.model_id for row in plan.create).difference(plan.delete),
+            {row.model_id for row in existing}
+            .union(row.model_id for row in plan.create)
+            .difference(plan.delete),
         )
         if plan.create or plan.update or plan.delete:
             verbose_proxy_logger.info(
@@ -189,13 +203,21 @@ class CopySync:
             )
         return plan
 
-    async def _retire_legacy(self, subscriptions: Sequence[Subscription], present: set[str]) -> None:
+    async def _retire_legacy(
+        self, subscriptions: Sequence[Subscription], present: set[str]
+    ) -> None:
         now = self._clock.now()
-        self._standing_since = {model_id: self._standing_since.get(model_id, now) for model_id in present}
+        self._standing_since = {
+            model_id: self._standing_since.get(model_id, now) for model_id in present
+        }
         settled = frozenset(
-            model_id for model_id, since in self._standing_since.items() if now - since >= self._legacy_grace_s
+            model_id
+            for model_id, since in self._standing_since.items()
+            if now - since >= self._legacy_grace_s
         )
-        retired = legacy_pairs_to_retire(await self._store.list_legacy(), subscriptions, settled)
+        retired = legacy_pairs_to_retire(
+            await self._store.list_legacy(), subscriptions, settled
+        )
         if retired:
             await self._store.delete_legacy(retired)
             verbose_proxy_logger.info(
@@ -205,7 +227,11 @@ class CopySync:
 
     async def remove_subscription(self, subscription: Subscription) -> None:
         prefix = f"{COPY_ID_PREFIX}{subscription.id}:"
-        stale = [row.model_id for row in await self._store.list_copies() if row.model_id.startswith(prefix)]
+        stale = [
+            row.model_id
+            for row in await self._store.list_copies()
+            if row.model_id.startswith(prefix)
+        ]
         if stale:
             await self._store.delete_copies(stale)
         orphaned = [

@@ -71,13 +71,21 @@ async def test_the_pair_is_never_left_without_a_deployment() -> None:
 
     for _ in range(6):
         await stack.copies.run_once()
-        seen.append([model_id for model_id in ids(stack) if model_id in ("console-a-m1", "sub:a:m1")])
+        seen.append(
+            [
+                model_id
+                for model_id in ids(stack)
+                if model_id in ("console-a-m1", "sub:a:m1")
+            ]
+        )
         stack.clock.advance(LEGACY_GRACE_S / 2)
 
     assert [] not in seen
 
 
-async def test_a_fresh_replica_waits_the_grace_again_instead_of_trusting_the_database() -> None:
+async def test_a_fresh_replica_waits_the_grace_again_instead_of_trusting_the_database() -> (
+    None
+):
     stack = stack_with_legacy()
     await stack.copies.run_once()
     stack.clock.advance(LEGACY_GRACE_S * 10)
@@ -88,7 +96,9 @@ async def test_a_fresh_replica_waits_the_grace_again_instead_of_trusting_the_dat
     assert "console-a-m1" in stack.models.rows
 
 
-async def test_a_deployment_of_a_credential_without_subscription_is_left_alone() -> None:
+async def test_a_deployment_of_a_credential_without_subscription_is_left_alone() -> (
+    None
+):
     stack = stack_with_legacy()
     stack.models.add_template(legacy_row("console-key-m1", "m1", "openrouter-key"))
 
@@ -136,7 +146,9 @@ async def test_removing_a_subscription_removes_its_legacy_deployments_too() -> N
 
 
 @needs_postgres
-async def test_the_database_store_lists_and_removes_only_deployments_it_does_not_own() -> None:
+async def test_the_database_store_lists_and_removes_only_deployments_it_does_not_own() -> (
+    None
+):
     from litellm.proxy._types import UserAPIKeyAuth
     from litellm.proxy.management_endpoints.model_management_endpoints import (
         _add_model_to_db,
@@ -167,12 +179,19 @@ async def test_the_database_store_lists_and_removes_only_deployments_it_does_not
 
         listed = [row.model_id for row in await store.list_legacy()]
         await store.delete_legacy(["console-1", "template:m1", "sub:a:m1"])
-        left = sorted(record.model_id for record in await db.litellm_proxymodeltable.find_many())
+        left = sorted(
+            record.model_id for record in await db.litellm_proxymodeltable.find_many()
+        )
 
-        assert (listed, left) == (["console-1"], ["console-2", "sub:a:m1", "template:m1"])
+        assert (listed, left) == (
+            ["console-1"],
+            ["console-2", "sub:a:m1", "template:m1"],
+        )
 
 
-async def test_requests_keep_succeeding_while_the_router_follows_every_cutover_step() -> None:
+async def test_requests_keep_succeeding_while_the_router_follows_every_cutover_step() -> (
+    None
+):
     from litellm import Router
 
     stack = stack_with_legacy()
@@ -193,7 +212,9 @@ async def test_requests_keep_succeeding_while_the_router_follows_every_cutover_s
         )
         for _ in range(5):
             try:
-                await router.acompletion(model="m1", messages=[{"role": "user", "content": "x"}])
+                await router.acompletion(
+                    model="m1", messages=[{"role": "user", "content": "x"}]
+                )
             except Exception:  # noqa: BLE001
                 failures += 1
         stack.clock.advance(LEGACY_GRACE_S / 2)

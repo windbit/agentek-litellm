@@ -34,7 +34,11 @@ class InMemorySubscriptionWriter:
     async def update_subscription(
         self, subscription_id: SubscriptionId, fields: Mapping[str, int | bool | None]
     ) -> None:
-        current = next(sub for sub in await self._repo.list_subscriptions() if sub.id == subscription_id)
+        current = next(
+            sub
+            for sub in await self._repo.list_subscriptions()
+            if sub.id == subscription_id
+        )
         changes: dict[str, int | bool | None] = {}
         if "priority" in fields:
             changes["priority"] = fields["priority"]
@@ -73,7 +77,9 @@ class InMemoryCredentialDirectory:
             for name in names
         )
 
-    async def create_credential(self, name: str, provider: str, auth: ChatgptAuth) -> bool:
+    async def create_credential(
+        self, name: str, provider: str, auth: ChatgptAuth
+    ) -> bool:
         if name in self._store.values or name in self.empty:
             return False
         self._store.put(name, auth)
@@ -140,7 +146,9 @@ class InMemoryModelStore:
         return row
 
     def _with_prefix(self, prefix: str) -> Sequence[ModelRow]:
-        return tuple(row for model_id, row in self.rows.items() if model_id.startswith(prefix))
+        return tuple(
+            row for model_id, row in self.rows.items() if model_id.startswith(prefix)
+        )
 
 
 class InMemoryProviderSettings:
