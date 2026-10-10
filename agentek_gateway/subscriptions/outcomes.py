@@ -42,11 +42,12 @@ class OutcomeTracker:
             subscription = self._subscription(reservation)
             if reservation and subscription:
                 provider = self._provider(subscription)
+                headers = _additional_headers(response)
                 limits = (
-                    provider.parse_limits(
-                        _additional_headers(response), None, now=self._parts.clock.now()
+                    await self._parts.failures.record_usage(
+                        provider, subscription, headers
                     )
-                    if provider
+                    if provider and headers
                     else None
                 )
                 await self._parts.signals.on_success(subscription, limits)

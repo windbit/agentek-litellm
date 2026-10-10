@@ -130,16 +130,16 @@ class FailureRouter:
         subscription: Subscription,
         headers: Headers,
     ) -> None:
-        limits = await self._write_usage(provider, subscription, headers)
+        limits = await self.record_usage(provider, subscription, headers)
         if limits:
             await self._states.apply(subscription, LimitsObserved(limits))
 
     async def _record_limits(
         self, provider: SubscriptionProvider, attempt: FailedAttempt
     ) -> None:
-        await self._write_usage(provider, attempt.subscription, attempt.headers)
+        await self.record_usage(provider, attempt.subscription, attempt.headers)
 
-    async def _write_usage(
+    async def record_usage(
         self,
         provider: SubscriptionProvider,
         subscription: Subscription,

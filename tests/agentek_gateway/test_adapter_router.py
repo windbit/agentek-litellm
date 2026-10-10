@@ -352,3 +352,26 @@ async def test_401_right_after_a_token_refresh_does_not_start_another_refresh() 
             await state_of(stack, "a"),
             stack.mock.accounts_served(),
         ) == ("Hello from mock", None, [account_of("a"), account_of("b")])
+
+
+async def test_successful_chat_completion_records_the_limit_windows_of_its_subscription() -> (
+    None
+):
+    async with running_stack(["a", "b"]) as stack:
+        await stack.call()
+
+        usage = await stack.store.read_all_usage()
+
+        assert {
+            sub_id: (record.limits.five_hour.used_percent, record.limits.weekly.used_percent)  # type: ignore[union-attr]
+            for sub_id, record in usage.items()
+        } == {"a": (12.0, 31.0)}
+
+
+async def test_successful_responses_request_records_the_limit_windows_of_its_subscription() -> (
+    None
+):
+    async with running_stack(["a", "b"]) as stack:
+        await stack.respond()
+
+        assert set(await stack.store.read_all_usage()) == {"a"}
