@@ -4,6 +4,7 @@ import asyncio
 
 import pytest
 
+from agentek_gateway.subscriptions.errors import NoAvailableSubscriptionsError
 from agentek_gateway.subscriptions.events import (
     Overloaded,
     LimitExhausted,
@@ -375,3 +376,55 @@ async def test_failed_usage_write_is_retried_by_the_next_reading_and_never_raise
     await failures.record_usage(provider, subscription, LIMIT_HEADERS)
 
     assert plain.store.usage_writes == 2  # type: ignore[attr-defined]
+
+
+async def test_retry_settings_follow_the_pool_and_bound_the_clients_count() -> None:
+    sub_ids = [f"s{index:02d}" for index in range(40)]
+    plain = plain_runtime(sub_ids)
+    await plain.runtime.parts.snapshot.refresh()
+    gateway = plain.runtime.gateway
+
+    settings = gateway.retry_settings({"model": "gpt-x", "num_retries": 100})
+    other = gateway.retry_settings({"model": "some-other-model"})
+    own_policy = gateway.retry_settings(
+        {
+            "model": "gpt-x",
+            "model_group_retry_policy": {"gpt-x": {"TimeoutErrorRetries": 1}},
+        }
+    )
+
+    assert (
+        settings["num_retries"],
+        settings["model_group_retry_policy"],
+        other,
+        own_policy["model_group_retry_policy"],
+    ) == (
+        32,
+        {"gpt-x": {"RateLimitErrorRetries": 32}},
+        {},
+        {"gpt-x": {"TimeoutErrorRetries": 1, "RateLimitErrorRetries": 32}},
+    )
+
+
+async def test_small_pool_still_gets_the_default_retry_floor() -> None:
+    plain = plain_runtime(["a", "b"])
+    await plain.runtime.parts.snapshot.refresh()
+
+    settings = plain.runtime.gateway.retry_settings({"model": "gpt-x"})
+
+    assert settings["model_group_retry_policy"] == {
+        "gpt-x": {"RateLimitErrorRetries": 4}
+    }
+
+
+async def test_request_that_has_retried_past_its_time_budget_ends_with_the_plugin_429() -> (
+    None
+):
+    plain = plain_runtime(["a", "b"])
+    await plain.runtime.parts.snapshot.refresh()
+    request = {"metadata": {"agentek_request_id": "r1"}}
+    plain.runtime.parts.attempts.record("r1", "sub:a:gpt-x", 1)
+    plain.clock.advance(61)
+
+    with pytest.raises(NoAvailableSubscriptionsError):
+        await plain.runtime.gateway.filter("gpt-x", plain.deployments, request)

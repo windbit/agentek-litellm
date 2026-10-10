@@ -91,13 +91,30 @@ class SubscriptionGateway:
     def __init__(self, parts: GatewayParts) -> None:
         self._parts = parts
 
-    def pool_retries(self, model: str) -> int | None:
-        """Router retries a request on a subscription model needs so that a pool of dead subscriptions cannot use them all up."""
+    def retry_settings(self, request: Mapping[str, object]) -> dict[str, object]:
+        """Router retry settings a subscription model needs; empty for any other model.
+
+        Only a rate-limit error (an exhausted subscription) retries up to the pool size;
+        other errors keep the router's own count, which a client may lower or raise within the pool bounds.
+        """
+        model = str(request.get("model"))
         snapshot = self._parts.snapshot.current
         if snapshot is None or model not in snapshot.subscription_models:
-            return None
+            return {}
         enabled = sum(1 for sub in snapshot.subscriptions.values() if sub.enabled)
-        return min(MAX_POOL_RETRIES, max(MIN_POOL_RETRIES, enabled))
+        pool = min(MAX_POOL_RETRIES, max(MIN_POOL_RETRIES, enabled))
+        policies = request.get("model_group_retry_policy")
+        merged = dict(policies) if isinstance(policies, Mapping) else {}
+        own = merged.get(model)
+        merged[model] = {
+            **(own if isinstance(own, Mapping) else {}),
+            "RateLimitErrorRetries": pool,
+        }
+        settings: dict[str, object] = {"model_group_retry_policy": merged}
+        requested = request.get("num_retries")
+        if isinstance(requested, int) and not isinstance(requested, bool):
+            settings["num_retries"] = max(0, min(requested, MAX_POOL_RETRIES))
+        return settings
 
     async def filter(
         self,
@@ -110,6 +127,10 @@ class SubscriptionGateway:
         if snapshot is None:
             return self.without_subscriptions(model, deployments)
         request_id = read_request_id(request_kwargs)
+        if parts.attempts.age_s(request_id) > parts.config.defaults.retry_budget_s:
+            raise NoAvailableSubscriptionsError(
+                model, None, parts.config.defaults.no_capacity_retry_after_s
+            )
         cache_key = prompt_cache_key_of(request_kwargs)
         sticky_id = await parts.sticky.lookup(cache_key) if cache_key else None
         result = filter_deployments(

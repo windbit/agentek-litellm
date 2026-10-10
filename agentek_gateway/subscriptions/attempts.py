@@ -50,6 +50,7 @@ def read_request_id(request_kwargs: Mapping[str, object]) -> str | None:
 class AttemptRecord:
     deployment_ids: frozenset[str]
     alternatives: int
+    started_at: float
 
 
 class AttemptTracker:
@@ -61,6 +62,7 @@ class AttemptTracker:
         ttl_s: float,
         max_requests: int = DEFAULT_MAX_TRACKED_REQUESTS,
     ) -> None:
+        self._clock = clock
         self._records: ExpiringMap[str, AttemptRecord] = ExpiringMap(
             clock, ttl_s, max_requests
         )
@@ -69,6 +71,10 @@ class AttemptTracker:
         record = self._records.get(request_id) if request_id else None
         return record.deployment_ids if record else frozenset()
 
+    def age_s(self, request_id: str | None) -> float:
+        record = self._records.get(request_id) if request_id else None
+        return self._clock.now() - record.started_at if record else 0.0
+
     def alternatives(self, request_id: str | None) -> int:
         record = self._records.get(request_id) if request_id else None
         return record.alternatives if record else 0
@@ -76,8 +82,10 @@ class AttemptTracker:
     def record(self, request_id: str, deployment_id: str, alternatives: int) -> None:
         previous = self._records.get(request_id)
         tried = previous.deployment_ids if previous else frozenset()
+        started_at = previous.started_at if previous else self._clock.now()
         self._records.put(
-            request_id, AttemptRecord(tried | {deployment_id}, alternatives)
+            request_id,
+            AttemptRecord(tried | {deployment_id}, alternatives, started_at),
         )
 
     def finish(self, request_id: str | None) -> None:

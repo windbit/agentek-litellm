@@ -62,19 +62,19 @@ async def test_usage_limit_moves_the_request_to_the_next_subscription_without_er
         )
 
 
-async def test_upstream_429_that_ends_the_request_gets_retry_after_from_the_hook() -> (
+async def test_every_subscription_exhausted_by_upstream_429_ends_the_request_with_the_plugin_429() -> (
     None
 ):
     async with running_stack(["a", "b"]) as stack:
         for sub_id in ("a", "b"):
             stack.mock.script(account_of(sub_id), "usage_limit")
 
-        with pytest.raises(litellm.RateLimitError) as raised:
+        with pytest.raises(NoAvailableSubscriptionsError) as raised:
             await stack.call()
 
         assert (
             raised.value.status_code,
-            await stack.response_headers(),
+            raised.value.headers,
             stack.mock.accounts_served(),
         ) == (429, {"retry-after": "10"}, [account_of("a"), account_of("b")])
 
@@ -85,7 +85,7 @@ async def test_new_request_with_every_deployment_in_router_cooldown_gets_the_plu
     async with running_stack(["a", "b"]) as stack:
         for sub_id in ("a", "b"):
             stack.mock.script(account_of(sub_id), "usage_limit")
-        with pytest.raises(litellm.RateLimitError):
+        with pytest.raises(NoAvailableSubscriptionsError):
             await stack.call()
         served_before = len(stack.mock.received)
 
@@ -429,3 +429,41 @@ async def test_flushed_redis_does_not_send_a_request_to_dead_subscriptions_into_
         answer = await stack.call()
 
         assert answer.choices[0].message.content == "Hello from mock"  # type: ignore[attr-defined]
+
+
+async def test_server_errors_on_every_subscription_keep_the_routers_own_retry_count() -> (
+    None
+):
+    sub_ids = [f"s{index:02d}" for index in range(12)]
+    async with running_stack(sub_ids) as stack:
+        for sub_id in sub_ids:
+            stack.mock.script(account_of(sub_id), default="overloaded")
+
+        with pytest.raises(Exception):
+            await stack.call()
+
+        assert len(stack.mock.received) == 5
+
+
+async def test_client_asking_for_no_retries_still_gets_past_dead_subscriptions() -> (
+    None
+):
+    sub_ids = [f"s{index:02d}" for index in range(12)]
+    async with running_stack(sub_ids) as stack:
+        for sub_id in sub_ids[:10]:
+            stack.mock.script(account_of(sub_id), default="usage_limit")
+
+        answer = await stack.call(num_retries=0)
+
+        assert answer.choices[0].message.content == "Hello from mock"  # type: ignore[attr-defined]
+
+
+async def test_responses_path_gets_past_dead_subscriptions_too() -> None:
+    sub_ids = [f"s{index:02d}" for index in range(12)]
+    async with running_stack(sub_ids) as stack:
+        for sub_id in sub_ids[:10]:
+            stack.mock.script(account_of(sub_id), default="usage_limit")
+
+        answer = await stack.respond()
+
+        assert answer is not None

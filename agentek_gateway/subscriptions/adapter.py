@@ -40,10 +40,8 @@ class SubscriptionCallback(CustomLogger):
     ) -> Fields:
         await guarded("pre_call", _prepare(data, call_type), None)
         runtime = self._slot.runtime
-        if runtime is not None and "num_retries" not in data:
-            retries = runtime.gateway.pool_retries(str(data.get("model")))
-            if retries is not None:
-                data["num_retries"] = retries
+        if runtime is not None:
+            data.update(runtime.gateway.retry_settings(data))
         return data
 
     async def async_filter_deployments(
