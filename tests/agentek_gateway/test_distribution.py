@@ -7,6 +7,7 @@ import httpx
 import pytest
 from fastapi import FastAPI, Request
 
+from litellm.integrations.custom_logger import CustomLogger
 from litellm.proxy._types import LitellmUserRoles, UserAPIKeyAuth
 from litellm.proxy.auth.user_api_key_auth import user_api_key_auth
 
@@ -43,6 +44,7 @@ from agentek_gateway.subscriptions.selection import Kept, SelectionRequest, sele
 
 from .builders import MODEL, NOW, deployments_for, snapshot_of, subject
 from .conftest import FakeClock, make_subscription
+from .stack import MODEL as STACK_MODEL
 from .stack import account_of, running_stack
 
 ALL, ALL_EXCEPT, ONLY = (
@@ -515,3 +517,41 @@ async def test_closing_a_subscription_to_the_space_moves_the_running_chat_to_ano
             [account_of("a"), account_of("a")],
             [account_of("b")],
         )
+
+
+# guardrails do not depend on the subscription
+
+
+class EmailMasking(CustomLogger):
+    """Stands for the proxy's PII guardrail, which runs before the plugin's hook and the router."""
+
+    async def async_pre_call_hook(self, user_api_key_dict, cache, data, call_type):  # type: ignore[no-untyped-def]
+        for message in data.get("messages", []):
+            message["content"] = message["content"].replace(
+                "ivan@example.test", "[EMAIL]"
+            )
+        return data
+
+
+async def test_a_request_through_a_bound_subscription_reaches_the_provider_masked() -> (
+    None
+):
+    book = InMemoryPolicyBook()
+    book.rows["b"] = policy_of(Visibility(), S1)
+    labels = {"user_api_key_metadata": {"agentek_subjects": {"space": "s1"}}}
+    async with running_stack(["a", "b"], policy=book) as stack:
+        data: dict[str, object] = {
+            "model": STACK_MODEL,
+            "messages": [{"role": "user", "content": "write to ivan@example.test"}],
+            "metadata": dict(labels),
+        }
+
+        await EmailMasking().async_pre_call_hook(None, None, data, "acompletion")
+        await stack.callback.async_pre_call_hook(None, None, data, "acompletion")  # type: ignore[arg-type]
+        await stack.router.acompletion(**data)
+        await stack.finished()
+
+        received = stack.mock.received
+        assert [item.account for item in received] == [account_of("b")]
+        assert "ivan@example.test" not in str(received[0].body)
+        assert "[EMAIL]" in str(received[0].body)
