@@ -4,6 +4,7 @@ import time
 import pytest
 
 from agentek_gateway.subscriptions.memory import InMemorySubscriptionRepo
+from agentek_gateway.subscriptions.plugin import _reconcile_forever
 from agentek_gateway.subscriptions.model import SubscriptionState as S
 from agentek_gateway.subscriptions.service import StateService
 from agentek_gateway.subscriptions.toggle import SubscriptionToggle
@@ -192,3 +193,37 @@ async def test_a_refused_database_write_leaves_no_flag_behind_to_outlive_a_flush
         {},
         None,
     )
+
+
+async def test_a_flag_that_never_followed_the_database_is_rewritten_by_the_sweep() -> (
+    None
+):
+    plain = plain_runtime(["a"])
+    snapshot = plain.runtime.parts.snapshot
+    await plain.store.write_enabled_flag("a", True)
+    await plain.repo.set_enabled("a", False)
+    await snapshot.refresh()
+    before = snapshot.current.subscriptions["a"].enabled  # type: ignore[union-attr]
+
+    await plain.store.reconcile_enabled_flags(await plain.repo.list_subscriptions())
+    await snapshot.refresh()
+
+    assert (before, snapshot.current.subscriptions["a"].enabled) == (True, False)  # type: ignore[union-attr]
+
+
+async def test_the_background_sweep_brings_a_stale_flag_back_in_line_with_the_database() -> (
+    None
+):
+    plain = plain_runtime(["a"])
+    await plain.store.write_enabled_flag("a", True)
+    await plain.repo.set_enabled("a", False)
+    sweep = asyncio.get_running_loop().create_task(
+        _reconcile_forever(plain.store, plain.repo, interval_s=0.02)
+    )
+    try:
+        await wait_until(lambda: False, budget_s=0.3)
+        flags = await plain.store.read_enabled_flags()
+    finally:
+        sweep.cancel()
+
+    assert flags == {"a": False}

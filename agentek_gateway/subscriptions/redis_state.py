@@ -15,6 +15,7 @@ from .model import (
     Limits,
     Route,
     StateRecord,
+    Subscription,
     SubscriptionId,
     UsageRecord,
     Window,
@@ -76,6 +77,16 @@ class RedisStateStore:
                 await self._restore(subscription_id, row)
             elif record is not None and (row is None or row.version < record.version):
                 await self._mirror(subscription_id, record)
+
+    async def reconcile_enabled_flags(
+        self, subscriptions: Sequence[Subscription]
+    ) -> None:
+        """The database decides: a flag that disagrees with the row (a write that never reached Redis) is rewritten."""
+        flags = await self.read_enabled_flags()
+        for subscription in subscriptions:
+            flag = flags.get(subscription.id)
+            if flag is not None and flag != subscription.enabled:
+                await self.write_enabled_flag(subscription.id, subscription.enabled)
 
     async def read_state(self, subscription_id: SubscriptionId) -> StateRecord | None:
         return (await self.read_states([subscription_id])).get(subscription_id)

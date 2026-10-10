@@ -37,6 +37,7 @@ LOOP_COROUTINES = {
     "_reconcile_forever",
     "LeaderDuties.run",
     "TelemetryLoop.run",
+    "CredentialPairsLoop.run",
 }
 FAST_INTERVAL_S = 0.02
 

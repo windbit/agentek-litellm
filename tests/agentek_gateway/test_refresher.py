@@ -11,6 +11,10 @@ from agentek_gateway.subscriptions.providers.base import (
     RefreshRejected,
 )
 from agentek_gateway.subscriptions.providers.chatgpt import ChatgptAuth
+from agentek_gateway.subscriptions.credential_pairs import (
+    CredentialPairs,
+    CredentialPairsLoop,
+)
 from agentek_gateway.subscriptions.refresh_guard import RefreshGuard
 from agentek_gateway.subscriptions.token_coordination import (
     LatestAuth,
@@ -269,7 +273,8 @@ async def test_replica_with_the_old_pair_gets_the_new_one_from_redis_not_from_th
         SyncTokenCoordinator(
             fakeredis.FakeRedis(server=upkeep.server, decode_responses=True),
             upkeep.keys,
-        )
+        ),
+        CredentialPairs(),
     )
 
     def refresh_with_the_provider() -> dict[str, str]:
@@ -279,6 +284,33 @@ async def test_replica_with_the_old_pair_gets_the_new_one_from_redis_not_from_th
     pair = guard(CRED, "rt-0", refresh_with_the_provider)
 
     assert (pair["refresh_token"], guard_calls) == ("rt-new1", [])
+
+
+async def test_replica_with_the_old_pair_takes_the_new_one_from_the_database_when_redis_lost_it() -> (
+    None
+):
+    upkeep, _ = build_upkeep(["a"], expires_in_s=60)
+    replica = upkeep.replica()
+    await replica.refresher.tick()
+    await replica.redis.delete(upkeep.keys.latest_auth(CRED))
+    pairs = CredentialPairs()
+    await CredentialPairsLoop(pairs, upkeep.repo, upkeep.credentials).refresh_once()
+    guard = RefreshGuard(
+        SyncTokenCoordinator(
+            fakeredis.FakeRedis(server=upkeep.server, decode_responses=True),
+            upkeep.keys,
+        ),
+        pairs,
+    )
+    provider_calls: list[str] = []
+
+    def refresh_with_the_provider() -> dict[str, str]:
+        provider_calls.append("provider")
+        return {}
+
+    pair = guard(CRED, "rt-0", refresh_with_the_provider)
+
+    assert (pair["refresh_token"], provider_calls) == ("rt-new1", [])
 
 
 async def test_pair_saved_before_a_reauthorization_is_dropped_from_redis() -> None:
