@@ -29,7 +29,7 @@ from .providers.chatgpt_profile import Profile, profile_of
 from .service import StateService
 from .toggle import SubscriptionToggle
 from .unit import Unit
-from .token_coordination import TokenCoordinator
+from .token_coordination import RECENT_REFRESH_WINDOW_S, TokenCoordinator
 from .views import (
     ProviderView,
     SubscriptionView,
@@ -339,6 +339,7 @@ class SubscriptionAdmin:
         """Runs under the credential's refresh lock, so a refresh cannot write its older pair over the new tokens.
 
         The worker's own credentials follow before the state event: the liveness probe the event triggers must already use the new tokens.
+        Replicas that still hold the old tokens for up to LiteLLM's reload interval may get a 401; the shared mark makes them ignore it like a 401 right after a refresh.
         """
         deps = self._deps
         subscription = await self._find(subscription_id)
@@ -353,6 +354,7 @@ class SubscriptionAdmin:
                 )
             await deps.coordinator.clear_latest(name)
             deps.runtime.apply(name, subscription.provider, auth)
+            await deps.store.mark_refreshed(name, RECENT_REFRESH_WINDOW_S)
             await deps.store.clear_unsupported(subscription.id)
             await deps.states.apply(subscription, Reauthorized())
         finally:

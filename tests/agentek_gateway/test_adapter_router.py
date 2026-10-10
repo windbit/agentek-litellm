@@ -352,3 +352,77 @@ async def test_401_right_after_a_token_refresh_does_not_start_another_refresh() 
             await state_of(stack, "a"),
             stack.mock.accounts_served(),
         ) == ("Hello from mock", None, [account_of("a"), account_of("b")])
+
+
+async def test_a_replica_with_the_old_tokens_does_not_fail_a_subscription_just_reauthorized_elsewhere() -> (
+    None
+):
+
+    from agentek_gateway.subscriptions.admin import (
+        AdminDeps,
+        ReauthorizeTarget,
+        SubscriptionAdmin,
+    )
+    from agentek_gateway.subscriptions.audit import InMemoryAuditLog
+    from agentek_gateway.subscriptions.credentials import InMemoryCredentialStore
+    from agentek_gateway.subscriptions.events import ProbeSucceeded, TokenRevoked
+    from agentek_gateway.subscriptions.memory_catalog import (
+        InMemoryCredentialDirectory,
+        InMemoryModelStore,
+        InMemoryProviderSettings,
+        InMemorySubscriptionWriter,
+    )
+    from agentek_gateway.subscriptions.model_copies import CopySync
+    from agentek_gateway.subscriptions.redis_keys import Keys
+    from agentek_gateway.subscriptions.token_coordination import TokenCoordinator
+    from agentek_gateway.subscriptions.unit import Writes, fixed_unit
+
+    from .catalog_stack import auth_of
+    from .stack import Shared
+
+    shared = Shared()
+    async with running_stack(["a"], shared=shared) as first:
+        async with running_stack(["a"], shared=shared) as second:
+            tokens = InMemoryCredentialStore()
+            tokens.put("cred-a", auth_of("old"))
+            directory = InMemoryCredentialDirectory(tokens, "chatgpt")
+            settings, audit = InMemoryProviderSettings(), InMemoryAuditLog()
+            writer = InMemorySubscriptionWriter(shared.repo)
+
+            class OneNewPair:
+                async def start(self):  # type: ignore[no-untyped-def]
+                    raise AssertionError
+
+                async def poll(self, *_: object):  # type: ignore[no-untyped-def]
+                    return auth_of("new")
+
+            admin = SubscriptionAdmin(
+                AdminDeps(
+                    clock=first.clock,
+                    repo=shared.repo,
+                    unit=fixed_unit(Writes(writer, directory, settings, audit)),
+                    directory=directory,
+                    runtime=type("R", (), {"apply": lambda *a: None})(),  # type: ignore[arg-type]
+                    credentials=tokens,
+                    store=first.store,  # type: ignore[arg-type]
+                    toggle=first.runtime.toggle,
+                    states=first.runtime.states,
+                    coordinator=TokenCoordinator(first.redis, Keys("t:")),
+                    copies=CopySync(InMemoryModelStore(), shared.repo),
+                    settings=settings,
+                    usage_providers={},
+                    logins={"chatgpt": OneNewPair()},  # type: ignore[dict-item]
+                    on_changed=lambda: None,
+                )
+            )
+            await first.runtime.states.apply(first.subscriptions["a"], TokenRevoked())
+            await admin.login_poll("op", "chatgpt", "d", "u", ReauthorizeTarget("a"))
+            await first.runtime.states.apply(first.subscriptions["a"], ProbeSucceeded())
+            await second.runtime.parts.snapshot.refresh()
+            second.mock.script(account_of("a"), "unauthorized")
+
+            with pytest.raises(Exception):
+                await second.call()
+
+            record = await second.store.read_state("a")
+            assert record is not None and record.state.value == "ACTIVE"
