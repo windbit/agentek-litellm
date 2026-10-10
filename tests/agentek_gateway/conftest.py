@@ -48,6 +48,11 @@ class Harness:
         self.subscriptions = {sub.id: sub for sub in subscriptions}
 
 
+@pytest.fixture(autouse=True)
+def salt_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LITELLM_SALT_KEY", "sk-test-salt-key")
+
+
 @pytest.fixture
 def clock() -> FakeClock:
     return FakeClock()
