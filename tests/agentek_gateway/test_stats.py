@@ -1,16 +1,12 @@
 from dataclasses import replace
 from datetime import date, datetime, timezone
 
-import httpx
-import pytest
 
 from agentek_gateway.subscriptions.admin import SubscriptionAdmin
 from agentek_gateway.subscriptions.failures import SwitchReason
-from agentek_gateway.subscriptions.model import StateRecord
 from agentek_gateway.subscriptions.policy import Policy
 from agentek_gateway.subscriptions.selection import Snapshot
 from agentek_gateway.subscriptions.stats import (
-    DailyDelta,
     PrismaStatsStore,
     StateTimeCredit,
     StatsBuffer,
@@ -19,7 +15,7 @@ from agentek_gateway.subscriptions.stats import (
 )
 from agentek_gateway.subscriptions.stats_report import (
     PrismaStatsReader,
-    StatsReport,
+    SpendRow,
     build_report,
 )
 from agentek_gateway.subscriptions.telemetry import NullTelemetry
@@ -77,21 +73,40 @@ def test_failures_and_switches_are_counted_per_reason(clock: FakeClock) -> None:
     )
 
 
-async def test_time_is_credited_to_the_current_state_and_capped_after_a_gap(
+async def test_time_is_credited_since_the_previous_tick_and_restarts_after_a_lost_lease(
     clock: FakeClock,
 ) -> None:
     buffer = StatsBuffer(clock)
     snapshot = FixedSnapshot(SUB_A, replace(SUB_B, enabled=False))
     credit = StateTimeCredit(snapshot, buffer, clock)  # type: ignore[arg-type]
 
+    await credit.tick()
     clock.advance(5)
     await credit.tick()
     clock.advance(3600)
+    credit.lost_lease()
+    await credit.tick()
+    clock.advance(7)
     await credit.tick()
 
     taken = buffer.take()
-    assert dict(taken[("a", day_of(clock))].state_seconds) == {"ACTIVE": 20.0}
-    assert dict(taken[("b", day_of(clock))].state_seconds) == {"DISABLED": 20.0}
+    assert dict(taken[("a", day_of(clock))].state_seconds) == {"ACTIVE": 12.0}
+    assert dict(taken[("b", day_of(clock))].state_seconds) == {"DISABLED": 12.0}
+
+
+def test_counts_after_midnight_go_to_the_next_day(clock: FakeClock) -> None:
+    buffer = StatsBuffer(clock)
+    clock.current = datetime(2026, 10, 10, 23, 59, 59, tzinfo=timezone.utc).timestamp()
+    buffer.failed(SUB_A, SwitchReason.LIMIT)
+    clock.advance(2)
+    buffer.failed(SUB_A, SwitchReason.LIMIT)
+
+    assert sorted(
+        (key[1], dict(delta.failures)) for key, delta in buffer.take().items()
+    ) == [
+        (date(2026, 10, 10), {"limit": 1}),
+        (date(2026, 10, 11), {"limit": 1}),
+    ]
 
 
 async def test_a_row_that_failed_to_write_is_kept_for_the_next_flush(
@@ -127,6 +142,23 @@ def test_report_fills_every_day_of_the_period() -> None:
     assert [day.day for day in report.days] == ["2026-10-09", "2026-10-10"]
 
 
+def test_top_models_are_the_five_costliest_in_descending_order_of_spend() -> None:
+    rows = [
+        SpendRow("2026-10-10", f"model-{index}", 1, 10, float(index))
+        for index in range(7)
+    ]
+
+    report = build_report([TODAY], rows, [])
+
+    assert [model.model for model in report.top_models] == [
+        "model-6",
+        "model-5",
+        "model-4",
+        "model-3",
+        "model-2",
+    ]
+
+
 class ScriptedStats:
     def __init__(self) -> None:
         self.asked: list[int] = []
@@ -143,14 +175,19 @@ async def test_stats_route_returns_a_report_per_subscription_and_bounds_the_peri
     admin = SubscriptionAdmin(replace(stack.admin._deps, stats=ScriptedStats()))
     async with api_client(stack, admin) as client:
         ok = await client.get("/agentek/subscriptions/stats?days=1", headers=ADMIN)
-        too_long = await client.get(
-            "/agentek/subscriptions/stats?days=31", headers=ADMIN
-        )
+        bounds = [
+            (
+                await client.get(
+                    f"/agentek/subscriptions/stats?days={days}", headers=ADMIN
+                )
+            ).status_code
+            for days in (0, 31)
+        ]
 
-    assert (ok.status_code, list(ok.json()["subscriptions"]), too_long.status_code) == (
+    assert (ok.status_code, list(ok.json()["subscriptions"]), bounds) == (
         200,
         ["a"],
-        422,
+        [422, 422],
     )
 
 
@@ -212,6 +249,7 @@ async def test_switch_from_a_to_b_is_billed_to_b_and_counted_as_a_failure_of_a(
         reports = await PrismaStatsReader(
             lambda: db.litellm_dailytagspend,
             lambda: db.litellm_agenteksubscriptiondailystat,
+            clock,
         ).report([SUB_A, SUB_B], 3, day_of(clock))
 
         a, b = (reports[sub].days[-1] for sub in ("a", "b"))
@@ -225,3 +263,37 @@ async def test_switch_from_a_to_b_is_billed_to_b_and_counted_as_a_failure_of_a(
         assert (b.requests, b.tokens, b.spend, b.failures) == (3, 1200, 0.5, {})
         assert [model.model for model in reports["b"].top_models] == ["gpt-5.4"]
         assert len(reports["a"].days) == 3
+
+
+class CountingTables:
+    def __init__(self) -> None:
+        self.queries = 0
+
+    async def group_by(self, **_: object) -> list[dict[str, object]]:
+        self.queries += 1
+        return []
+
+    async def find_many(self, **_: object) -> list[object]:
+        return []
+
+
+async def test_a_report_is_reused_within_the_cache_time_and_loaded_again_after_it(
+    clock: FakeClock,
+) -> None:
+    tables = CountingTables()
+    reader = PrismaStatsReader(lambda: tables, lambda: tables, clock)  # type: ignore[arg-type,return-value]
+
+    for step in (0, 10, 50):
+        clock.advance(step)
+        await reader.report([SUB_A], 3, TODAY)
+
+    assert tables.queries == 2
+
+
+async def test_the_subscription_list_shows_requests_in_flight() -> None:
+    stack = seeded("a")
+    assert await stack.admin._deps.slots.reserve("a", "request-1", None, 60.0)
+    async with api_client(stack) as client:
+        listed = await client.get("/agentek/subscriptions", headers=ADMIN)
+
+    assert [item["in_flight"] for item in listed.json()["subscriptions"]] == [1]

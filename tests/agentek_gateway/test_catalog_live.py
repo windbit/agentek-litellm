@@ -6,6 +6,8 @@ from types import SimpleNamespace
 import fakeredis
 import pytest
 
+from agentek_gateway.subscriptions.slots import InMemorySlotStore
+from agentek_gateway.subscriptions.stats_report import EmptyStats
 from agentek_gateway.subscriptions.admin import (
     AdminDeps,
     NewSubscriptionTarget,
@@ -229,6 +231,8 @@ async def test_an_operator_can_sign_in_reauthorize_and_remove_a_subscription_on_
                 usage_providers={PROVIDER: usage},
                 logins={PROVIDER: login},
                 on_changed=lambda: None,
+                slots=InMemorySlotStore(clock),
+                stats=EmptyStats(),
             )
         )
 
@@ -353,6 +357,8 @@ def admin_with_broken_audit(db, store, repo, states, redis, keys, clock):  # typ
             usage_providers={},
             logins={PROVIDER: ScriptedLogin()},
             on_changed=lambda: None,
+            slots=InMemorySlotStore(clock),
+            stats=EmptyStats(),
         )
     )
 

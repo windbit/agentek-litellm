@@ -531,6 +531,8 @@ async def test_a_replica_with_the_old_tokens_does_not_fail_a_subscription_just_r
                     usage_providers={},
                     logins={"chatgpt": OneNewPair()},  # type: ignore[dict-item]
                     on_changed=lambda: None,
+                    slots=InMemorySlotStore(first.clock),
+                    stats=EmptyStats(),
                 )
             )
             await first.runtime.states.apply(first.subscriptions["a"], TokenRevoked())

@@ -19,6 +19,12 @@ class Upkeep(Protocol):
     async def tick(self) -> None: ...
 
 
+class StateTime(Protocol):
+    async def tick(self) -> None: ...
+
+    def lost_lease(self) -> None: ...
+
+
 class LeaderDuties:
     """Runs probes and token upkeep on the replica that holds the lease."""
 
@@ -30,7 +36,7 @@ class LeaderDuties:
         egress: EgressWatcher,
         clock: Clock,
         catalog: Upkeep | None = None,
-        time_in_state: Upkeep | None = None,
+        time_in_state: StateTime | None = None,
     ) -> None:
         self._lease = lease
         self._probes = probes
@@ -51,15 +57,21 @@ class LeaderDuties:
     async def tick(self) -> bool:
         """One pass; False when this replica is not the leader."""
         try:
-            if not await self._lease.hold():
-                return False
+            held = await self._lease.hold()
         except Exception:  # noqa: BLE001
             verbose_proxy_logger.exception("agentek_gateway leader lease failed")
+            held = False
+        if not held:
+            if self._time_in_state:
+                self._time_in_state.lost_lease()
             return False
         try:
-            await self._probes.tick()
             if self._time_in_state:
                 await self._time_in_state.tick()
+        except Exception:  # noqa: BLE001
+            verbose_proxy_logger.exception("agentek_gateway time in state failed")
+        try:
+            await self._probes.tick()
             now = self._clock.now()
             if self._catalog and now - self._last_catalog_at >= COPY_SYNC_INTERVAL_S:
                 self._last_catalog_at = now

@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from typing import Protocol
 
+from prisma.errors import PrismaError
+
 from litellm._logging import verbose_proxy_logger
 
 from .clock import Clock
@@ -16,8 +18,6 @@ from .snapshot import SnapshotCache
 from .telemetry import Telemetry
 
 FLUSH_INTERVAL_S = 60.0
-DUTY_TICK_S = 5.0
-MAX_CREDIT_S = 3 * DUTY_TICK_S
 
 COLUMNS = ("failures", "switches", "state_seconds")
 
@@ -74,7 +74,7 @@ class StatsStore(Protocol):
 
 
 class StatsBuffer:
-    """Counts since the last flush; one row per subscription and UTC day."""
+    """One entry per subscription and UTC day."""
 
     def __init__(self, clock: Clock) -> None:
         self._clock = clock
@@ -124,7 +124,10 @@ class StatsTelemetry:
 
 
 class StateTimeCredit:
-    """Leader duty: credits the time since the previous tick to the current state of every subscription."""
+    """Leader duty: credits the time since the previous tick to the current state of every subscription.
+
+    A tick after a spell without the lease only starts the count: another replica credited that time.
+    """
 
     def __init__(
         self, snapshot: SnapshotCache, buffer: StatsBuffer, clock: Clock
@@ -132,17 +135,20 @@ class StateTimeCredit:
         self._snapshot = snapshot
         self._buffer = buffer
         self._clock = clock
-        self._last = clock.now()
+        self._last: float | None = None
+
+    def lost_lease(self) -> None:
+        self._last = None
 
     async def tick(self) -> None:
         now = self._clock.now()
-        elapsed, self._last = min(now - self._last, MAX_CREDIT_S), now
+        last, self._last = self._last, now
         snapshot = self._snapshot.current
-        if snapshot is None or snapshot.closed or elapsed <= 0:
+        if last is None or snapshot is None or snapshot.closed or now <= last:
             return
         for subscription in snapshot.subscriptions.values():
             self._buffer.credit_state(
-                subscription.id, _state_name(subscription, snapshot, now), elapsed
+                subscription.id, _state_name(subscription, snapshot, now), now - last
             )
 
 
@@ -155,6 +161,13 @@ def _state_name(subscription: Subscription, snapshot: Snapshot, now: float) -> s
 
 class RawDb(Protocol):
     async def execute_raw(self, query: str, *args: object) -> object: ...
+
+
+class NullStatsStore:
+    async def add(
+        self, deltas: Mapping[DayKey, DailyDelta]
+    ) -> dict[DayKey, DailyDelta]:
+        return dict(deltas)
 
 
 class PrismaStatsStore:
@@ -181,7 +194,7 @@ class PrismaStatsStore:
                         )
                     ),
                 )
-            except Exception:  # noqa: BLE001
+            except PrismaError:
                 verbose_proxy_logger.exception(
                     "agentek_gateway statistics row of %s was not written", key[0]
                 )

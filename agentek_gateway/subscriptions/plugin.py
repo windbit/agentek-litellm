@@ -1,7 +1,7 @@
 import asyncio
 import os
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from urllib.parse import quote
 
 from redis import Redis as SyncRedis
@@ -30,7 +30,7 @@ from .leader import LeaderLease
 from .litellm_deployments import PrismaModelStore
 from .model_copies import CopySync
 from .notify import RedisListener, RedisNotifier
-from .ports import PolicyRepo, SubscriptionRepo
+from .ports import PolicyRepo, SlotStore, SubscriptionRepo
 from .prisma_repos import (
     PrismaPolicyRepo,
     PrismaSubscriptionRepo,
@@ -56,6 +56,7 @@ from .runtime import (
 )
 from .state_db import PrismaStateDb
 from .stats import (
+    NullStatsStore,
     PrismaStatsStore,
     StateTimeCredit,
     StatsBuffer,
@@ -63,7 +64,7 @@ from .stats import (
     StatsStore,
     StatsTelemetry,
 )
-from .stats_report import PrismaStatsReader
+from .stats_report import EmptyStats, PrismaStatsReader
 from .subscription_cache import CachedSubscriptionRepo
 from .token_coordination import SyncTokenCoordinator, TokenCoordinator
 
@@ -85,8 +86,8 @@ class Connections:
     repo: SubscriptionRepo
     policy: PolicyRepo
     catalog: Catalog | None = None
-    stats_reader: StatsSource | None = None
-    stats_store: StatsStore | None = None
+    stats_reader: StatsSource = field(default_factory=EmptyStats)
+    stats_store: StatsStore = field(default_factory=NullStatsStore)
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,6 +102,7 @@ class Wiring:
     provider: ChatGPTProvider
     source_repo: SubscriptionRepo
     stats: StatsBuffer
+    slots: SlotStore
 
 
 def redis_url_from_env(environ: Mapping[str, str]) -> str:
@@ -162,6 +164,7 @@ async def start_subscription_runtime() -> None:
         stats_reader=PrismaStatsReader(
             lambda: host.proxy_db().db.litellm_dailytagspend,  # type: ignore[attr-defined]
             lambda: host.proxy_db().db.litellm_agenteksubscriptiondailystat,  # type: ignore[attr-defined]
+            SystemClock(),
         ),
         stats_store=PrismaStatsStore(lambda: host.proxy_db().db),
     )
@@ -196,12 +199,13 @@ async def build_proxy_runtime(
     connections = replace(connections, repo=CachedSubscriptionRepo(source_repo, clock))
     repo = connections.repo
     stored_pairs = CredentialPairs()
+    slot_store = RedisSlotStore(redis, clock, keys.prefix)
     runtime = build_runtime(
         RuntimeDeps(
             clock=clock,
             config=config,
             state_store=store,
-            slot_store=RedisSlotStore(redis, clock, keys.prefix),
+            slot_store=slot_store,
             repo=repo,
             policy=connections.policy,
             providers={PROVIDER_ID: provider},
@@ -214,7 +218,15 @@ async def build_proxy_runtime(
     )
     await runtime.parts.snapshot.refresh()
     wiring = Wiring(
-        runtime, store, connections, keys, transport, provider, source_repo, stats
+        runtime,
+        store,
+        connections,
+        keys,
+        transport,
+        provider,
+        source_repo,
+        stats,
+        slot_store,
     )
     upkeep = await _start_catalog(wiring)
     background = Background(
@@ -228,14 +240,9 @@ async def build_proxy_runtime(
         store=store,
         repo=source_repo,
         pairs=CredentialPairsLoop(stored_pairs, source_repo, connections.credentials),
-        stats=(
-            StatsLoop(stats, connections.stats_store, runtime.parts.snapshot, clock)
-            if connections.stats_store
-            else None
-        ),
+        stats=StatsLoop(stats, connections.stats_store, runtime.parts.snapshot, clock),
     )
-    if background.stats:
-        host.on_shutdown(background.stats.flush)
+    host.on_shutdown(background.stats.flush)
     await background.pairs.refresh_once()
     _start_loops(runtime, background)
     install_refresh_guard(
@@ -333,6 +340,7 @@ async def _start_catalog(wiring: Wiring) -> CatalogUpkeep | None:
             copies=copies,
             settings=catalog.settings,
             usage_providers={PROVIDER_ID: wiring.provider},
+            slots=wiring.slots,
             stats=connections.stats_reader,
             logins={PROVIDER_ID: ChatgptLogin(wiring.transport)},
             on_changed=on_changed,
@@ -351,7 +359,7 @@ class Background:
     store: RedisStateStore
     repo: SubscriptionRepo
     pairs: CredentialPairsLoop
-    stats: StatsLoop | None = None
+    stats: StatsLoop
 
 
 def _start_loops(runtime: SubscriptionRuntime, background: Background) -> None:
@@ -362,9 +370,8 @@ def _start_loops(runtime: SubscriptionRuntime, background: Background) -> None:
         ("leader duties", background.duties.run()),
         ("metrics", background.telemetry.run()),
         ("credential pairs", background.pairs.run()),
+        ("statistics", background.stats.run()),
     ]
-    if background.stats:
-        loops.append(("statistics", background.stats.run()))
     for name, loop in loops:
         verbose_proxy_logger.info("agentek_gateway starting %s loop", name)
         runtime.parts.tasks.spawn(loop)
