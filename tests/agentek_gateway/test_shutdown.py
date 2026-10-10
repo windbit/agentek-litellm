@@ -1,53 +1,51 @@
 import asyncio
-from contextlib import asynccontextmanager
+import inspect
 
-import pytest
-from fastapi import FastAPI
-
-from agentek_gateway.proxy_host import run_on_shutdown
+from agentek_gateway.proxy_host import run_before_proxy_shutdown
 from agentek_gateway.subscriptions.tasks import BackgroundTasks
 
 
-async def test_handler_runs_after_the_apps_own_shutdown() -> None:
+class FakeProxy:
+    def __init__(self, order: list[str]) -> None:
+        self.order = order
+
+    async def proxy_shutdown_event(self) -> None:
+        self.order.append("proxy shutdown")
+
+
+async def test_handler_runs_before_the_proxys_own_shutdown() -> None:
     order: list[str] = []
-
-    @asynccontextmanager
-    async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
-        order.append("start")
-        yield
-        order.append("app shutdown")
-
-    app = FastAPI(lifespan=lifespan)
+    proxy = FakeProxy(order)
 
     async def handler() -> None:
         order.append("handler")
 
-    run_on_shutdown(app, handler)
-    async with app.router.lifespan_context(app):
-        order.append("serving")
+    run_before_proxy_shutdown(proxy, handler)
+    await proxy.proxy_shutdown_event()
 
-    assert order == ["start", "serving", "app shutdown", "handler"]
+    assert order == ["handler", "proxy shutdown"]
 
 
-async def test_handler_runs_when_the_apps_shutdown_fails() -> None:
-    ran = asyncio.Event()
-
-    @asynccontextmanager
-    async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
-        yield
-        raise RuntimeError("teardown failed")
-
-    app = FastAPI(lifespan=lifespan)
+async def test_proxy_shutdown_still_runs_when_the_handler_fails() -> None:
+    order: list[str] = []
+    proxy = FakeProxy(order)
 
     async def handler() -> None:
-        ran.set()
+        raise RuntimeError("flush failed")
 
-    run_on_shutdown(app, handler)
-    with pytest.raises(RuntimeError):
-        async with app.router.lifespan_context(app):
-            pass
+    run_before_proxy_shutdown(proxy, handler)
+    await proxy.proxy_shutdown_event()
 
-    assert ran.is_set()
+    assert order == ["proxy shutdown"]
+
+
+def test_the_proxy_calls_the_function_we_wrap_by_global_name() -> None:
+    from litellm.proxy import proxy_server
+
+    assert inspect.iscoroutinefunction(proxy_server.proxy_shutdown_event)
+    assert "await proxy_shutdown_event()" in inspect.getsource(
+        proxy_server.proxy_startup_event
+    )
 
 
 async def test_drain_waits_for_work_that_finishes_in_time() -> None:
