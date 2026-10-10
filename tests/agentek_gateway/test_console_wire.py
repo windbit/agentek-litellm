@@ -36,6 +36,7 @@ SUBSCRIPTION_FIELDS = {
     "enabled",
     "priority",
     "concurrency_limit",
+    "in_flight",
     "state",
     "limits",
 }
