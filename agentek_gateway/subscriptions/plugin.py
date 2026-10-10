@@ -67,9 +67,10 @@ def redis_url_from_env(environ: Mapping[str, str]) -> str:
         return url
     host = environ.get("REDIS_HOST", "localhost")
     port = environ.get("REDIS_PORT", "6379")
+    database = environ.get("REDIS_DB", "0")
     password = environ.get("REDIS_PASSWORD")
     credentials = f":{quote(password, safe='')}@" if password else ""
-    return f"redis://{credentials}{host}:{port}"
+    return f"redis://{credentials}{host}:{port}/{database}"
 
 
 def redis_from_env(environ: Mapping[str, str]) -> Redis:
