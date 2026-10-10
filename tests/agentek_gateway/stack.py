@@ -23,7 +23,7 @@ from agentek_gateway.subscriptions.memory import (
     InMemorySubscriptionRepo,
 )
 from agentek_gateway.subscriptions.model import Subscription
-from agentek_gateway.subscriptions.ports import SlotStore, StateStore
+from agentek_gateway.subscriptions.ports import PolicyRepo, SlotStore, StateStore
 from agentek_gateway.subscriptions.providers.chatgpt import ChatGPTProvider
 from agentek_gateway.subscriptions.providers.observer import (
     install_error_observer,
@@ -214,6 +214,7 @@ async def _build_stack(
     config: GatewayConfig | None = None,
     num_retries: int = 4,
     priorities: dict[str, int] | None = None,
+    policy: PolicyRepo | None = None,
 ) -> Stack:
     callbacks_before = saved_callbacks()
     mock = MockCodex()
@@ -255,7 +256,7 @@ async def _build_stack(
             state_store=state_store,
             slot_store=slot_store,
             repo=shared.repo,
-            policy=InMemoryPolicyRepo(),
+            policy=policy or InMemoryPolicyRepo(),
             providers={"chatgpt": provider},
             model_list=lambda: router.model_list,
             telemetry=switches,

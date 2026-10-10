@@ -29,7 +29,14 @@ from .importer import CredentialImporter
 from .leader import LeaderLease
 from .litellm_deployments import PrismaModelStore
 from .model_copies import CopySync
-from .notify import RedisListener, RedisNotifier
+from .notify import Notifier, RedisListener, RedisNotifier
+from .policy_admin import (
+    POLICY_ADMIN_SLOT,
+    PolicyAdmin,
+    PolicyDeps,
+    PrismaPolicyUnit,
+)
+from .policy_cache import CachedPolicyRepo, PolicyVersions, RedisPolicyVersions
 from .ports import PolicyRepo, SubscriptionRepo
 from .prisma_repos import (
     PrismaPolicyRepo,
@@ -88,6 +95,8 @@ class Wiring:
     transport: HttpxProbeTransport
     provider: ChatGPTProvider
     source_repo: SubscriptionRepo
+    policy_versions: PolicyVersions
+    notifier: Notifier
 
 
 def redis_url_from_env(environ: Mapping[str, str]) -> str:
@@ -160,12 +169,9 @@ async def build_proxy_runtime(
     config = config_from_env(environ)
     redis = connections.redis
     keys = Keys(environ.get(ENV_REDIS_PREFIX, DEFAULT_REDIS_PREFIX))
+    notifier = RedisNotifier(redis, keys.changes)
     store = RedisStateStore(
-        redis,
-        PrismaStateDb(host.state_table),
-        clock,
-        keys,
-        RedisNotifier(redis, keys.changes),
+        redis, PrismaStateDb(host.state_table), clock, keys, notifier
     )
     await store.load_durable()
     transport = HttpxProbeTransport()
@@ -175,6 +181,7 @@ async def build_proxy_runtime(
     connections = replace(connections, repo=CachedSubscriptionRepo(source_repo, clock))
     repo = connections.repo
     stored_pairs = CredentialPairs()
+    policy_versions = RedisPolicyVersions(redis, keys.policy_version)
     runtime = build_runtime(
         RuntimeDeps(
             clock=clock,
@@ -182,7 +189,7 @@ async def build_proxy_runtime(
             state_store=store,
             slot_store=RedisSlotStore(redis, clock, keys.prefix),
             repo=repo,
-            policy=connections.policy,
+            policy=CachedPolicyRepo(connections.policy, policy_versions, clock),
             providers={PROVIDER_ID: provider},
             model_list=host.model_list,
             provider_settings=(
@@ -192,7 +199,17 @@ async def build_proxy_runtime(
         )
     )
     await runtime.parts.snapshot.refresh()
-    wiring = Wiring(runtime, store, connections, keys, transport, provider, source_repo)
+    wiring = Wiring(
+        runtime,
+        store,
+        connections,
+        keys,
+        transport,
+        provider,
+        source_repo,
+        policy_versions,
+        notifier,
+    )
     upkeep = await _start_catalog(wiring)
     background = Background(
         listener=RedisListener(
@@ -308,6 +325,16 @@ async def _start_catalog(wiring: Wiring) -> CatalogUpkeep | None:
     )
     await upkeep.import_at_start()
     ADMIN_SLOT.admin = admin
+    POLICY_ADMIN_SLOT.admin = PolicyAdmin(
+        PolicyDeps(
+            repo=source_repo,
+            policy=connections.policy,
+            unit=PrismaPolicyUnit(lambda: ProxyHost().proxy_db().db),  # type: ignore[arg-type,return-value]
+            versions=wiring.policy_versions,
+            on_changed=on_changed,
+            announce=wiring.notifier.publish,
+        )
+    )
     return upkeep
 
 

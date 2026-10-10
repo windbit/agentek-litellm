@@ -16,6 +16,8 @@ from .admin import (
     ReauthorizeTarget,
     SubscriptionAdmin,
 )
+from .policy import PolicyError, Visibility, VisibilityKind, parse_subject
+from .policy_admin import PolicyAdmin, PolicyChange
 from .providers.chatgpt_login import ProviderLoginError
 
 T = TypeVar("T")
@@ -35,6 +37,7 @@ Priority = Annotated[int, Field(strict=True, ge=-INT4_MAX, le=INT4_MAX)]
 Limit = Annotated[int, Field(strict=True, ge=1, le=INT4_MAX)]
 
 Admin = Callable[[], SubscriptionAdmin | None]
+PolicyAdminGetter = Callable[[], PolicyAdmin | None]
 Auth = Annotated[UserAPIKeyAuth, Depends(require_proxy_admin)]
 
 
@@ -47,6 +50,31 @@ class SettingsBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     priority: Priority | None = None
     max_concurrency: Limit | None = None
+
+
+class VisibilityBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: VisibilityKind
+    subjects: list[str] = Field(default_factory=list)
+
+
+class PolicyBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    visibility: VisibilityBody | None = None
+    bound_subjects: list[str] | None = None
+
+    def change(self) -> PolicyChange:
+        """Raises PolicyError for a malformed subject."""
+        visibility = None
+        if self.visibility is not None:
+            visibility = Visibility(
+                self.visibility.kind,
+                frozenset(parse_subject(token) for token in self.visibility.subjects),
+            )
+        bound = None
+        if self.bound_subjects is not None:
+            bound = frozenset(parse_subject(token) for token in self.bound_subjects)
+        return PolicyChange(visibility=visibility, bound=bound)
 
 
 class ProviderBody(BaseModel):
@@ -88,8 +116,18 @@ def actor_of(auth: Auth, request: Request) -> str:
 Actor = Annotated[str, Depends(actor_of)]
 
 
-def subscriptions_router(admin: Admin) -> APIRouter:
+def subscriptions_router(
+    admin: Admin, policy_admin: PolicyAdminGetter = lambda: None
+) -> APIRouter:
     router = APIRouter()
+
+    def policies() -> PolicyAdmin:
+        current = policy_admin()
+        if current is None:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE, "Subscription pool is starting"
+            )
+        return current
 
     def service() -> SubscriptionAdmin:
         current = admin()
@@ -139,6 +177,24 @@ def subscriptions_router(admin: Admin) -> APIRouter:
         if not result.done or result.subscription is None:
             return {"status": "pending"}
         return {"status": "done", "subscription": result.subscription.as_json()}
+
+    @router.get("/policy")
+    async def get_policy() -> dict[str, object]:
+        views = await _guarded(policies().overview())
+        return {"subscriptions": [view.as_json() for view in views]}
+
+    @router.put("/{subscription_id}/policy")
+    async def update_policy(
+        subscription_id: str, body: PolicyBody, actor: Actor
+    ) -> dict[str, object]:
+        try:
+            change = body.change()
+        except PolicyError as error:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)
+            ) from error
+        view = await _guarded(policies().update(actor, subscription_id, change))
+        return view.as_json()
 
     @router.get("/{subscription_id}")
     async def get_subscription(subscription_id: str) -> dict[str, object]:

@@ -439,3 +439,31 @@ async def test_reconcile_restores_a_durable_state_from_the_database_after_flusha
         await store.reconcile(["a"])
 
         assert (await redis.get(Keys("live:").state("a"))) is not None
+
+
+async def test_policy_writer_creates_then_updates_the_row_and_counts_versions() -> None:
+    from agentek_gateway.subscriptions.policy import SubscriptionPolicy
+    from agentek_gateway.subscriptions.policy_admin import PrismaPolicyWriter
+
+    async with live_db() as db:
+        await add_subscription(db, "a")
+        table = db.litellm_agenteksubscriptionpolicy
+        writer = PrismaPolicyWriter(lambda: table)
+        space = Subject(SubjectKind.SPACE, "s1")
+        employee = Subject(SubjectKind.EMPLOYEE, "e1")
+        empty = await writer.read("a")
+
+        await writer.write("a", SubscriptionPolicy(Visibility(), frozenset({space})))
+        await writer.write(
+            "a",
+            SubscriptionPolicy(
+                Visibility(VisibilityKind.ONLY, frozenset({space, employee})),
+                frozenset({space}),
+            ),
+        )
+        stored = await writer.read("a")
+        loaded = await PrismaPolicyRepo(lambda: table).load_policy()
+
+        assert empty == SubscriptionPolicy()
+        assert stored.visibility.subjects == frozenset({space, employee})
+        assert (loaded.bindings["a"], loaded.version) == (frozenset({space}), 2)

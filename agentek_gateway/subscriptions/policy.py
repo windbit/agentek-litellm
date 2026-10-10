@@ -1,3 +1,4 @@
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
@@ -48,6 +49,16 @@ class KeySubjects:
         return self.narrow | self.broad
 
 
+class PolicyError(ValueError):
+    """A visibility or binding the policy refuses; the message names the reason for the operator."""
+
+
+@dataclass(frozen=True, slots=True)
+class SubscriptionPolicy:
+    visibility: Visibility = Visibility()
+    bound: frozenset[Subject] = frozenset()
+
+
 @dataclass(frozen=True, slots=True)
 class Policy:
     visibility: Mapping[SubscriptionId, Visibility] = field(default_factory=dict)
@@ -56,6 +67,49 @@ class Policy:
 
 
 SUBJECTS_METADATA_FIELD = "agentek_subjects"
+SUBJECT_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+
+
+def subject_token(subject: Subject) -> str:
+    return f"{subject.kind.value}:{subject.id}"
+
+
+def parse_subject(token: str) -> Subject:
+    kind, separator, identifier = token.partition(":")
+    try:
+        subject_kind = SubjectKind(kind)
+    except ValueError:
+        raise PolicyError(f"unknown subject kind in {token!r}") from None
+    if not separator or not SUBJECT_ID_PATTERN.match(identifier):
+        raise PolicyError(f"invalid subject {token!r}")
+    return Subject(subject_kind, identifier)
+
+
+def validate_subscription_policy(policy: SubscriptionPolicy) -> None:
+    """Rejects an empty `only` list and a binding the visibility contradicts."""
+    visibility, bound = policy.visibility, policy.bound
+    match visibility.kind:
+        case VisibilityKind.ALL:
+            if visibility.subjects:
+                raise PolicyError("visibility 'all' takes no subjects")
+        case VisibilityKind.ONLY:
+            if not visibility.subjects:
+                raise PolicyError("visibility 'only' needs at least one subject")
+            outside = bound - visibility.subjects
+            if outside:
+                raise PolicyError(
+                    f"binding to {_names(outside)} contradicts visibility 'only'"
+                )
+        case VisibilityKind.ALL_EXCEPT:
+            excluded = bound & visibility.subjects
+            if excluded:
+                raise PolicyError(
+                    f"binding to {_names(excluded)} contradicts visibility 'all_except'"
+                )
+
+
+def _names(subjects: frozenset[Subject]) -> str:
+    return ", ".join(sorted(subject_token(subject) for subject in subjects))
 
 
 def key_subjects_from_metadata(key_metadata: object) -> KeySubjects | None:
@@ -96,8 +150,8 @@ def eligible_tiers(
 ) -> tuple[frozenset[SubscriptionId], frozenset[SubscriptionId]]:
     """Returns (own bound subscriptions, shared subscriptions) the key may use, before state checks.
 
-    The narrowest binding level that has any bound subscription defines the own tier; subscriptions bound to
-    anyone else are never eligible. Shared subscriptions are unbound and visible to the key.
+    The narrowest binding level that has any bound subscription defines the own tier, minus the subscriptions
+    whose visibility excludes the key; subscriptions bound to anyone else are never eligible. Shared subscriptions are unbound and visible to the key.
     """
     own = _own_bound(policy, subscription_ids, subjects)
     bound_anywhere = frozenset(
@@ -125,5 +179,9 @@ def _own_bound(
             if policy.bindings.get(sub_id, frozenset()) & level
         )
         if bound:
-            return bound
+            return frozenset(
+                sub_id
+                for sub_id in bound
+                if is_visible(policy.visibility.get(sub_id, Visibility()), subjects)
+            )
     return frozenset()

@@ -36,6 +36,10 @@ class Keys:
         return f"{self._prefix}changes"
 
     @property
+    def policy_version(self) -> str:
+        return f"{self._prefix}policy-version"
+
+    @property
     def probed(self) -> str:
         return f"{self._prefix}probed"
 

@@ -10,7 +10,7 @@ from .model import (
     SubscriptionId,
     UsageRecord,
 )
-from .policy import Policy
+from .policy import Policy, SubscriptionPolicy
 
 
 class InMemorySubscriptionRepo:
@@ -40,6 +40,31 @@ class InMemoryPolicyRepo:
 
     async def load_policy(self) -> Policy:
         return self.policy
+
+
+class InMemoryPolicyBook:
+    """Policy rows by subscription; reads like the policy repository and writes like the policy writer."""
+
+    def __init__(self) -> None:
+        self.rows: dict[SubscriptionId, SubscriptionPolicy] = {}
+        self.loads = 0
+
+    async def load_policy(self) -> Policy:
+        self.loads += 1
+        return Policy(
+            visibility={sub_id: row.visibility for sub_id, row in self.rows.items()},
+            bindings={
+                sub_id: row.bound for sub_id, row in self.rows.items() if row.bound
+            },
+        )
+
+    async def read(self, subscription_id: SubscriptionId) -> SubscriptionPolicy:
+        return self.rows.get(subscription_id, SubscriptionPolicy())
+
+    async def write(
+        self, subscription_id: SubscriptionId, policy: SubscriptionPolicy
+    ) -> None:
+        self.rows[subscription_id] = policy
 
 
 class InMemoryStateStore:
