@@ -6,6 +6,7 @@ from .clock import Clock
 from .compat import StrEnum, assert_never
 from .config import GatewayConfig
 from .events import (
+    Event,
     AccountDeactivated,
     LimitExhausted,
     LimitsObserved,
@@ -26,7 +27,7 @@ from .providers.base import (
     Unclassified,
 )
 from .providers.redact import redact_for_log
-from .service import StateService
+from .service import TRANSIENT_STORE_ERRORS, StateService
 from .signals import SignalProcessor
 from .slots import Reservation
 
@@ -54,23 +55,29 @@ class FailedAttempt:
 
 
 class UsageWriteGate:
-    """Window readings repeat on nearly every response; a reading is written when it changed (not more than every few seconds) or went stale."""
+    """Window readings repeat on nearly every response: one is written when it changed (at most every few seconds) or went stale."""
 
     def __init__(self, clock: Clock) -> None:
         self._clock = clock
         self._last: dict[SubscriptionId, tuple[float, Limits]] = {}
 
-    def due(self, subscription_id: SubscriptionId, limits: Limits) -> bool:
+    def claim(self, subscription_id: SubscriptionId, limits: Limits) -> bool:
+        """True when this reading is to be written; the claim is taken before the write, so concurrent readings write once."""
         last = self._last.get(subscription_id)
-        if last is None:
-            return True
-        age_s = self._clock.now() - last[0]
-        if limits == last[1]:
-            return age_s >= USAGE_WRITE_REFRESH_S
-        return age_s >= USAGE_WRITE_MIN_INTERVAL_S
+        now = self._clock.now()
+        if last is not None:
+            wait_s = (
+                USAGE_WRITE_REFRESH_S
+                if limits == last[1]
+                else USAGE_WRITE_MIN_INTERVAL_S
+            )
+            if now - last[0] < wait_s:
+                return False
+        self._last[subscription_id] = (now, limits)
+        return True
 
-    def written(self, subscription_id: SubscriptionId, limits: Limits) -> None:
-        self._last[subscription_id] = (self._clock.now(), limits)
+    def forget(self, subscription_id: SubscriptionId) -> None:
+        self._last.pop(subscription_id, None)
 
 
 class FailureRouter:
@@ -93,36 +100,38 @@ class FailureRouter:
 
     def hold_now(self, attempt: FailedAttempt, error: ErrorClass) -> None:
         """A failure that blocks the subscription is known to this process before anything is awaited."""
-        subscription = attempt.subscription
-        match error:
-            case LimitReached(window=window, reset_at=reset_at):
-                self._states.hold(subscription, LimitExhausted(window, reset_at))
-            case AccountBanned():
-                self._states.hold(subscription, AccountDeactivated())
-            case _:
-                return
+        event = state_event_of(error)
+        if event is not None and not isinstance(error, AuthRejected):
+            self._states.hold(attempt.subscription, event)
 
     async def handle(
         self, provider: SubscriptionProvider, attempt: FailedAttempt, error: ErrorClass
     ) -> SwitchReason | None:
-        await self._record_limits(provider, attempt)
+        """The state change goes first and is queued for retry when Redis is down; usage windows are written after it."""
+        try:
+            return await self._handle_error(attempt, error)
+        finally:
+            await self._record_limits(provider, attempt)
+
+    async def _handle_error(
+        self, attempt: FailedAttempt, error: ErrorClass
+    ) -> SwitchReason | None:
         subscription = attempt.subscription
+        event = state_event_of(error)
+        if isinstance(error, AuthRejected) and await self._recently_refreshed(
+            subscription
+        ):
+            event = None
+        if event is not None:
+            applied = await self._states.record(subscription, event)
+            for note in applied.notes:
+                self._log_implausible(subscription, note)
         match error:
-            case LimitReached(window=window, reset_at=reset_at):
-                applied = await self._states.record(
-                    subscription, LimitExhausted(window, reset_at)
-                )
-                for note in applied.notes:
-                    self._log_implausible(subscription, note)
+            case LimitReached():
                 return SwitchReason.LIMIT
             case AuthRejected():
-                if not await self._store.recently_refreshed(
-                    subscription.credential_name
-                ):
-                    await self._states.record(subscription, Unauthorized())
                 return SwitchReason.AUTH
             case AccountBanned():
-                await self._states.record(subscription, AccountDeactivated())
                 return SwitchReason.BANNED
             case ModelNotSupported():
                 await self._store.mark_model_unsupported(
@@ -175,8 +184,9 @@ class FailureRouter:
         subscription: Subscription,
         headers: Headers,
     ) -> Limits | None:
+        """Window readings of a response; a failed write is logged and never fails the request."""
         limits = self._read_limits(provider, headers)
-        if limits and self._usage_gate.due(subscription.id, limits):
+        if limits and self._usage_gate.claim(subscription.id, limits):
             await self._write_usage(subscription.id, limits)
         return limits
 
@@ -187,6 +197,12 @@ class FailureRouter:
         if limits:
             await self._write_usage(attempt.subscription.id, limits)
 
+    async def _recently_refreshed(self, subscription: Subscription) -> bool:
+        try:
+            return await self._store.recently_refreshed(subscription.credential_name)
+        except TRANSIENT_STORE_ERRORS:
+            return False
+
     def _read_limits(
         self, provider: SubscriptionProvider, headers: Headers
     ) -> Limits | None:
@@ -196,10 +212,17 @@ class FailureRouter:
     async def _write_usage(
         self, subscription_id: SubscriptionId, limits: Limits
     ) -> None:
-        await self._store.write_usage(
-            subscription_id, UsageRecord(limits, self._clock.now())
-        )
-        self._usage_gate.written(subscription_id, limits)
+        try:
+            await self._store.write_usage(
+                subscription_id, UsageRecord(limits, self._clock.now())
+            )
+        except TRANSIENT_STORE_ERRORS as error:
+            self._usage_gate.forget(subscription_id)
+            verbose_proxy_logger.warning(
+                "agentek_gateway usage windows of %s were not written (%s)",
+                subscription_id,
+                type(error).__name__,
+            )
 
     @staticmethod
     def _log_implausible(subscription: Subscription, note: ImplausibleReset) -> None:
@@ -208,3 +231,15 @@ class FailureRouter:
             note.reset_at,
             subscription.name,
         )
+
+
+def state_event_of(error: ErrorClass) -> Event | None:
+    match error:
+        case LimitReached(window=window, reset_at=reset_at):
+            return LimitExhausted(window, reset_at)
+        case AuthRejected():
+            return Unauthorized()
+        case AccountBanned():
+            return AccountDeactivated()
+        case _:
+            return None

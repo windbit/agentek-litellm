@@ -16,7 +16,6 @@ from .ports import StateStore, SubscriptionRepo
 from .service import StateService
 
 COMMON_CAUSE_MIN_FAILED = 2
-SERIES_RESET_MIN_INTERVAL_S = 1.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,15 +56,12 @@ class SignalProcessor:
         self._states = states
         self._clock = clock
         self._config = config
-        self._series_dirty: set[str] = set()
-        self._series_reset_at: dict[str, float] = {}
 
     async def on_unclassified_error(
         self, subscription: Subscription, *, immediate: bool
     ) -> UnclassifiedOutcome:
         """Records the error; on a shared cause lifts the series blocks of the route's subscriptions instead of blocking."""
         tuning = self._config.tuning_for(subscription.provider)
-        self._series_dirty.add(subscription.id)
         count = await self._store.record_unclassified(
             subscription.id, tuning.series_window_s
         )
@@ -87,21 +83,10 @@ class SignalProcessor:
     async def on_success(
         self, subscription: Subscription, limits: Limits | None = None
     ) -> None:
-        await self._reset_series(subscription)
+        await self._store.reset_series(subscription.id)
         await self._states.observe(subscription, Succeeded())
         if limits and (limits.five_hour or limits.weekly):
             await self._states.observe(subscription, LimitsObserved(limits))
-
-    async def _reset_series(self, subscription: Subscription) -> None:
-        """Success ends the error series; per subscription this reaches Redis at most once a second unless this process added to the series."""
-        now = self._clock.now()
-        reset_at = self._series_reset_at.get(subscription.id)
-        recent = reset_at is not None and now - reset_at < SERIES_RESET_MIN_INTERVAL_S
-        if recent and subscription.id not in self._series_dirty:
-            return
-        self._series_dirty.discard(subscription.id)
-        self._series_reset_at[subscription.id] = now
-        await self._store.reset_series(subscription.id)
 
     async def _route_picture(
         self, route: Route, window_s: float

@@ -53,6 +53,7 @@ class SubscriptionRuntime:
 def build_runtime(deps: RuntimeDeps) -> SubscriptionRuntime:
     config, clock, store = deps.config, deps.clock, deps.state_store
     ttl_s = config.defaults.slot_ttl_s
+    ledger = SlotLedger(deps.slot_store, clock, ttl_s)
     snapshot = SnapshotCache(
         SnapshotSources(
             repo=deps.repo,
@@ -60,6 +61,7 @@ def build_runtime(deps: RuntimeDeps) -> SubscriptionRuntime:
             store=store,
             slots=deps.slot_store,
             model_list=deps.model_list,
+            local_in_flight=ledger.in_flight_here,
         ),
         clock,
         deps.timing,
@@ -79,7 +81,7 @@ def build_runtime(deps: RuntimeDeps) -> SubscriptionRuntime:
         config=config,
         snapshot=snapshot,
         attempts=AttemptTracker(clock, ttl_s),
-        ledger=SlotLedger(deps.slot_store, clock, ttl_s),
+        ledger=ledger,
         sticky=StickyBook(
             store, clock, config.defaults.sticky_ttl_s, LOCAL_STICKY_TTL_S
         ),

@@ -10,6 +10,8 @@ from .model import StateRecord, Subscription, SubscriptionId, initial_record
 from .ports import PolicyRepo, SlotStore, StateStore, SubscriptionRepo
 from .selection import Snapshot, subscription_of
 
+T = TypeVar("T")
+
 Deployment = Mapping[str, object]
 ModelList = Callable[[], Sequence[Deployment]]
 
@@ -23,6 +25,7 @@ class SnapshotSources:
     store: StateStore
     slots: SlotStore
     model_list: ModelList = EMPTY_MODEL_LIST
+    local_in_flight: Callable[[], Mapping[SubscriptionId, int]] = dict
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +82,7 @@ class SnapshotCache:
         self._loaded_at: float | None = None
         self._directory: tuple[float, Sequence[Subscription]] | None = None
         self._known: dict[SubscriptionId, KnownState] = {}
+        self._part_read_at: dict[str, float] = {}
         self._wake = asyncio.Event()
 
     @property
@@ -95,6 +99,12 @@ class SnapshotCache:
 
     def request_refresh(self) -> None:
         self._wake.set()
+
+    def is_current(self) -> bool:
+        """True while the picture was reloaded within two intervals and no change notification is waiting to be read."""
+        if self._loaded_at is None or self._wake.is_set():
+            return False
+        return self._clock.now() - self._loaded_at <= 2 * self._timing.interval_s
 
     def local_record(self, subscription_id: SubscriptionId) -> StateRecord | None:
         """None before the first load; a subscription without a stored state reads as a fresh ACTIVE one."""
@@ -130,7 +140,7 @@ class SnapshotCache:
     def _with_known(
         self, states: Mapping[SubscriptionId, StateRecord]
     ) -> Mapping[SubscriptionId, StateRecord]:
-        """Redis wins once it has a state at least as new as ours; until then, and for a grace after our own write, ours stands."""
+        """Redis wins while its state is newer than ours; a state ours is as new as keeps standing in for a Redis that lost it."""
         now = self._clock.now()
         merged = dict(states)
         kept = {}
@@ -141,11 +151,13 @@ class SnapshotCache:
                 else self._timing.held_ttl_s
             )
             stored = merged.get(sub_id)
-            if now - known.at < ttl_s and (
-                stored is None or stored.version < known.record.version
+            if now - known.at >= ttl_s or (
+                stored is not None and stored.version > known.record.version
             ):
+                continue
+            kept[sub_id] = known
+            if stored is None or stored.version < known.record.version:
                 merged[sub_id] = known.record
-                kept[sub_id] = known
         self._known = kept
         return merged
 
@@ -154,6 +166,7 @@ class SnapshotCache:
         directory = await self._subscriptions()
         ids = [subscription.id for subscription in directory]
         previous = self._snapshot
+        started_here = dict(sources.local_in_flight())
         states, *optional = await asyncio.gather(
             sources.store.read_states(ids),
             sources.store.read_all_usage(),
@@ -164,24 +177,16 @@ class SnapshotCache:
         )
         if isinstance(states, BaseException):
             raise states
-        usage = _kept_on_failure(
+        usage = self._kept_on_failure(
             "usage windows", optional[0], previous.usage if previous else {}
         )
-        unsupported = _kept_on_failure(
+        unsupported = self._kept_on_failure(
             "unsupported models",
             optional[1],
             previous.unsupported if previous else frozenset(),
         )
-        flags = _kept_on_failure(
-            "enabled flags",
-            optional[2],
-            (
-                {sub_id: sub.enabled for sub_id, sub in previous.subscriptions.items()}
-                if previous
-                else {}
-            ),
-        )
-        in_flight = _kept_on_failure(
+        flags = self._flags_or_database(optional[2])
+        in_flight = self._kept_on_failure(
             "in-flight counts", optional[3], previous.in_flight if previous else {}
         )
         subscriptions = [
@@ -199,6 +204,7 @@ class SnapshotCache:
             policy=policy,
             unsupported=unsupported,
             subscription_models=frozenset(),
+            local_in_flight=started_here,
         )
         snapshot = replace(
             draft,
@@ -207,6 +213,37 @@ class SnapshotCache:
         self._snapshot = snapshot
         self._loaded_at = self._clock.now()
         return snapshot
+
+    def _kept_on_failure(self, what: str, value: T | BaseException, previous: T) -> T:
+        """One slow read must not age the whole snapshot; the previous value stands in until it is older than max_stale_s."""
+        now = self._clock.now()
+        if not isinstance(value, BaseException):
+            self._part_read_at[what] = now
+            return value
+        if isinstance(value, asyncio.CancelledError):
+            raise value
+        if now - self._part_read_at.setdefault(what, now) > self._timing.max_stale_s:
+            raise value
+        verbose_proxy_logger.warning(
+            "agentek_gateway snapshot keeps the previous %s (%s)",
+            what,
+            type(value).__name__,
+        )
+        return previous
+
+    def _flags_or_database(
+        self, flags: Mapping[SubscriptionId, bool] | BaseException
+    ) -> Mapping[SubscriptionId, bool]:
+        """The database row is the source of truth for enabled; the Redis flags only speed a change up."""
+        if not isinstance(flags, BaseException):
+            return flags
+        if isinstance(flags, asyncio.CancelledError):
+            raise flags
+        verbose_proxy_logger.warning(
+            "agentek_gateway enabled flags unreadable (%s), using the database",
+            type(flags).__name__,
+        )
+        return {}
 
     async def run(self) -> None:
         while True:
@@ -230,20 +267,3 @@ class SnapshotCache:
         listed = await self._sources.repo.list_subscriptions()
         self._directory = (now, listed)
         return listed
-
-
-T = TypeVar("T")
-
-
-def _kept_on_failure(what: str, value: T | BaseException, previous: T) -> T:
-    """One slow or failed read must not age the whole snapshot toward closing the pool; the previous value stands in."""
-    if not isinstance(value, BaseException):
-        return value
-    if isinstance(value, asyncio.CancelledError):
-        raise value
-    verbose_proxy_logger.warning(
-        "agentek_gateway snapshot keeps the previous %s (%s)",
-        what,
-        type(value).__name__,
-    )
-    return previous

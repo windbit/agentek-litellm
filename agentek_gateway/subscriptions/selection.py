@@ -27,6 +27,7 @@ class Snapshot:
     policy: Policy
     unsupported: frozenset[tuple[SubscriptionId, str]]
     subscription_models: frozenset[str]
+    local_in_flight: Mapping[SubscriptionId, int] = field(default_factory=dict)
     closed: bool = False
     by_credential: Mapping[str, SubscriptionId] = field(init=False)
 
@@ -216,10 +217,11 @@ def _order_key(
 def _load(
     subscription: Subscription, request: SelectionRequest, snapshot: Snapshot
 ) -> float:
-    """The reloaded count is up to a second old; what this process has started since then counts at once."""
-    in_flight = max(
-        snapshot.in_flight.get(subscription.id, 0),
-        request.in_flight_here.get(subscription.id, 0),
+    """The reloaded count is up to a second old; what this process started since that reload comes on top of it."""
+    started_here = request.in_flight_here.get(subscription.id, 0)
+    started_before_reload = snapshot.local_in_flight.get(subscription.id, 0)
+    in_flight = snapshot.in_flight.get(subscription.id, 0) + max(
+        0, started_here - started_before_reload
     )
     if subscription.concurrency_limit:
         return in_flight / subscription.concurrency_limit

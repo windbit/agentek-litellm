@@ -166,8 +166,12 @@ async def test_chat_binding_store_outage_does_not_stop_routing_on_the_last_snaps
 
 
 class UnreadableUsage(RedisStateStore):
+    broken = True
+
     async def read_all_usage(self):  # type: ignore[no-untyped-def]
-        raise TimeoutError("Timeout reading from redis")
+        if self.broken:
+            raise TimeoutError("Timeout reading from redis")
+        return await super().read_all_usage()
 
 
 async def test_unreadable_usage_windows_do_not_age_the_snapshot_toward_closing_the_pool() -> (
@@ -193,3 +197,15 @@ async def test_unreadable_states_do_age_the_snapshot_toward_closing_the_pool() -
     plain.clock.advance(STALE_AFTER_S + 1)
 
     assert snapshot.current is not None and snapshot.current.closed
+
+
+async def test_unreadable_usage_windows_close_the_pool_after_max_stale() -> None:
+    plain = plain_runtime(["a"], store_class=UnreadableUsage)
+    snapshot = plain.runtime.parts.snapshot
+    plain.store.broken = False  # type: ignore[attr-defined]
+    await snapshot.refresh()
+    plain.store.broken = True  # type: ignore[attr-defined]
+    plain.clock.advance(61)
+
+    with pytest.raises(TimeoutError):
+        await snapshot.refresh()
