@@ -67,6 +67,7 @@ def plain_runtime(
     db: InMemoryStateDb | None = None,
     timing: SnapshotTiming | None = None,
     subscriptions: list[Subscription] | None = None,
+    repo: InMemorySubscriptionRepo | None = None,
 ) -> Plain:
     clock = clock or FakeClock()
     server = server or fakeredis.FakeServer()
@@ -78,7 +79,7 @@ def plain_runtime(
     deployments = [deployment(sub_id) for sub_id in sub_ids]
     if shared:
         deployments.append(deployment(None))
-    repo = InMemorySubscriptionRepo(subs)
+    repo = repo or InMemorySubscriptionRepo(subs)
     runtime = build_runtime(
         RuntimeDeps(
             clock=clock,

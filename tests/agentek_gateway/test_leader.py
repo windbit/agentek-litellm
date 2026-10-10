@@ -112,3 +112,21 @@ async def test_egress_is_measured_every_ten_minutes() -> None:
     await duties.tick()
 
     assert egress.ticks == 2
+
+
+class UnreachableLease:
+    async def hold(self) -> bool:
+        raise ConnectionError("redis down")
+
+
+async def test_a_lease_that_cannot_be_checked_is_not_reported_as_leadership() -> None:
+    upkeep, _ = build_upkeep(["a"], expires_in_s=60)
+    probes, refresher, egress = Counting(), Counting(), Counting()
+    duties = LeaderDuties(UnreachableLease(), probes, refresher, egress, FakeClock())  # type: ignore[arg-type]
+
+    assert (await duties.tick(), probes.ticks, refresher.ticks, egress.ticks) == (
+        False,
+        0,
+        0,
+        0,
+    )

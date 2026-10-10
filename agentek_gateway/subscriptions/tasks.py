@@ -15,6 +15,10 @@ class BackgroundTasks:
         self._running.add(task)
         task.add_done_callback(self._finished)
 
+    @property
+    def running(self) -> tuple[asyncio.Task[object], ...]:
+        return tuple(self._running)
+
     async def cancel_all(self) -> None:
         running = tuple(self._running)
         for task in running:

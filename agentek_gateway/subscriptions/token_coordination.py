@@ -14,17 +14,19 @@ from .redis_keys import Keys
 
 LOCK_TTL_S = 60
 RECENT_REFRESH_WINDOW_S = 60.0
-LATEST_TTL_S = 24 * 3600
+CREDENTIALS_RELOAD_INTERVAL_S = 30
+UNSAVED_LATEST_TTL_S = 24 * 3600
+SAVED_LATEST_TTL_S = 2 * CREDENTIALS_RELOAD_INTERVAL_S
 LOCK_POLL_S = 0.05
 LOCK_WAIT_S = 1.0
 
 
 @dataclass(frozen=True, slots=True)
 class LatestAuth:
-    """Newest token pair a refresh produced; persisted=False until it is written to the database."""
+    """Newest token pair a refresh produced; persisted=False until the database has it, then kept briefly for replicas still holding the old pair."""
 
     auth: ChatgptAuth
-    persisted: bool
+    persisted: bool = False
 
 
 def encode_latest(latest: LatestAuth) -> str:
@@ -39,6 +41,10 @@ def decode_latest(raw: str | None) -> LatestAuth | None:
     fields = json.loads(raw)
     auth = auth_from_mapping(fields.get("auth"))
     return LatestAuth(auth, bool(fields.get("persisted"))) if auth else None
+
+
+def latest_ttl_s(latest: LatestAuth) -> int:
+    return SAVED_LATEST_TTL_S if latest.persisted else UNSAVED_LATEST_TTL_S
 
 
 class TokenCoordinator:
@@ -74,7 +80,7 @@ class TokenCoordinator:
         await self._redis.set(
             self._keys.latest_auth(credential_name),
             encode_latest(latest),
-            ex=LATEST_TTL_S,
+            ex=latest_ttl_s(latest),
         )
 
     async def read_latest(self, credential_name: str) -> LatestAuth | None:
@@ -124,14 +130,11 @@ class SyncTokenCoordinator:
         self._redis.set(
             self._keys.latest_auth(credential_name),
             encode_latest(latest),
-            ex=LATEST_TTL_S,
+            ex=latest_ttl_s(latest),
         )
 
     def read_latest(self, credential_name: str) -> LatestAuth | None:
         return decode_latest(self._redis.get(self._keys.latest_auth(credential_name)))
-
-    def recently_refreshed(self, credential_name: str) -> bool:
-        return bool(self._redis.exists(self._keys.refreshed(credential_name)))
 
     def mark_refreshed(self, credential_name: str, window_s: float) -> None:
         self._redis.set(self._keys.refreshed(credential_name), "1", ex=int(window_s))

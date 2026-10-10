@@ -42,6 +42,10 @@ class LeaderDuties:
         try:
             if not await self._lease.hold():
                 return False
+        except Exception:  # noqa: BLE001
+            verbose_proxy_logger.exception("agentek_gateway leader lease failed")
+            return False
+        try:
             await self._probes.tick()
             now = self._clock.now()
             if now - self._last_refresh_at >= REFRESH_CYCLE_S:

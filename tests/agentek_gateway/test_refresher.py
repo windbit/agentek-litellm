@@ -1,5 +1,7 @@
 import asyncio
 
+import fakeredis
+
 import pytest
 
 from agentek_gateway.subscriptions.events import Unauthorized
@@ -9,11 +11,20 @@ from agentek_gateway.subscriptions.providers.base import (
     RefreshRejected,
 )
 from agentek_gateway.subscriptions.providers.chatgpt import ChatgptAuth
-from agentek_gateway.subscriptions.token_coordination import LatestAuth
+from agentek_gateway.subscriptions.credential_pairs import (
+    CredentialPairs,
+    CredentialPairsLoop,
+)
+from agentek_gateway.subscriptions.refresh_guard import RefreshGuard
+from agentek_gateway.subscriptions.token_coordination import (
+    LatestAuth,
+    SyncTokenCoordinator,
+)
 
 from .upkeep import HOUR_S, build_upkeep, tokens
 
 CRED = "cred-a"
+SAVED_PAIR_TTL_S = 60
 
 
 async def state_of(replica, sub_id: str = "a"):  # type: ignore[no-untyped-def]
@@ -94,18 +105,19 @@ async def test_pair_saved_by_a_mid_request_refresh_is_written_to_the_database() 
     upkeep, _ = build_upkeep(["a"], expires_in_s=HOUR_S)
     replica = upkeep.replica()
     await replica.coordinator.save_latest(
-        CRED, LatestAuth(tokens(HOUR_S, upkeep.clock.now(), "mid"), persisted=False)
+        CRED, LatestAuth(tokens(HOUR_S, upkeep.clock.now(), "mid"))
     )
 
     await replica.refresher.tick()
 
     stored = await upkeep.credentials.read_auth(CRED)
     latest = await replica.coordinator.read_latest(CRED)
-    assert (stored.auth.refresh_token, latest, upkeep.provider.refresh_tokens) == (  # type: ignore[union-attr]
-        "rt-mid",
-        None,
-        [],
-    )
+    assert (
+        stored.auth.refresh_token,
+        latest.auth.refresh_token,  # type: ignore[union-attr]
+        latest.persisted,  # type: ignore[union-attr]
+        upkeep.provider.refresh_tokens,
+    ) == ("rt-mid", "rt-mid", True, [])
 
 
 async def test_pair_older_than_a_reauthorization_is_dropped_not_written_over_it() -> (
@@ -114,7 +126,7 @@ async def test_pair_older_than_a_reauthorization_is_dropped_not_written_over_it(
     upkeep, _ = build_upkeep(["a"], expires_in_s=HOUR_S)
     replica = upkeep.replica()
     await replica.coordinator.save_latest(
-        CRED, LatestAuth(tokens(HOUR_S, upkeep.clock.now(), "old"), persisted=False)
+        CRED, LatestAuth(tokens(HOUR_S, upkeep.clock.now(), "old"))
     )
     stored = await upkeep.credentials.read_auth(CRED)
     upkeep.credentials.put(CRED, tokens(HOUR_S, upkeep.clock.now(), "reauth"))
@@ -207,20 +219,15 @@ async def test_refresh_keeps_the_account_and_identity_token_when_the_provider_om
 
     await replica.refresher.tick()
 
-    latest = await replica.coordinator.read_latest(CRED)
     stored = await upkeep.credentials.read_auth(CRED)
-    assert (latest.auth.account_id, latest.auth.id_token, stored.auth.id_token) == (  # type: ignore[union-attr]
-        "acct",
-        "id-0",
-        "id-0",
-    )
+    assert (stored.auth.account_id, stored.auth.id_token) == ("acct", "id-0")  # type: ignore[union-attr]
 
 
 async def test_refresh_is_postponed_while_a_newer_pair_waits_to_be_saved() -> None:
     upkeep, subscriptions = build_upkeep(["a"], expires_in_s=60)
     replica = upkeep.replica()
     await replica.coordinator.save_latest(
-        CRED, LatestAuth(tokens(HOUR_S, upkeep.clock.now(), "mid"), persisted=False)
+        CRED, LatestAuth(tokens(HOUR_S, upkeep.clock.now(), "mid"))
     )
 
     await replica.refresher.refresh(subscriptions[0])
@@ -228,20 +235,111 @@ async def test_refresh_is_postponed_while_a_newer_pair_waits_to_be_saved() -> No
     assert upkeep.provider.refresh_tokens == []
 
 
-async def test_pair_already_saved_is_never_written_over_a_later_reauthorization() -> (
+async def test_pair_written_to_the_database_stays_briefly_for_replicas_holding_the_old_one() -> (
     None
 ):
+    upkeep, _ = build_upkeep(["a"], expires_in_s=60)
+    replica = upkeep.replica()
+
+    await replica.refresher.tick()
+
+    latest = await replica.coordinator.read_latest(CRED)
+    ttl = await replica.redis.ttl(upkeep.keys.latest_auth(CRED))
+    assert (latest.auth.access_token, latest.persisted, 0 < ttl <= SAVED_PAIR_TTL_S) == (  # type: ignore[union-attr]
+        "at-new1",
+        True,
+        True,
+    )
+
+
+async def test_pair_the_database_has_not_accepted_is_kept_for_a_day() -> None:
+    upkeep, _ = build_upkeep(["a"], expires_in_s=60)
+    upkeep.credentials.failures_left = 1
+    replica = upkeep.replica()
+
+    await replica.refresher.tick()
+
+    ttl = await replica.redis.ttl(upkeep.keys.latest_auth(CRED))
+    assert ttl > HOUR_S
+
+
+async def test_replica_with_the_old_pair_gets_the_new_one_from_redis_not_from_the_provider() -> (
+    None
+):
+    upkeep, _ = build_upkeep(["a"], expires_in_s=60)
+    await upkeep.replica().refresher.tick()
+    guard_calls: list[str] = []
+    guard = RefreshGuard(
+        SyncTokenCoordinator(
+            fakeredis.FakeRedis(server=upkeep.server, decode_responses=True),
+            upkeep.keys,
+        ),
+        CredentialPairs(),
+    )
+
+    def refresh_with_the_provider() -> dict[str, str]:
+        guard_calls.append("provider")
+        return {}
+
+    pair = guard(CRED, "rt-0", refresh_with_the_provider)
+
+    assert (pair["refresh_token"], guard_calls) == ("rt-new1", [])
+
+
+async def test_replica_with_the_old_pair_takes_the_new_one_from_the_database_when_redis_lost_it() -> (
+    None
+):
+    upkeep, _ = build_upkeep(["a"], expires_in_s=60)
+    replica = upkeep.replica()
+    await replica.refresher.tick()
+    await replica.redis.delete(upkeep.keys.latest_auth(CRED))
+    pairs = CredentialPairs()
+    await CredentialPairsLoop(pairs, upkeep.repo, upkeep.credentials).refresh_once()
+    guard = RefreshGuard(
+        SyncTokenCoordinator(
+            fakeredis.FakeRedis(server=upkeep.server, decode_responses=True),
+            upkeep.keys,
+        ),
+        pairs,
+    )
+    provider_calls: list[str] = []
+
+    def refresh_with_the_provider() -> dict[str, str]:
+        provider_calls.append("provider")
+        return {}
+
+    pair = guard(CRED, "rt-0", refresh_with_the_provider)
+
+    assert (pair["refresh_token"], provider_calls) == ("rt-new1", [])
+
+
+async def test_pair_saved_before_a_reauthorization_is_dropped_from_redis() -> None:
     upkeep, _ = build_upkeep(["a"], expires_in_s=HOUR_S)
     replica = upkeep.replica()
     await replica.coordinator.save_latest(
-        CRED, LatestAuth(tokens(HOUR_S, upkeep.clock.now(), "saved"), persisted=True)
+        CRED, LatestAuth(tokens(HOUR_S, upkeep.clock.now(), "saved"), True)
     )
     upkeep.credentials.put(CRED, tokens(HOUR_S, upkeep.clock.now(), "reauth"))
 
     await replica.refresher.tick()
 
     stored = await upkeep.credentials.read_auth(CRED)
-    assert stored.auth.refresh_token == "rt-reauth"  # type: ignore[union-attr]
+    assert (stored.auth.refresh_token, await replica.coordinator.read_latest(CRED)) == (  # type: ignore[union-attr]
+        "rt-reauth",
+        None,
+    )
+
+
+async def test_pair_the_database_refused_stays_in_the_shared_store_for_the_next_pass() -> (
+    None
+):
+    upkeep, _ = build_upkeep(["a"], expires_in_s=60)
+    upkeep.credentials.failures_left = 1
+    replica = upkeep.replica()
+
+    await replica.refresher.tick()
+
+    assert (await replica.coordinator.read_latest(CRED)).auth.access_token == "at-new1"  # type: ignore[union-attr]
 
 
 async def test_refresh_that_outlasts_its_deadline_is_abandoned_and_frees_the_lock() -> (
@@ -297,8 +395,7 @@ async def test_new_access_token_without_a_new_refresh_token_is_written_to_the_da
                 "at-fresh",
                 same_refresh.refresh_token,
                 expires_at=same_refresh.expires_at,
-            ),
-            persisted=False,
+            )
         ),
     )
 

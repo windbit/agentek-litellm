@@ -89,11 +89,19 @@ class TokenRefresher:
         """A pair a refresh produced but the database never received (crash, outage) is written first."""
         deps, name = self._deps, subscription.credential_name
         latest = await deps.coordinator.read_latest(name)
-        if latest is None or latest.persisted:
+        if latest is None:
             return stored
-        if not same_tokens(latest.auth, stored.auth):
+        if latest.persisted:
+            if not same_tokens(latest.auth, stored.auth):
+                await deps.coordinator.clear_latest(name)
+            return stored
+        saved = same_tokens(latest.auth, stored.auth) or (
             await deps.credentials.write_auth_if_unchanged(name, stored, latest.auth)
-        await deps.coordinator.clear_latest(name)
+        )
+        if saved:
+            await deps.coordinator.save_latest(name, LatestAuth(latest.auth, True))
+        else:
+            await deps.coordinator.clear_latest(name)
         return await deps.credentials.read_auth(name) or stored
 
     async def refresh(self, subscription: Subscription) -> None:
@@ -123,7 +131,7 @@ class TokenRefresher:
         match outcome:
             case RefreshedTokens() as tokens:
                 renewed = renewed_auth(stored.auth, tokens)
-                await deps.coordinator.save_latest(name, LatestAuth(renewed, False))
+                await deps.coordinator.save_latest(name, LatestAuth(renewed))
                 await deps.store.mark_refreshed(name, RECENT_REFRESH_WINDOW_S)
                 if await deps.credentials.write_auth_if_unchanged(
                     name, stored, renewed

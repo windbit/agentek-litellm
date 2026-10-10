@@ -51,6 +51,7 @@ class ScriptedProvider:
     usage: list[Limits | None] = field(default_factory=list)
     refresh_tokens: list[str] = field(default_factory=list)
     probes: list[str] = field(default_factory=list)
+    health_errors: list[Exception] = field(default_factory=list)
     delay_s: float = 0.01
 
     async def refresh(self, refresh_token: str, *, now: float) -> RefreshOutcome:
@@ -63,6 +64,8 @@ class ScriptedProvider:
 
     async def probe_health(self, auth: ChatgptAuth, *, now: float) -> ProbeResult:
         self.probes.append(auth.access_token)
+        if self.health_errors:
+            raise self.health_errors.pop(0)
         return self.health.pop(0) if self.health else ProbeResult(True, None, None)
 
     async def probe_usage(self, auth: ChatgptAuth, *, now: float) -> Limits | None:

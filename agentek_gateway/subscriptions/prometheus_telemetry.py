@@ -179,7 +179,9 @@ class TelemetryLoop:
         book: EgressBook,
         telemetry: PrometheusTelemetry,
         clock: Clock,
+        interval_s: float = PUBLISH_INTERVAL_S,
     ) -> None:
+        self._interval_s = interval_s
         self._snapshot = snapshot
         self._store = store
         self._book = book
@@ -192,7 +194,7 @@ class TelemetryLoop:
                 await self.publish_once()
             except Exception:  # noqa: BLE001
                 verbose_proxy_logger.exception("agentek_gateway metrics refresh failed")
-            await asyncio.sleep(PUBLISH_INTERVAL_S)
+            await asyncio.sleep(self._interval_s)
 
     async def publish_once(self) -> None:
         snapshot = self._snapshot.current

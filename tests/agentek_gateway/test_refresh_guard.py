@@ -7,6 +7,7 @@ from litellm.llms.chatgpt import authenticator
 from litellm.llms.chatgpt.authenticator import Authenticator
 from litellm.llms.chatgpt.common_utils import RefreshAccessTokenError
 
+from agentek_gateway.subscriptions.credential_pairs import CredentialPairs
 from agentek_gateway.subscriptions.providers.chatgpt import ChatgptAuth
 from agentek_gateway.subscriptions.redis_keys import Keys
 from agentek_gateway.subscriptions.refresh_guard import (
@@ -82,7 +83,7 @@ def test_without_the_guard_concurrent_requests_each_refresh(coordinator) -> None
 
 
 def test_guard_lets_exactly_one_of_two_concurrent_refreshes_reach_the_provider(coordinator) -> None:  # type: ignore[no-untyped-def]
-    install_refresh_guard(RefreshGuard(coordinator))
+    install_refresh_guard(RefreshGuard(coordinator, CredentialPairs()))
 
     results = refresh_in_threads(2)
 
@@ -90,16 +91,16 @@ def test_guard_lets_exactly_one_of_two_concurrent_refreshes_reach_the_provider(c
 
 
 def test_guard_publishes_the_new_pair_before_it_is_persisted(coordinator) -> None:  # type: ignore[no-untyped-def]
-    install_refresh_guard(RefreshGuard(coordinator))
+    install_refresh_guard(RefreshGuard(coordinator, CredentialPairs()))
 
     expired_authenticator().get_access_token()
 
     latest = coordinator.read_latest(CREDENTIAL)
-    assert (latest.auth.refresh_token, latest.persisted) == ("rt-new1", False)  # type: ignore[union-attr]
+    assert latest.auth.refresh_token == "rt-new1"  # type: ignore[union-attr]
 
 
 def test_guard_marks_the_refresh_so_that_a_following_401_is_forgiven(coordinator) -> None:  # type: ignore[no-untyped-def]
-    install_refresh_guard(RefreshGuard(coordinator))
+    install_refresh_guard(RefreshGuard(coordinator, CredentialPairs()))
 
     expired_authenticator().get_access_token()
 
@@ -111,11 +112,9 @@ def test_guard_marks_the_refresh_so_that_a_following_401_is_forgiven(coordinator
 def test_newer_pair_from_another_replica_is_used_without_calling_the_provider(coordinator) -> None:  # type: ignore[no-untyped-def]
     coordinator.save_latest(
         CREDENTIAL,
-        LatestAuth(
-            ChatgptAuth("at-peer", "rt-peer", id_token="id-peer"), persisted=True
-        ),
+        LatestAuth(ChatgptAuth("at-peer", "rt-peer", id_token="id-peer")),
     )
-    install_refresh_guard(RefreshGuard(coordinator))
+    install_refresh_guard(RefreshGuard(coordinator, CredentialPairs()))
 
     token = expired_authenticator().get_access_token()
 
@@ -123,10 +122,8 @@ def test_newer_pair_from_another_replica_is_used_without_calling_the_provider(co
 
 
 def test_pair_equal_to_the_stale_one_is_not_treated_as_newer(coordinator) -> None:  # type: ignore[no-untyped-def]
-    coordinator.save_latest(
-        CREDENTIAL, LatestAuth(ChatgptAuth("at-old", "rt-old"), persisted=True)
-    )
-    install_refresh_guard(RefreshGuard(coordinator))
+    coordinator.save_latest(CREDENTIAL, LatestAuth(ChatgptAuth("at-old", "rt-old")))
+    install_refresh_guard(RefreshGuard(coordinator, CredentialPairs()))
 
     expired_authenticator().get_access_token()
 
@@ -138,7 +135,8 @@ def test_unobtainable_lock_fails_the_refresh_instead_of_calling_the_provider(coo
     assert holder is not None
     install_refresh_guard(
         RefreshGuard(
-            SyncTokenCoordinator(coordinator._redis, Keys("t:"), lock_wait_s=0.1)
+            SyncTokenCoordinator(coordinator._redis, Keys("t:"), lock_wait_s=0.1),
+            CredentialPairs(),
         )
     )  # noqa: SLF001
 
@@ -160,7 +158,7 @@ def test_waiting_for_a_lock_held_in_the_same_loop_ends_quickly(coordinator) -> N
         assert holder is not None
         install_refresh_guard(
             RefreshGuard(
-                SyncTokenCoordinator(coordinator._redis, Keys("t:"))
+                SyncTokenCoordinator(coordinator._redis, Keys("t:")), CredentialPairs()
             )  # noqa: SLF001
         )
         started = time.monotonic()
@@ -171,13 +169,35 @@ def test_waiting_for_a_lock_held_in_the_same_loop_ends_quickly(coordinator) -> N
     assert asyncio.run(scenario()) < 3.0
 
 
-def test_pair_with_an_unchanged_refresh_token_is_used_when_it_was_just_refreshed(coordinator) -> None:  # type: ignore[no-untyped-def]
+def test_pair_with_the_same_refresh_token_but_a_fresh_access_token_is_used(coordinator) -> None:  # type: ignore[no-untyped-def]
     coordinator.save_latest(
-        CREDENTIAL, LatestAuth(ChatgptAuth("at-fresh", "rt-old"), persisted=False)
+        CREDENTIAL,
+        LatestAuth(ChatgptAuth("at-fresh", "rt-old", expires_at=time.time() + 3600)),
     )
-    coordinator.mark_refreshed(CREDENTIAL, 60)
-    install_refresh_guard(RefreshGuard(coordinator))
+    install_refresh_guard(RefreshGuard(coordinator, CredentialPairs()))
 
     token = expired_authenticator().get_access_token()
 
     assert (token, CountingAuthenticator.calls) == ("at-fresh", [])
+
+
+def test_pair_with_the_same_refresh_token_and_an_access_token_about_to_expire_is_not_used(coordinator) -> None:  # type: ignore[no-untyped-def]
+    coordinator.save_latest(
+        CREDENTIAL,
+        LatestAuth(ChatgptAuth("at-stale", "rt-old", expires_at=time.time() + 10)),
+    )
+    install_refresh_guard(RefreshGuard(coordinator, CredentialPairs()))
+
+    expired_authenticator().get_access_token()
+
+    assert CountingAuthenticator.calls == ["rt-old"]
+
+
+def test_pair_from_the_database_copy_is_used_when_redis_holds_nothing(coordinator) -> None:  # type: ignore[no-untyped-def]
+    pairs = CredentialPairs()
+    pairs.replace({CREDENTIAL: ChatgptAuth("at-db", "rt-db")})
+    install_refresh_guard(RefreshGuard(coordinator, pairs))
+
+    token = expired_authenticator().get_access_token()
+
+    assert (token, CountingAuthenticator.calls) == ("at-db", [])

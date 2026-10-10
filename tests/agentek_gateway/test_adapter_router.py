@@ -307,6 +307,29 @@ async def test_model_the_account_does_not_support_is_remembered_for_later_reques
         )
 
 
+async def test_model_not_supported_is_remembered_for_a_day_then_the_subscription_is_tried_again() -> (
+    None
+):
+    day_s = 24 * 3600
+    async with running_stack(["a", "b"]) as stack:
+        stack.mock.script(account_of("a"), "model_not_supported")
+        await stack.call()
+        await stack.refresh()
+
+        stack.clock.advance(day_s - 60)
+        await stack.refresh()
+        await stack.call()
+        within_the_day = stack.mock.accounts_served()[2:]
+        stack.clock.advance(120)
+        await stack.refresh()
+        await stack.call()
+
+        assert (within_the_day, stack.mock.accounts_served()[3]) == (
+            [account_of("b")],
+            account_of("a"),
+        )
+
+
 async def test_model_not_supported_on_the_last_candidate_reaches_the_client_as_400() -> (
     None
 ):

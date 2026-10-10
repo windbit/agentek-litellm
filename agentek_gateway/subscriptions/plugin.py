@@ -17,6 +17,7 @@ from .clock import Clock, SystemClock
 from .config import config_from_env
 from .credentials import CredentialStore, PrismaCredentialStore
 from .duties import LeaderDuties
+from .credential_pairs import CredentialPairs, CredentialPairsLoop
 from .egress import EgressWatcher
 from .leader import LeaderLease
 from .notify import RedisListener, RedisNotifier
@@ -132,10 +133,10 @@ async def build_proxy_runtime(
     transport = HttpxProbeTransport()
     provider = ChatGPTProvider(transport, config.tuning_for(PROVIDER_ID).probe_model)
     telemetry = PrometheusTelemetry()
-    connections = replace(
-        connections, repo=CachedSubscriptionRepo(connections.repo, clock)
-    )
+    source_repo = connections.repo
+    connections = replace(connections, repo=CachedSubscriptionRepo(source_repo, clock))
     repo = connections.repo
+    stored_pairs = CredentialPairs()
     runtime = build_runtime(
         RuntimeDeps(
             clock=clock,
@@ -159,11 +160,13 @@ async def build_proxy_runtime(
             runtime.parts.snapshot, store, runtime.parts.egress, telemetry, clock
         ),
         store=store,
-        repo=repo,
+        repo=source_repo,
+        pairs=CredentialPairsLoop(stored_pairs, source_repo, connections.credentials),
     )
+    await background.pairs.refresh_once()
     _start_loops(runtime, background)
     install_refresh_guard(
-        RefreshGuard(SyncTokenCoordinator(connections.sync_redis, keys))
+        RefreshGuard(SyncTokenCoordinator(connections.sync_redis, keys), stored_pairs)
     )
     install_error_observer(
         ChatGPTResponsesAPIConfig,
@@ -224,6 +227,7 @@ class Background:
     telemetry: TelemetryLoop
     store: RedisStateStore
     repo: SubscriptionRepo
+    pairs: CredentialPairsLoop
 
 
 def _start_loops(runtime: SubscriptionRuntime, background: Background) -> None:
@@ -233,16 +237,22 @@ def _start_loops(runtime: SubscriptionRuntime, background: Background) -> None:
         ("state reconcile", _reconcile_forever(background.store, background.repo)),
         ("leader duties", background.duties.run()),
         ("metrics", background.telemetry.run()),
+        ("credential pairs", background.pairs.run()),
     ):
         verbose_proxy_logger.info("agentek_gateway starting %s loop", name)
         runtime.parts.tasks.spawn(loop)
 
 
-async def _reconcile_forever(store: RedisStateStore, repo: SubscriptionRepo) -> None:
+async def _reconcile_forever(
+    store: RedisStateStore,
+    repo: SubscriptionRepo,
+    interval_s: float = RECONCILE_INTERVAL_S,
+) -> None:
     while True:
-        await asyncio.sleep(RECONCILE_INTERVAL_S)
+        await asyncio.sleep(interval_s)
         try:
             subscriptions = await repo.list_subscriptions()
             await store.reconcile([sub.id for sub in subscriptions])
+            await store.reconcile_enabled_flags(subscriptions)
         except Exception:  # noqa: BLE001
             verbose_proxy_logger.exception("agentek_gateway state reconcile failed")

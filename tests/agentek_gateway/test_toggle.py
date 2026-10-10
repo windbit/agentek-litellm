@@ -1,8 +1,16 @@
 import asyncio
 import time
 
-from agentek_gateway.subscriptions.model import SubscriptionState as S
+import pytest
 
+from agentek_gateway.subscriptions.memory import InMemorySubscriptionRepo
+from agentek_gateway.subscriptions.plugin import _reconcile_forever
+from agentek_gateway.subscriptions.model import SubscriptionState as S
+from agentek_gateway.subscriptions.service import StateService
+from agentek_gateway.subscriptions.toggle import SubscriptionToggle
+
+from .conftest import make_subscription
+from .plain import plain_runtime
 from .stack import MODEL, Shared, Stack, account_of, running_stack
 
 PROPAGATION_BUDGET_S = 1.0
@@ -157,3 +165,65 @@ async def test_database_value_applies_once_redis_forgot_the_flag_and_the_directo
         await stack.refresh()
 
         assert visible_ids(stack) == ["b"]
+
+
+class RefusingRepo(InMemorySubscriptionRepo):
+    async def set_enabled(self, subscription_id: str, enabled: bool) -> None:
+        raise ConnectionError("database down")
+
+
+async def test_a_refused_database_write_leaves_no_flag_behind_to_outlive_a_flushall() -> (
+    None
+):
+    plain = plain_runtime(["a"])
+    subscription = make_subscription("a")
+    toggle = SubscriptionToggle(
+        plain.store,
+        RefusingRepo([subscription]),
+        StateService(plain.store, plain.clock, plain.runtime.parts.config),
+    )
+
+    with pytest.raises(ConnectionError):
+        await toggle.set_enabled(subscription, False)
+
+    assert (
+        await plain.store.read_enabled_flags(),
+        await plain.store.read_state("a"),
+    ) == (
+        {},
+        None,
+    )
+
+
+async def test_a_flag_that_never_followed_the_database_is_rewritten_by_the_sweep() -> (
+    None
+):
+    plain = plain_runtime(["a"])
+    snapshot = plain.runtime.parts.snapshot
+    await plain.store.write_enabled_flag("a", True)
+    await plain.repo.set_enabled("a", False)
+    await snapshot.refresh()
+    before = snapshot.current.subscriptions["a"].enabled  # type: ignore[union-attr]
+
+    await plain.store.reconcile_enabled_flags(await plain.repo.list_subscriptions())
+    await snapshot.refresh()
+
+    assert (before, snapshot.current.subscriptions["a"].enabled) == (True, False)  # type: ignore[union-attr]
+
+
+async def test_the_background_sweep_brings_a_stale_flag_back_in_line_with_the_database() -> (
+    None
+):
+    plain = plain_runtime(["a"])
+    await plain.store.write_enabled_flag("a", True)
+    await plain.repo.set_enabled("a", False)
+    sweep = asyncio.get_running_loop().create_task(
+        _reconcile_forever(plain.store, plain.repo, interval_s=0.02)
+    )
+    try:
+        await wait_until(lambda: False, budget_s=0.3)
+        flags = await plain.store.read_enabled_flags()
+    finally:
+        sweep.cancel()
+
+    assert flags == {"a": False}
