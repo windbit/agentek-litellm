@@ -313,6 +313,7 @@ async def test_model_not_supported_is_remembered_for_a_day_then_the_subscription
     day_s = 24 * 3600
     async with running_stack(["a", "b"]) as stack:
         stack.mock.script(account_of("a"), "model_not_supported")
+        stack.mock.script(account_of("b"), default="ok_nolimits")
         await stack.call()
         await stack.refresh()
 
