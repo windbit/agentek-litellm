@@ -209,3 +209,74 @@ async def test_unreadable_usage_windows_close_the_pool_after_max_stale() -> None
 
     with pytest.raises(TimeoutError):
         await snapshot.refresh()
+
+
+async def test_a_provider_limit_applies_to_subscriptions_that_set_none_of_their_own() -> (
+    None
+):
+    from agentek_gateway.subscriptions.memory_catalog import InMemoryProviderSettings
+    from agentek_gateway.subscriptions.snapshot import SnapshotCache, SnapshotSources
+
+    plain = plain_runtime(["a", "b"])
+    plain.repo.put(make_subscription("b", concurrency_limit=5))
+    settings = InMemoryProviderSettings()
+    await settings.set_concurrency("chatgpt", 2)
+    parts = plain.runtime.parts
+    cache = SnapshotCache(
+        SnapshotSources(
+            repo=plain.repo,
+            policy=parts.snapshot._sources.policy,  # noqa: SLF001
+            store=plain.store,
+            slots=parts.ledger._store,  # noqa: SLF001
+            provider_settings=settings,
+        ),
+        plain.clock,
+    )
+
+    snapshot = await cache.refresh()
+
+    assert {
+        sub.id: sub.concurrency_limit for sub in snapshot.subscriptions.values()
+    } == {
+        "a": 2,
+        "b": 5,
+    }
+
+
+async def test_changing_the_provider_limit_reaches_the_next_snapshot() -> None:
+    from agentek_gateway.subscriptions.memory_catalog import InMemoryProviderSettings
+    from agentek_gateway.subscriptions.snapshot import SnapshotCache, SnapshotSources
+
+    plain = plain_runtime(["a"])
+    settings = InMemoryProviderSettings()
+    parts = plain.runtime.parts
+    cache = SnapshotCache(
+        SnapshotSources(
+            repo=plain.repo,
+            policy=parts.snapshot._sources.policy,  # noqa: SLF001
+            store=plain.store,
+            slots=parts.ledger._store,  # noqa: SLF001
+            provider_settings=settings,
+        ),
+        plain.clock,
+    )
+    before = (await cache.refresh()).subscriptions["a"].concurrency_limit
+
+    await settings.set_concurrency("chatgpt", 3)
+    after = (await cache.refresh()).subscriptions["a"].concurrency_limit
+
+    assert (before, after) == (None, 3)
+
+
+async def test_a_requested_refresh_sees_a_subscription_added_within_the_directory_ttl() -> (
+    None
+):
+    plain = plain_runtime(["a"])
+    snapshot_cache = plain.runtime.parts.snapshot
+    await snapshot_cache.refresh()
+
+    plain.repo.put(make_subscription("b"))
+    snapshot_cache.request_refresh()
+    refreshed = await snapshot_cache.refresh()
+
+    assert sorted(refreshed.subscriptions) == ["a", "b"]

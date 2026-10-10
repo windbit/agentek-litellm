@@ -1,7 +1,9 @@
 import asyncio
+import logging
 import time
 
 import fakeredis
+import pytest
 
 from agentek_gateway.subscriptions.notify import RedisListener, RedisNotifier
 from agentek_gateway.subscriptions.redis_keys import Keys
@@ -9,6 +11,7 @@ from agentek_gateway.subscriptions.redis_state import RedisStateStore
 from agentek_gateway.subscriptions.state_db import InMemoryStateDb
 
 from .conftest import FakeClock
+from .live import needs_redis
 from .test_redis_state import record
 
 CHANNEL = "t:changes"
@@ -144,3 +147,31 @@ async def test_idle_channel_does_not_fail_the_listener(caplog) -> None:  # type:
         task.cancel()
 
     assert "change listener failed" not in caplog.text
+
+
+@needs_redis
+async def test_an_idle_channel_is_not_an_error_and_a_late_notification_still_arrives(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from redis.asyncio import Redis
+
+    from .live import REDIS_URL
+
+    redis = Redis.from_url(REDIS_URL, decode_responses=True, socket_timeout=0.4)  # type: ignore[arg-type]
+    counter = Counter()
+    task = asyncio.get_running_loop().create_task(
+        RedisListener(redis, CHANNEL, counter).run()
+    )
+    try:
+        with caplog.at_level(logging.ERROR):
+            await asyncio.sleep(1.5)
+            await RedisNotifier(redis, CHANNEL).publish()
+            await wait_for(counter)
+    finally:
+        task.cancel()
+        await redis.aclose()
+
+    assert (
+        counter.count,
+        [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR],
+    ) == (1, [])

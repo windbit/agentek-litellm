@@ -1,16 +1,22 @@
 import asyncio
+from typing import Protocol
 
 from litellm._logging import verbose_proxy_logger
 
 from .clock import Clock
 from .egress import EgressWatcher
 from .leader import LeaderLease
+from .model_copies import COPY_SYNC_INTERVAL_S
 from .probes import ProbeLoop
 from .refresher import TokenRefresher
 
 DUTY_TICK_S = 5.0
 REFRESH_CYCLE_S = 60.0
 EGRESS_CYCLE_S = 10 * 60.0
+
+
+class Upkeep(Protocol):
+    async def tick(self) -> None: ...
 
 
 class LeaderDuties:
@@ -23,12 +29,15 @@ class LeaderDuties:
         refresher: TokenRefresher,
         egress: EgressWatcher,
         clock: Clock,
+        catalog: Upkeep | None = None,
     ) -> None:
         self._lease = lease
         self._probes = probes
         self._refresher = refresher
         self._egress = egress
         self._clock = clock
+        self._catalog = catalog
+        self._last_catalog_at = float("-inf")
         self._last_refresh_at = float("-inf")
         self._last_egress_at = float("-inf")
 
@@ -48,6 +57,9 @@ class LeaderDuties:
         try:
             await self._probes.tick()
             now = self._clock.now()
+            if self._catalog and now - self._last_catalog_at >= COPY_SYNC_INTERVAL_S:
+                self._last_catalog_at = now
+                await self._catalog.tick()
             if now - self._last_refresh_at >= REFRESH_CYCLE_S:
                 self._last_refresh_at = now
                 await self._refresher.tick()

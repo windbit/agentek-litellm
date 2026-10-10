@@ -1,5 +1,3 @@
-import base64
-import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Protocol
@@ -29,6 +27,7 @@ from .chatgpt_classify import (
 )
 from .chatgpt_json import json_object, number_of, text_of
 from .chatgpt_limits import limits_from_usage_payload, parse_limits
+from .chatgpt_profile import jwt_expiry
 
 PROVIDER_ID = "chatgpt"
 
@@ -63,6 +62,10 @@ class HttpReply:
 class ProbeTransport(Protocol):
     async def post_json(
         self, url: str, headers: Mapping[str, str], payload: Mapping[str, object]
+    ) -> HttpReply: ...
+
+    async def post_form(
+        self, url: str, headers: Mapping[str, str], form: Mapping[str, str]
     ) -> HttpReply: ...
 
     async def get(self, url: str, headers: Mapping[str, str]) -> HttpReply: ...
@@ -161,18 +164,6 @@ def expires_at(
     if expires_in is not None:
         return now + expires_in
     return jwt_expiry(access_token)
-
-
-def jwt_expiry(token: str) -> float | None:
-    parts = token.split(".")
-    if len(parts) < 2:
-        return None
-    padded = parts[1] + "=" * (-len(parts[1]) % 4)
-    try:
-        claims = json.loads(base64.urlsafe_b64decode(padded))
-    except ValueError:
-        return None
-    return number_of(claims.get("exp")) if isinstance(claims, dict) else None
 
 
 def request_headers(auth: ChatgptAuth) -> dict[str, str]:

@@ -15,7 +15,7 @@ from agentek_gateway.subscriptions.stickiness import SESSION_ID_PARAM
 
 from .plain import MODEL as PLAIN_MODEL
 from .conftest import make_subscription
-from .plain import plain_runtime
+from .plain import SHARED_ID, plain_runtime
 from .stack import MODEL, deployment_for
 
 HOOKS = (
@@ -421,3 +421,33 @@ async def test_router_taking_a_shared_deployment_leaves_no_attempt_and_no_bindin
         frozenset(),
         None,
     )
+
+
+async def test_a_model_template_is_never_offered_even_when_its_block_lapsed() -> None:
+    plain = plain_runtime(["a"], shared=True)
+    await plain.runtime.parts.snapshot.refresh()
+    template = {
+        "model_name": PLAIN_MODEL,
+        "litellm_params": {"model": "chatgpt/gpt-x"},
+        "model_info": {"id": "template:gpt-x"},
+    }
+    plain.deployments.append(template)
+
+    offered = await plain.pick()
+
+    assert "template:gpt-x" not in offered
+
+
+async def test_a_model_template_is_dropped_while_the_pool_is_not_loaded() -> None:
+    plain = plain_runtime(["a"], shared=True)
+    plain.deployments.append(
+        {
+            "model_name": PLAIN_MODEL,
+            "litellm_params": {"model": "chatgpt/gpt-x"},
+            "model_info": {"id": "template:gpt-x"},
+        }
+    )
+
+    offered = await plain.pick()
+
+    assert offered == [SHARED_ID]

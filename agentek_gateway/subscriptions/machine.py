@@ -170,7 +170,7 @@ def _manual_transition(
             return _resolve(
                 current,
                 now,
-                {State.AUTH_FAILED, State.AUTH_REFRESHING},
+                {State.AUTH_FAILED, State.AUTH_REFRESHING, State.BANNED},
                 StateReason.OPERATOR,
                 SignalSource.OPERATOR,
             )

@@ -5,8 +5,12 @@ from fastapi import APIRouter, FastAPI
 
 import litellm
 
+from .subscriptions.audit import AuditTable
+from .subscriptions.credential_directory import DirectoryTable
 from .subscriptions.credentials import CredentialTable
+from .subscriptions.litellm_deployments import ModelTable, ProxyDb
 from .subscriptions.prisma_repos import PolicyTable, SubscriptionTable
+from .subscriptions.provider_settings import ConfigTable
 from .subscriptions.state_db import StateTable
 
 ShutdownHandler = Callable[[], Awaitable[None]]
@@ -78,3 +82,28 @@ class ProxyHost:
         from litellm.proxy import proxy_server
 
         return proxy_server.prisma_client.db.litellm_agenteksubscriptionpolicy  # type: ignore[union-attr,return-value]
+
+    def directory_table(self) -> DirectoryTable:
+        from litellm.proxy import proxy_server
+
+        return proxy_server.prisma_client.db.litellm_credentialstable  # type: ignore[union-attr,return-value]
+
+    def model_table(self) -> ModelTable:
+        from litellm.proxy import proxy_server
+
+        return proxy_server.prisma_client.db.litellm_proxymodeltable  # type: ignore[union-attr,return-value]
+
+    def audit_table(self) -> AuditTable:
+        from litellm.proxy import proxy_server
+
+        return proxy_server.prisma_client.db.litellm_agentekaudit  # type: ignore[union-attr,return-value]
+
+    def config_table(self) -> ConfigTable:
+        from litellm.proxy import proxy_server
+
+        return proxy_server.prisma_client.db.litellm_config  # type: ignore[union-attr,return-value]
+
+    def proxy_db(self) -> ProxyDb:
+        from litellm.proxy import proxy_server
+
+        return proxy_server.prisma_client  # type: ignore[return-value]

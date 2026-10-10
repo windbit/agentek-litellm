@@ -20,6 +20,13 @@ class HttpxProbeTransport:
             reply = await client.post(url, headers=dict(headers), json=payload)
         return HttpReply(reply.status_code, dict(reply.headers), reply.text)
 
+    async def post_form(
+        self, url: str, headers: Mapping[str, str], form: Mapping[str, str]
+    ) -> HttpReply:
+        async with httpx.AsyncClient(timeout=self._timeout_s, trust_env=True) as client:
+            reply = await client.post(url, headers=dict(headers), data=dict(form))
+        return HttpReply(reply.status_code, dict(reply.headers), reply.text)
+
     async def get(self, url: str, headers: Mapping[str, str]) -> HttpReply:
         async with httpx.AsyncClient(timeout=self._timeout_s, trust_env=True) as client:
             reply = await client.get(url, headers=dict(headers))

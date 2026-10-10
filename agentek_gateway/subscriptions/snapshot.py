@@ -8,6 +8,7 @@ from litellm._logging import verbose_proxy_logger
 from .clock import Clock
 from .model import StateRecord, Subscription, SubscriptionId, initial_record
 from .ports import PolicyRepo, SlotStore, StateStore, SubscriptionRepo
+from .provider_settings import ProviderSettingsRepo
 from .selection import Snapshot, subscription_of
 
 T = TypeVar("T")
@@ -26,6 +27,7 @@ class SnapshotSources:
     slots: SlotStore
     model_list: ModelList = EMPTY_MODEL_LIST
     local_in_flight: Callable[[], Mapping[SubscriptionId, int]] = dict
+    provider_settings: ProviderSettingsRepo | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,6 +100,7 @@ class SnapshotCache:
         return self._closed_variant[1]
 
     def request_refresh(self) -> None:
+        self._directory = None
         self._wake.set()
 
     def is_current(self) -> bool:
@@ -189,9 +192,13 @@ class SnapshotCache:
         in_flight = self._kept_on_failure(
             "in-flight counts", optional[3], previous.in_flight if previous else {}
         )
+        provider_limits = await self._provider_limits()
         subscriptions = [
             replace(
-                subscription, enabled=flags.get(subscription.id, subscription.enabled)
+                subscription,
+                enabled=flags.get(subscription.id, subscription.enabled),
+                concurrency_limit=subscription.concurrency_limit
+                or provider_limits.get(subscription.provider),
             )
             for subscription in directory
         ]
@@ -258,6 +265,15 @@ class SnapshotCache:
             except asyncio.TimeoutError:
                 pass
             self._wake.clear()
+
+    async def _provider_limits(self) -> Mapping[str, int | None]:
+        settings = self._sources.provider_settings
+        if settings is None:
+            return {}
+        return {
+            provider: item.concurrency_limit
+            for provider, item in (await settings.load()).items()
+        }
 
     async def _subscriptions(self) -> Sequence[Subscription]:
         now = self._clock.now()
