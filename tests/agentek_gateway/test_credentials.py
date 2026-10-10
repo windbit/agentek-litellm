@@ -31,6 +31,7 @@ class FakeCredentialTable:
         self.queries = 0
 
     async def find_unique(self, *, where):  # type: ignore[no-untyped-def]
+        self.queries += 1
         return self.row if where["credential_name"] == "cred-a" else None
 
     async def find_many(self, *, where):  # type: ignore[no-untyped-def]

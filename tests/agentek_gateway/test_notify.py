@@ -105,3 +105,42 @@ async def test_failed_publish_does_not_raise() -> None:
     server.connected = False
 
     await RedisNotifier(redis, CHANNEL).publish()
+
+
+class IdleChannel:
+    """A pub/sub whose blocking read is bound by the client's socket timeout, as with a real client."""
+
+    def __init__(self, socket_timeout_s: float) -> None:
+        self._socket_timeout_s = socket_timeout_s
+
+    async def subscribe(self, channel: str) -> None:
+        return None
+
+    async def listen(self):  # type: ignore[no-untyped-def]
+        await asyncio.sleep(self._socket_timeout_s)
+        raise TimeoutError("Timeout reading from redis")
+        yield {}
+
+    async def get_message(self, ignore_subscribe_messages=False, timeout=0.0):  # type: ignore[no-untyped-def]
+        await asyncio.sleep(min(timeout, 0.05))
+        return None
+
+    async def aclose(self) -> None:
+        return None
+
+
+class IdleClient:
+    def pubsub(self) -> IdleChannel:
+        return IdleChannel(socket_timeout_s=0.05)
+
+
+async def test_idle_channel_does_not_fail_the_listener(caplog) -> None:  # type: ignore[no-untyped-def]
+    task = asyncio.get_running_loop().create_task(
+        RedisListener(IdleClient(), CHANNEL, Counter()).run()  # type: ignore[arg-type]
+    )
+    try:
+        await asyncio.sleep(0.4)
+    finally:
+        task.cancel()
+
+    assert "change listener failed" not in caplog.text

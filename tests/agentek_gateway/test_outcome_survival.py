@@ -16,6 +16,7 @@ from agentek_gateway.subscriptions.failures import FailedAttempt
 from agentek_gateway.subscriptions.providers.base import AuthRejected, LimitReached
 from agentek_gateway.subscriptions.model import Limits, SubscriptionState as S, Window
 from agentek_gateway.subscriptions.redis_state import RedisStateStore
+from agentek_gateway.subscriptions.service import StateService
 
 from agentek_gateway.subscriptions.slots import ReserveRequest
 
@@ -428,3 +429,49 @@ async def test_request_that_has_retried_past_its_time_budget_ends_with_the_plugi
 
     with pytest.raises(NoAvailableSubscriptionsError):
         await plain.runtime.gateway.filter("gpt-x", plain.deployments, request)
+
+
+def service_over(plain, spawned: list):  # type: ignore[no-untyped-def]
+    async def advance(seconds: float) -> None:
+        plain.clock.advance(seconds)
+        await asyncio.sleep(0)
+
+    return StateService(
+        plain.store,
+        plain.clock,
+        plain.runtime.parts.config,
+        view=plain.runtime.parts.snapshot,
+        spawn=lambda work: spawned.append(asyncio.get_running_loop().create_task(work)),
+        sleep=advance,
+    )
+
+
+async def test_one_writer_serves_all_events_deferred_for_a_subscription() -> None:
+    plain = plain_runtime(["a"], store_class=UnreliableState)
+    await plain.runtime.parts.snapshot.refresh()
+    subscription = (await plain.repo.list_subscriptions())[0]
+    plain.store.write_failures = 6  # type: ignore[attr-defined]
+    spawned: list = []
+    service = service_over(plain, spawned)
+
+    for _ in range(3):
+        await service.record(subscription, LimitExhausted(LimitWindow.WEEKLY, RESET_AT))
+    await asyncio.gather(*spawned)
+
+    stored = await plain.store.read_state("a")
+    assert (len(spawned), stored is not None and stored.state) == (1, S.RATE_LIMITED)
+
+
+async def test_writer_gives_up_after_its_budget_and_frees_the_subscription() -> None:
+    plain = plain_runtime(["a"], store_class=UnreliableState)
+    await plain.runtime.parts.snapshot.refresh()
+    subscription = (await plain.repo.list_subscriptions())[0]
+    plain.store.write_failures = 10_000  # type: ignore[attr-defined]
+    spawned: list = []
+    service = service_over(plain, spawned)
+
+    await service.record(subscription, LimitExhausted(LimitWindow.WEEKLY, RESET_AT))
+    await asyncio.wait_for(asyncio.gather(*spawned), 5.0)
+    await service.record(subscription, LimitExhausted(LimitWindow.WEEKLY, RESET_AT))
+
+    assert len(spawned) == 2

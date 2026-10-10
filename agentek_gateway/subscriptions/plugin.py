@@ -48,6 +48,7 @@ ENV_REDIS_PREFIX = "AGENTEK_GATEWAY_REDIS_PREFIX"
 DEFAULT_REDIS_PREFIX = "agentek:"
 RECONCILE_INTERVAL_S = 30.0
 REDIS_TIMEOUT_S = 2.0
+SHUTDOWN_DRAIN_S = 10.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,9 +110,9 @@ async def start_subscription_runtime() -> None:
         repo=PrismaSubscriptionRepo(host.subscription_table),
         policy=PrismaPolicyRepo(host.policy_table),
     )
-    GLOBAL_SLOT.runtime = await build_proxy_runtime(
-        host, environ, SystemClock(), connections
-    )
+    runtime = await build_proxy_runtime(host, environ, SystemClock(), connections)
+    GLOBAL_SLOT.runtime = runtime
+    host.on_shutdown(lambda: runtime.writes.drain_within(SHUTDOWN_DRAIN_S))
 
 
 async def build_proxy_runtime(

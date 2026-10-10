@@ -1,12 +1,30 @@
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from contextlib import asynccontextmanager
 
-from fastapi import APIRouter
+from fastapi import APIRouter, FastAPI
 
 import litellm
 
 from .subscriptions.credentials import CredentialTable
 from .subscriptions.prisma_repos import PolicyTable, SubscriptionTable
 from .subscriptions.state_db import StateTable
+
+ShutdownHandler = Callable[[], Awaitable[None]]
+
+
+def run_on_shutdown(app: FastAPI, handler: ShutdownHandler) -> None:
+    """Runs the handler after the app's own shutdown, whatever the way the lifespan ended."""
+    original = app.router.lifespan_context
+
+    @asynccontextmanager
+    async def lifespan(application: FastAPI) -> AsyncIterator[object]:
+        try:
+            async with original(application) as state:
+                yield state
+        finally:
+            await handler()
+
+    app.router.lifespan_context = lifespan  # type: ignore[assignment]
 
 
 class ProxyHost:
@@ -16,6 +34,11 @@ class ProxyHost:
         from litellm.proxy.proxy_server import app
 
         app.include_router(router)
+
+    def on_shutdown(self, handler: ShutdownHandler) -> None:
+        from litellm.proxy.proxy_server import app
+
+        run_on_shutdown(app, handler)
 
     def callbacks(self) -> list[object]:
         return litellm.callbacks
