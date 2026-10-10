@@ -206,6 +206,8 @@ class OutcomeTracker:
             return
         try:
             reason = await self._parts.failures.handle(provider, attempt, error)
+            if reason:
+                self._parts.telemetry.failed(attempt.subscription, reason)
             if reason and attempt.reservation.alternatives > 0:
                 self._parts.telemetry.switched(attempt.subscription, reason)
         finally:

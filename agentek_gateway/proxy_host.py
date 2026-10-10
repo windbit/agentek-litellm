@@ -1,9 +1,10 @@
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import Awaitable, Callable, Sequence
+from typing import Protocol
 
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter
 
 import litellm
+from litellm._logging import verbose_proxy_logger
 
 from .subscriptions.audit import AuditTable
 from .subscriptions.credential_directory import DirectoryTable
@@ -16,19 +17,26 @@ from .subscriptions.state_db import StateTable
 ShutdownHandler = Callable[[], Awaitable[None]]
 
 
-def run_on_shutdown(app: FastAPI, handler: ShutdownHandler) -> None:
-    """Runs the handler after the app's own shutdown, whatever the way the lifespan ended."""
-    original = app.router.lifespan_context
+class ShutdownTarget(Protocol):
+    proxy_shutdown_event: Callable[[], Awaitable[None]]
 
-    @asynccontextmanager
-    async def lifespan(application: FastAPI) -> AsyncIterator[object]:
+
+def run_before_proxy_shutdown(target: ShutdownTarget, handler: ShutdownHandler) -> None:
+    """Runs the handler first in the proxy's own shutdown, while Prisma is still connected.
+
+    The proxy calls its shutdown function by global name from inside the lifespan that is already running when
+    plugins start, so wrapping the lifespan is too late; replacing the function is not.
+    """
+    original = target.proxy_shutdown_event
+
+    async def shutdown() -> None:
         try:
-            async with original(application) as state:
-                yield state
-        finally:
             await handler()
+        except Exception:  # noqa: BLE001
+            verbose_proxy_logger.exception("agentek_gateway shutdown handler failed")
+        await original()
 
-    app.router.lifespan_context = lifespan  # type: ignore[assignment]
+    target.proxy_shutdown_event = shutdown
 
 
 class ProxyHost:
@@ -40,9 +48,9 @@ class ProxyHost:
         app.include_router(router)
 
     def on_shutdown(self, handler: ShutdownHandler) -> None:
-        from litellm.proxy.proxy_server import app
+        from litellm.proxy import proxy_server
 
-        run_on_shutdown(app, handler)
+        run_before_proxy_shutdown(proxy_server, handler)  # type: ignore[arg-type]
 
     def callbacks(self) -> list[object]:
         return litellm.callbacks

@@ -6,6 +6,8 @@ from agentek_gateway.subscriptions.errors import NoAvailableSubscriptionsError
 from agentek_gateway.subscriptions.model import SubscriptionState as S
 
 from agentek_gateway.subscriptions.redis_state import RedisStateStore
+from agentek_gateway.subscriptions.slots import InMemorySlotStore
+from agentek_gateway.subscriptions.stats_report import EmptyStats
 
 from .stack import MODEL, Stack, account_of, running_stack
 
@@ -52,11 +54,13 @@ async def test_usage_limit_moves_the_request_to_the_next_subscription_without_er
             stack.mock.accounts_served(),
             await state_of(stack, "a"),
             stack.switches.events,
+            stack.switches.failures,
             await in_flight(stack),
         ) == (
             "Hello from mock",
             [account_of("a"), account_of("b")],
             S.RATE_LIMITED,
+            [("a", "limit")],
             [("a", "limit")],
             {"a": 0, "b": 0},
         )
@@ -136,7 +140,8 @@ async def test_busy_subscription_is_skipped_without_penalty() -> None:
             stack.mock.accounts_served(),
             await state_of(stack, "a"),
             stack.switches.events,
-        ) == ("Hello from mock", [account_of("b")], None, [("a", "busy")])
+            stack.switches.failures,
+        ) == ("Hello from mock", [account_of("b")], None, [("a", "busy")], [])
 
 
 async def test_every_subscription_busy_gives_the_plugin_429() -> None:
@@ -528,6 +533,8 @@ async def test_a_replica_with_the_old_tokens_does_not_fail_a_subscription_just_r
                     usage_providers={},
                     logins={"chatgpt": OneNewPair()},  # type: ignore[dict-item]
                     on_changed=lambda: None,
+                    slots=InMemorySlotStore(first.clock),
+                    stats=EmptyStats(),
                 )
             )
             await first.runtime.states.apply(first.subscriptions["a"], TokenRevoked())

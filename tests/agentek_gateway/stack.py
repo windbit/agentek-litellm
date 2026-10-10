@@ -61,9 +61,13 @@ def saved_callbacks() -> dict[str, list[object]]:
 class Switches:
     def __init__(self) -> None:
         self.events: list[tuple[str, str]] = []
+        self.failures: list[tuple[str, str]] = []
 
     def switched(self, subscription: Subscription, reason: object) -> None:
         self.events.append((subscription.id, str(reason)))
+
+    def failed(self, subscription: Subscription, reason: object) -> None:
+        self.failures.append((subscription.id, str(reason)))
 
 
 def account_of(sub_id: str) -> str:

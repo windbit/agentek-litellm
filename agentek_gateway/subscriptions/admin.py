@@ -2,6 +2,7 @@ import asyncio
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import date
 from typing import Protocol
 
 from .audit import AuditEntry
@@ -19,7 +20,7 @@ from .model import (
     UsageSource,
 )
 from .model_copies import CopySync
-from .ports import StateStore, SubscriptionRepo
+from .ports import SlotStore, StateStore, SubscriptionRepo
 from .prisma_repos import NewSubscription
 from .probes import exhausted_event
 from .provider_settings import ProviderSettingsRepo
@@ -27,6 +28,8 @@ from .providers.chatgpt import ChatgptAuth
 from .providers.chatgpt_login import DeviceLogin
 from .providers.chatgpt_profile import Profile, profile_of
 from .service import StateService
+from .stats import utc_day
+from .stats_report import MAX_DAYS, StatsReport
 from .toggle import SubscriptionToggle
 from .unit import Unit
 from .token_coordination import RECENT_REFRESH_WINDOW_S, TokenCoordinator
@@ -66,6 +69,12 @@ class InvalidRequestError(AdminError):
 
 class UsageProvider(Protocol):
     async def probe_usage(self, auth: ChatgptAuth, *, now: float) -> Limits | None: ...
+
+
+class StatsSource(Protocol):
+    async def report(
+        self, subscriptions: Sequence[Subscription], days: int, today: date
+    ) -> Mapping[SubscriptionId, StatsReport]: ...
 
 
 class LoginFlow(Protocol):
@@ -120,6 +129,8 @@ class AdminDeps:
     usage_providers: Mapping[str, UsageProvider]
     logins: Mapping[str, LoginFlow]
     on_changed: Callable[[], None]
+    slots: SlotStore
+    stats: StatsSource
     lock_wait_s: float = DEFAULT_LOCK_WAIT_S
 
 
@@ -138,13 +149,26 @@ class SubscriptionAdmin:
         subscriptions = await deps.repo.list_subscriptions()
         states = await deps.store.read_states([sub.id for sub in subscriptions])
         usage = await deps.store.read_all_usage()
+        in_flight = await deps.slots.in_flight([sub.id for sub in subscriptions])
         views = await asyncio.gather(
             *(
-                self._view(sub, states.get(sub.id), usage.get(sub.id))
+                self._view(
+                    sub, states.get(sub.id), usage.get(sub.id), in_flight.get(sub.id, 0)
+                )
                 for sub in subscriptions
             )
         )
         return await self._providers(subscriptions, states), list(views)
+
+    async def stats(self, days: int) -> dict[SubscriptionId, StatsReport]:
+        """Statistics of every subscription for the last days, today included."""
+        deps = self._deps
+        if not 1 <= days <= MAX_DAYS:
+            raise InvalidRequestError(f"days must be between 1 and {MAX_DAYS}")
+        subscriptions = await deps.repo.list_subscriptions()
+        return dict(
+            await deps.stats.report(subscriptions, days, utc_day(deps.clock.now()))
+        )
 
     async def get(self, subscription_id: SubscriptionId) -> SubscriptionView:
         return await self._view_of(await self._find(subscription_id))
@@ -425,18 +449,24 @@ class SubscriptionAdmin:
         deps = self._deps
         record = await deps.store.read_state(subscription.id)
         usage = (await deps.store.read_all_usage()).get(subscription.id)
-        return await self._view(subscription, record, usage)
+        in_flight = (await deps.slots.in_flight([subscription.id])).get(
+            subscription.id, 0
+        )
+        return await self._view(subscription, record, usage, in_flight)
 
     async def _view(
         self,
         subscription: Subscription,
         record: StateRecord | None,
         usage: UsageRecord | None,
+        in_flight: int,
     ) -> SubscriptionView:
         deps = self._deps
         stored = await deps.credentials.read_auth(subscription.credential_name)
         profile = profile_of(stored.auth.id_token) if stored else Profile(None, None)
-        return subscription_view(subscription, record, usage, profile, deps.clock.now())
+        return subscription_view(
+            subscription, record, usage, profile, deps.clock.now(), in_flight=in_flight
+        )
 
     async def _providers(
         self,

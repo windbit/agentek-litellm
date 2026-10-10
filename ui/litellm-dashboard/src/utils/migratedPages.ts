@@ -42,6 +42,7 @@ export const MIGRATED_PAGES: Record<string, string> = {
   // The modern usage dashboard; the old ?page=usage report stays on the legacy switch.
   new_usage: "usage",
   agents: "agents",
+  subscriptions: "subscriptions",
   "router-settings": "router-settings",
   users: "users",
   teams: "teams",

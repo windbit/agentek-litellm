@@ -24,6 +24,7 @@ import {
   SafetyOutlined,
   SearchOutlined,
   SettingOutlined,
+  SwapOutlined,
   TagsOutlined,
   TeamOutlined,
   ToolOutlined,
@@ -103,6 +104,13 @@ const menuGroups: MenuGroup[] = [
         // Admin Viewer can view models read-only (write actions are
         // hidden inside the page); Playground above stays write-only.
         roles: rolesAllowedToViewWriteScopedPages,
+      },
+      {
+        key: "subscriptions",
+        page: "subscriptions",
+        label: "Subscriptions",
+        icon: <SwapOutlined />,
+        roles: ["Admin", "proxy_admin"],
       },
       {
         key: "agentic",

@@ -30,6 +30,10 @@ from .test_state_db import FakeTable
 class FakeHost:
     def __init__(self) -> None:
         self.table = FakeTable()
+        self.shutdown_handlers: list = []  # type: ignore[type-arg]
+
+    def on_shutdown(self, handler) -> None:  # type: ignore[no-untyped-def]
+        self.shutdown_handlers.append(handler)
 
     def model_list(self) -> list[dict[str, object]]:
         return []
@@ -60,11 +64,9 @@ async def test_runtime_is_built_loaded_and_observing_provider_errors() -> None:
     finally:
         uninstall_error_observer(ChatGPTResponsesAPIConfig)
         uninstall_refresh_guard()
-        for task in tuple(runtime.parts.tasks._running):  # noqa: SLF001
+        for task in tuple(runtime.parts.tasks._running):
             task.cancel()
-        await asyncio.gather(
-            *runtime.parts.tasks._running, return_exceptions=True
-        )  # noqa: SLF001
+        await asyncio.gather(*runtime.parts.tasks._running, return_exceptions=True)
         await redis.aclose()
 
 
@@ -150,11 +152,9 @@ async def test_the_catalog_opens_the_operator_api_and_imports_credentials_at_sta
         ADMIN_SLOT.admin = None
         uninstall_error_observer(ChatGPTResponsesAPIConfig)
         uninstall_refresh_guard()
-        for task in tuple(runtime.parts.tasks._running):  # noqa: SLF001
+        for task in tuple(runtime.parts.tasks._running):
             task.cancel()
-        await asyncio.gather(
-            *runtime.parts.tasks._running, return_exceptions=True
-        )  # noqa: SLF001
+        await asyncio.gather(*runtime.parts.tasks._running, return_exceptions=True)
         await redis.aclose()
 
 
@@ -216,9 +216,100 @@ async def test_without_a_catalog_the_operator_api_stays_closed() -> None:
     finally:
         uninstall_error_observer(ChatGPTResponsesAPIConfig)
         uninstall_refresh_guard()
-        for task in tuple(runtime.parts.tasks._running):  # noqa: SLF001
+        for task in tuple(runtime.parts.tasks._running):
             task.cancel()
-        await asyncio.gather(
-            *runtime.parts.tasks._running, return_exceptions=True
-        )  # noqa: SLF001
+        await asyncio.gather(*runtime.parts.tasks._running, return_exceptions=True)
         await redis.aclose()
+
+
+class RecordingStatsStore:
+    def __init__(self) -> None:
+        self.batches: list[dict] = []  # type: ignore[type-arg]
+
+    async def add(self, deltas):  # type: ignore[no-untyped-def]
+        self.batches.append(dict(deltas))
+        return {}
+
+    def credited_states(self) -> set[str]:
+        return {
+            state
+            for batch in self.batches
+            for delta in batch.values()
+            for state in delta.state_seconds
+        }
+
+
+async def stop(runtime, redis) -> None:  # type: ignore[no-untyped-def]
+    uninstall_error_observer(ChatGPTResponsesAPIConfig)
+    uninstall_refresh_guard()
+    for task in tuple(runtime.parts.tasks._running):
+        task.cancel()
+    await asyncio.gather(*runtime.parts.tasks._running, return_exceptions=True)
+    await redis.aclose()
+
+
+async def test_the_leader_credits_time_in_state_and_the_statistics_loop_writes_it(
+    monkeypatch,  # type: ignore[no-untyped-def]
+) -> None:
+    from agentek_gateway.subscriptions import duties, stats
+
+    from .conftest import make_subscription
+
+    monkeypatch.setattr(duties, "DUTY_TICK_S", 0.01)
+    monkeypatch.setattr(stats, "FLUSH_INTERVAL_S", 0.01)
+    redis, clock, store = (
+        fakeredis.FakeAsyncRedis(decode_responses=True),
+        FakeClock(),
+        RecordingStatsStore(),
+    )
+    connections = Connections(
+        redis,
+        fakeredis.FakeRedis(decode_responses=True),
+        InMemoryCredentialStore(),
+        InMemorySubscriptionRepo([make_subscription("a")]),
+        InMemoryPolicyRepo(),
+        stats_store=store,
+    )
+    runtime = await build_proxy_runtime(FakeHost(), {}, clock, connections)  # type: ignore[arg-type]
+    try:
+        for _ in range(100):
+            clock.advance(0.5)
+            await asyncio.sleep(0.02)
+            if store.credited_states():
+                break
+
+        assert store.credited_states() == {"ACTIVE"}
+    finally:
+        await stop(runtime, redis)
+
+
+async def test_counts_not_yet_written_are_flushed_by_the_shutdown_handler() -> None:
+    from agentek_gateway.subscriptions.failures import SwitchReason
+
+    from .conftest import make_subscription
+
+    redis, store, host = (
+        fakeredis.FakeAsyncRedis(decode_responses=True),
+        RecordingStatsStore(),
+        FakeHost(),
+    )
+    subscription = make_subscription("a")
+    connections = Connections(
+        redis,
+        fakeredis.FakeRedis(decode_responses=True),
+        InMemoryCredentialStore(),
+        InMemorySubscriptionRepo([subscription]),
+        InMemoryPolicyRepo(),
+        stats_store=store,
+    )
+    runtime = await build_proxy_runtime(host, {}, FakeClock(), connections)  # type: ignore[arg-type]
+    try:
+        runtime.parts.telemetry.failed(subscription, SwitchReason.LIMIT)
+        for handler in host.shutdown_handlers:
+            await handler()
+
+        assert [
+            dict(delta.failures) for batch in store.batches for delta in batch.values()
+        ] == [{"limit": 1}]
+    finally:
+        await stop(runtime, redis)
