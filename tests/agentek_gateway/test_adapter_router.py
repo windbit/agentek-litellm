@@ -5,6 +5,8 @@ from litellm.integrations.custom_logger import CustomLogger
 from agentek_gateway.subscriptions.errors import NoAvailableSubscriptionsError
 from agentek_gateway.subscriptions.model import SubscriptionState as S
 
+from agentek_gateway.subscriptions.redis_state import RedisStateStore
+
 from .stack import MODEL, Stack, account_of, running_stack
 
 
@@ -376,3 +378,54 @@ async def test_successful_responses_request_records_the_limit_windows_of_its_sub
         await stack.respond()
 
         assert set(await stack.store.read_all_usage()) == {"a"}
+
+
+class UnwritableState(RedisStateStore):
+    """Redis answers reads but every state write times out, as with a starved event loop."""
+
+    async def compare_and_set_state(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        raise TimeoutError("Timeout reading from redis")
+
+
+async def test_dead_subscription_is_not_tried_again_while_its_state_cannot_be_written() -> (
+    None
+):
+    async with running_stack(["a", "b"], store_class=UnwritableState) as stack:
+        stack.mock.script(account_of("a"), default="usage_limit")
+
+        for _ in range(6):
+            await stack.call()
+
+        assert stack.mock.accounts_served().count(account_of("a")) == 1
+
+
+async def test_ten_dead_subscriptions_of_twelve_never_show_a_429_to_the_client_from_a_cold_start() -> (
+    None
+):
+    sub_ids = [f"s{index:02d}" for index in range(12)]
+    async with running_stack(sub_ids) as stack:
+        for sub_id in sub_ids[:10]:
+            stack.mock.script(account_of(sub_id), default="usage_limit")
+
+        answers = [await stack.call() for _ in range(3)]
+
+        assert [
+            answer.choices[0].message.content  # type: ignore[attr-defined]
+            for answer in answers
+        ] == ["Hello from mock"] * 3
+
+
+async def test_flushed_redis_does_not_send_a_request_to_dead_subscriptions_into_a_429() -> (
+    None
+):
+    sub_ids = [f"s{index:02d}" for index in range(12)]
+    async with running_stack(sub_ids) as stack:
+        for sub_id in sub_ids[:10]:
+            stack.mock.script(account_of(sub_id), default="usage_limit")
+        await stack.call()
+        await stack.redis.flushall()
+        stack.mock.received.clear()
+
+        answer = await stack.call()
+
+        assert answer.choices[0].message.content == "Hello from mock"  # type: ignore[attr-defined]

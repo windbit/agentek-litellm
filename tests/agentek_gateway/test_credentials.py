@@ -24,11 +24,19 @@ STORED_AUTH = {
 
 class FakeCredentialTable:
     def __init__(self, values: object) -> None:
-        self.row = SimpleNamespace(credential_values=values, updated_at=START)
+        self.row = SimpleNamespace(
+            credential_name="cred-a", credential_values=values, updated_at=START
+        )
         self.updates: list[dict[str, object]] = []
+        self.queries = 0
 
     async def find_unique(self, *, where):  # type: ignore[no-untyped-def]
         return self.row if where["credential_name"] == "cred-a" else None
+
+    async def find_many(self, *, where):  # type: ignore[no-untyped-def]
+        self.queries += 1
+        wanted = where["credential_name"]["in"]
+        return [self.row] if self.row.credential_name in wanted else []
 
     async def update_many(self, *, where, data):  # type: ignore[no-untyped-def]
         if (
@@ -149,3 +157,19 @@ def test_boolean_is_not_an_expiry_time() -> None:
     )
 
     assert auth is not None and auth.expires_at is None
+
+
+async def test_many_credentials_are_read_with_one_query_and_unknown_ones_are_left_out() -> (
+    None
+):
+    store, table = prisma_store()
+
+    found = await store.read_auths(["cred-a", "cred-b", "cred-c"])
+
+    assert (sorted(found), table.queries) == (["cred-a"], 1)
+
+
+async def test_row_without_usable_tokens_is_left_out_of_a_batch_read() -> None:
+    store, _ = prisma_store({"chatgpt_auth": "not-a-mapping"})
+
+    assert await store.read_auths(["cred-a"]) == {}

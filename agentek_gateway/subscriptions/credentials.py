@@ -1,5 +1,5 @@
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
@@ -20,12 +20,17 @@ class StoredAuth:
 class CredentialStore(Protocol):
     async def read_auth(self, credential_name: str) -> StoredAuth | None: ...
 
+    async def read_auths(
+        self, credential_names: Sequence[str]
+    ) -> Mapping[str, StoredAuth]: ...
+
     async def write_auth_if_unchanged(
         self, credential_name: str, expected: StoredAuth, auth: ChatgptAuth
     ) -> bool: ...
 
 
 class CredentialRow(Protocol):
+    credential_name: str
     credential_values: object
     updated_at: datetime
 
@@ -36,6 +41,10 @@ class CredentialTable(Protocol):
     async def find_unique(
         self, *, where: Mapping[str, str]
     ) -> CredentialRow | None: ...
+
+    async def find_many(
+        self, *, where: Mapping[str, object]
+    ) -> Sequence[CredentialRow]: ...
 
     async def update_many(
         self, *, where: Mapping[str, object], data: Mapping[str, object]
@@ -101,6 +110,12 @@ class InMemoryCredentialStore:
             return None
         return StoredAuth(auth, str(self.versions[credential_name]), dict(values))
 
+    async def read_auths(
+        self, credential_names: Sequence[str]
+    ) -> Mapping[str, StoredAuth]:
+        found = {name: await self.read_auth(name) for name in credential_names}
+        return {name: stored for name, stored in found.items() if stored is not None}
+
     async def write_auth_if_unchanged(
         self, credential_name: str, expected: StoredAuth, auth: ChatgptAuth
     ) -> bool:
@@ -126,11 +141,18 @@ class PrismaCredentialStore:
         )
         if row is None:
             return None
-        values = _values_of(row.credential_values)
-        auth = auth_from_mapping(values.get(AUTH_KEY))
-        if auth is None:
-            return None
-        return StoredAuth(auth, row.updated_at.isoformat(), values)
+        return _stored_auth_of(row)
+
+    async def read_auths(
+        self, credential_names: Sequence[str]
+    ) -> Mapping[str, StoredAuth]:
+        if not credential_names:
+            return {}
+        rows = await self._table().find_many(
+            where={"credential_name": {"in": list(credential_names)}}
+        )
+        found = {row.credential_name: _stored_auth_of(row) for row in rows}
+        return {name: stored for name, stored in found.items() if stored is not None}
 
     async def write_auth_if_unchanged(
         self, credential_name: str, expected: StoredAuth, auth: ChatgptAuth
@@ -146,6 +168,14 @@ class PrismaCredentialStore:
             },
         )
         return changed > 0
+
+
+def _stored_auth_of(row: CredentialRow) -> StoredAuth | None:
+    values = _values_of(row.credential_values)
+    auth = auth_from_mapping(values.get(AUTH_KEY))
+    if auth is None:
+        return None
+    return StoredAuth(auth, row.updated_at.isoformat(), values)
 
 
 def _values_of(raw: object) -> dict[str, object]:

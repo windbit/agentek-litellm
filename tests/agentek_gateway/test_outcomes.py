@@ -35,6 +35,25 @@ async def test_observed_failure_frees_the_slot_of_the_failed_attempt_at_once() -
         ) == (0, S.RATE_LIMITED)
 
 
+async def test_observed_limit_blocks_the_subscription_in_this_process_before_any_task_runs() -> (
+    None
+):
+    async with running_stack(["a", "b"]) as stack:
+        await begin_attempt(stack)
+        failure = ObservedFailure(
+            AttemptContext("r1", 1, "a", f"sub:a:{MODEL}", 1),
+            429,
+            {},
+            "",
+            LimitReached(LimitWindow.WEEKLY, None),
+        )
+
+        stack.runtime.outcomes.on_observed(failure)
+
+        current = stack.runtime.parts.snapshot.current
+        assert current is not None and current.states["a"].state is S.RATE_LIMITED
+
+
 async def test_own_error_of_the_plugin_is_not_counted_against_the_last_attempt() -> (
     None
 ):

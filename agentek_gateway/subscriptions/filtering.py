@@ -1,5 +1,5 @@
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .attempts import request_metadata
 from .errors import NoAvailableSubscriptionsError
@@ -32,6 +32,7 @@ class FilterContext:
     sticky_subscription_id: str | None
     now: float
     retry_after_s: int
+    in_flight_here: Mapping[str, int] = field(default_factory=dict)
 
 
 def filter_deployments(
@@ -53,6 +54,7 @@ def filter_deployments(
         sticky_subscription_id=context.sticky_subscription_id,
         excluded_deployment_ids=context.attempted
         | _router_excluded(context.request_kwargs),
+        in_flight_here=context.in_flight_here,
     )
     outcome = select(request, candidates, snapshot, context.now)
     match outcome:

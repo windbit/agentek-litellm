@@ -27,6 +27,8 @@ from .telemetry import Telemetry
 CREDENTIAL_TAG_PREFIX = "Credential: "
 BUSY_STATUS = 409
 SUBSCRIPTION_ID_PREFIX = "sub:"
+MIN_POOL_RETRIES = 4
+MAX_POOL_RETRIES = 32
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +91,14 @@ class SubscriptionGateway:
     def __init__(self, parts: GatewayParts) -> None:
         self._parts = parts
 
+    def pool_retries(self, model: str) -> int | None:
+        """Router retries a request on a subscription model needs so that a pool of dead subscriptions cannot use them all up."""
+        snapshot = self._parts.snapshot.current
+        if snapshot is None or model not in snapshot.subscription_models:
+            return None
+        enabled = sum(1 for sub in snapshot.subscriptions.values() if sub.enabled)
+        return min(MAX_POOL_RETRIES, max(MIN_POOL_RETRIES, enabled))
+
     async def filter(
         self,
         model: str,
@@ -112,6 +122,7 @@ class SubscriptionGateway:
                 sticky_subscription_id=sticky_id,
                 now=parts.clock.now(),
                 retry_after_s=parts.config.defaults.no_capacity_retry_after_s,
+                in_flight_here=parts.ledger.in_flight_here(),
             ),
         )
         chosen = result.chosen

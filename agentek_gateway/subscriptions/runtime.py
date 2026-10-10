@@ -44,6 +44,7 @@ class SubscriptionRuntime:
     outcomes: OutcomeTracker
     toggle: SubscriptionToggle
     states: StateService
+    writes: BackgroundTasks = field(default_factory=BackgroundTasks)
 
     def request_key(self, request: dict[str, object]) -> str | None:
         return request_key_of(request)
@@ -63,7 +64,15 @@ def build_runtime(deps: RuntimeDeps) -> SubscriptionRuntime:
         clock,
         deps.timing,
     )
-    states = StateService(store, clock, config, snapshot.request_refresh)
+    tasks, writes = BackgroundTasks(), BackgroundTasks()
+    states = StateService(
+        store,
+        clock,
+        config,
+        snapshot.request_refresh,
+        view=snapshot,
+        spawn=writes.spawn,
+    )
     signals = SignalProcessor(store, deps.repo, states, clock, config)
     parts = GatewayParts(
         clock=clock,
@@ -79,7 +88,7 @@ def build_runtime(deps: RuntimeDeps) -> SubscriptionRuntime:
         signals=signals,
         registry=AttemptRegistry(clock, ttl_s),
         telemetry=deps.telemetry,
-        tasks=BackgroundTasks(),
+        tasks=tasks,
         offers=ExpiringMap(clock, ttl_s),
     )
     return SubscriptionRuntime(
@@ -88,6 +97,7 @@ def build_runtime(deps: RuntimeDeps) -> SubscriptionRuntime:
         outcomes=OutcomeTracker(parts),
         toggle=SubscriptionToggle(store, deps.repo, states),
         states=states,
+        writes=writes,
     )
 
 

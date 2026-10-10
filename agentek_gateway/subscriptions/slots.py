@@ -2,12 +2,15 @@ import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
+from litellm._logging import verbose_proxy_logger
+
 from .clock import Clock
 from .expiring import ExpiringMap
 from .model import Subscription, SubscriptionId
 from .ports import SlotStore
 
 DEFAULT_MAX_TRACKED_REQUESTS = 50_000
+EXPIRED_SWEEP_INTERVAL_S = 1.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +110,9 @@ class SlotLedger:
         self._requests: ExpiringMap[str, _RequestSlots] = ExpiringMap(
             clock, ttl_s, max_requests
         )
+        self._here: dict[SubscriptionId, int] = {}
+        self._live: dict[str, tuple[SubscriptionId, float]] = {}
+        self._swept_at = clock.now()
 
     async def reserve(self, request: ReserveRequest) -> Reservation | None:
         """Idempotent per (request, deployment); moving to a new deployment releases the request's earlier slots."""
@@ -116,9 +122,16 @@ class SlotLedger:
             return existing
         await self._release_live(slots)
         token = uuid.uuid4().hex
-        if not await self._store.reserve(
-            request.subscription.id, token, request.limit, self._ttl_s
-        ):
+        self._track(token, request.subscription.id)
+        try:
+            reserved = await self._store.reserve(
+                request.subscription.id, token, request.limit, self._ttl_s
+            )
+        except BaseException:
+            self._untrack(token)
+            raise
+        if not reserved:
+            self._untrack(token)
             return None
         slots.attempts += 1
         reservation = Reservation(
@@ -134,15 +147,25 @@ class SlotLedger:
         return reservation
 
     async def release(self, reservation: Reservation) -> bool:
+        """The slot also ages out by its TTL, so a store that cannot be reached is not an error for the request."""
         slots = self._requests.get(reservation.request_id)
         if slots is None or reservation.token in slots.released:
             return False
         slots.released.add(reservation.token)
-        await self._store.release(reservation.subscription_id, reservation.token)
+        self._untrack(reservation.token)
+        try:
+            await self._store.release(reservation.subscription_id, reservation.token)
+        except Exception as error:  # noqa: BLE001
+            verbose_proxy_logger.warning(
+                "agentek_gateway slot of %s was not released (%s)",
+                reservation.subscription_id,
+                type(error).__name__,
+            )
         return True
 
     async def extend(self, reservation: Reservation) -> bool:
         """Keeps the slot of a long stream alive past its TTL while the stream still delivers."""
+        self._track(reservation.token, reservation.subscription_id)
         return await self._store.extend(
             reservation.subscription_id, reservation.token, self._ttl_s
         )
@@ -171,6 +194,29 @@ class SlotLedger:
         if not slots or not slots.by_deployment:
             return None
         return max(slots.by_deployment.values(), key=lambda held: held.attempt)
+
+    def in_flight_here(self) -> Mapping[SubscriptionId, int]:
+        """Requests this process has under way per subscription, counted from the moment a slot is asked for."""
+        now = self._clock.now()
+        if now - self._swept_at >= EXPIRED_SWEEP_INTERVAL_S:
+            self._swept_at = now
+            for token in [
+                token
+                for token, (_, expires_at) in self._live.items()
+                if expires_at <= now
+            ]:
+                self._untrack(token)
+        return self._here
+
+    def _track(self, token: str, subscription_id: SubscriptionId) -> None:
+        if token not in self._live:
+            self._here[subscription_id] = self._here.get(subscription_id, 0) + 1
+        self._live[token] = (subscription_id, self._clock.now() + self._ttl_s)
+
+    def _untrack(self, token: str) -> None:
+        entry = self._live.pop(token, None)
+        if entry is not None:
+            self._here[entry[0]] -= 1
 
     def size(self) -> int:
         return len(self._requests)

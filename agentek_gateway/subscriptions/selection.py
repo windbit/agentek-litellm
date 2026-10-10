@@ -47,6 +47,7 @@ class SelectionRequest:
     subjects: KeySubjects | None = None
     sticky_subscription_id: SubscriptionId | None = None
     excluded_deployment_ids: frozenset[str] = frozenset()
+    in_flight_here: Mapping[SubscriptionId, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,7 +118,7 @@ def select(
         None,
     )
     chosen = sticky or min(
-        working, key=lambda candidate: _order_key(candidate, snapshot, now)
+        working, key=lambda candidate: _order_key(candidate, request, snapshot, now)
     )
     return Kept(
         (*shared_candidates, chosen),
@@ -195,7 +196,7 @@ def _is_working(
 
 
 def _order_key(
-    candidate: Candidate, snapshot: Snapshot, now: float
+    candidate: Candidate, request: SelectionRequest, snapshot: Snapshot, now: float
 ) -> tuple[int, int, float, float, str]:
     subscription_id = candidate.subscription_id or ""
     subscription = snapshot.subscriptions[subscription_id]
@@ -207,13 +208,19 @@ def _order_key(
         STATE_CLASS_RANK[state],
         subscription.priority,
         weekly.reset_at if weekly else inf,
-        _load(subscription, snapshot),
+        _load(subscription, request, snapshot),
         subscription_id,
     )
 
 
-def _load(subscription: Subscription, snapshot: Snapshot) -> float:
-    in_flight = snapshot.in_flight.get(subscription.id, 0)
+def _load(
+    subscription: Subscription, request: SelectionRequest, snapshot: Snapshot
+) -> float:
+    """The reloaded count is up to a second old; what this process has started since then counts at once."""
+    in_flight = max(
+        snapshot.in_flight.get(subscription.id, 0),
+        request.in_flight_here.get(subscription.id, 0),
+    )
     if subscription.concurrency_limit:
         return in_flight / subscription.concurrency_limit
     return float(in_flight)
