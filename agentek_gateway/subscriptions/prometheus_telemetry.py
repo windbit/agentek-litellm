@@ -90,6 +90,9 @@ class PrometheusTelemetry:
     def switched(self, subscription: Subscription, reason: SwitchReason) -> None:
         self._switches.labels(subscription.name, reason.value).inc()
 
+    def failed(self, subscription: Subscription, reason: SwitchReason) -> None:
+        return None
+
     def publish(self, view: TelemetryView) -> None:
         for gauge in (
             self._state,

@@ -60,10 +60,11 @@ class RedisListener:
         try:
             await pubsub.subscribe(self._channel)
             while True:
+                # a read with its own timeout is not bound by the client's socket_timeout
                 message = await pubsub.get_message(
                     ignore_subscribe_messages=True, timeout=LISTEN_POLL_S
                 )
-                if message is not None:
+                if message is not None and message.get("type") == "message":
                     self._on_change()
         finally:
             await pubsub.aclose()

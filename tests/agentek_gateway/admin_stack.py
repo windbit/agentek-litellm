@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass
 
+from agentek_gateway.subscriptions.slots import InMemorySlotStore
+from agentek_gateway.subscriptions.stats_report import EmptyStats
 from agentek_gateway.subscriptions.admin import AdminDeps, SubscriptionAdmin
 from agentek_gateway.subscriptions.model import Limits, Subscription, Window
 from agentek_gateway.subscriptions.providers.chatgpt import ChatgptAuth
@@ -81,6 +83,8 @@ def admin_stack(subscriptions: list[Subscription] | None = None) -> AdminStack:
             usage_providers={PROVIDER: usage},
             logins={PROVIDER: login},
             on_changed=lambda: changes.append(1),
+            slots=InMemorySlotStore(base.clock),
+            stats=EmptyStats(),
         )
     )
     return AdminStack(base, login, usage, admin, coordinator, changes, runtime)

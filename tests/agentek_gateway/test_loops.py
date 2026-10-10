@@ -38,6 +38,7 @@ LOOP_COROUTINES = {
     "LeaderDuties.run",
     "TelemetryLoop.run",
     "CredentialPairsLoop.run",
+    "StatsLoop.run",
 }
 FAST_INTERVAL_S = 0.02
 

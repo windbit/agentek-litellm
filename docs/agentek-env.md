@@ -12,7 +12,7 @@ JSON for the subscription pool plugin (`agentek_gateway`). The `defaults` object
 
 ## AGENTEK_GATEWAY_REDIS_URL
 
-Redis the plugin keeps subscription state, slots, chat bindings and the leader lease in. Falls back to `REDIS_URL`, then to `REDIS_HOST`, `REDIS_PORT` and `REDIS_PASSWORD`.
+Redis the plugin keeps subscription state, slots, chat bindings and the leader lease in. Falls back to `REDIS_URL`, then to `REDIS_HOST`, `REDIS_PORT`, `REDIS_DB` and `REDIS_PASSWORD`; the password from its own variable is percent-encoded when the URL is built, so `/`, `@`, `:` and `#` are safe in it.
 
 ## AGENTEK_GATEWAY_REDIS_PREFIX
 

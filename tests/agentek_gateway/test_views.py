@@ -47,6 +47,7 @@ def test_the_view_names_the_state_the_reason_the_deadline_and_the_limits() -> No
         usage,
         Profile("o@x.test", "plus"),
         NOW,
+        in_flight=3,
     ).as_json()
 
     assert view == {
@@ -71,6 +72,7 @@ def test_the_view_names_the_state_the_reason_the_deadline_and_the_limits() -> No
             "observed_at": utc_iso(NOW - 5),
             "source": "usage_check",
         },
+        "in_flight": 3,
     }
 
 
@@ -81,6 +83,7 @@ def test_a_block_that_has_run_out_is_shown_as_waiting_for_a_probe() -> None:
         None,
         Profile(None, None),
         NOW,
+        in_flight=0,
     )
 
     assert view.state.state == "HALF_OPEN"
@@ -89,7 +92,9 @@ def test_a_block_that_has_run_out_is_shown_as_waiting_for_a_probe() -> None:
 def test_a_switched_off_subscription_is_disabled_whatever_its_record_says() -> None:
     subscription = make_subscription("a", enabled=False)
 
-    view = subscription_view(subscription, None, None, Profile(None, None), NOW)
+    view = subscription_view(
+        subscription, None, None, Profile(None, None), NOW, in_flight=0
+    )
 
     assert (view.state.state, is_working_now(subscription, None, NOW)) == (
         "DISABLED",
@@ -100,7 +105,9 @@ def test_a_switched_off_subscription_is_disabled_whatever_its_record_says() -> N
 def test_a_subscription_without_a_record_is_active_and_working() -> None:
     subscription = make_subscription("a")
 
-    view = subscription_view(subscription, None, None, Profile(None, None), NOW)
+    view = subscription_view(
+        subscription, None, None, Profile(None, None), NOW, in_flight=0
+    )
 
     assert (view.state.state, view.limits, is_working_now(subscription, None, NOW)) == (
         "ACTIVE",

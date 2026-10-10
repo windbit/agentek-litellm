@@ -1,8 +1,10 @@
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
+from typing import Protocol
 
 from fastapi import APIRouter
 
 import litellm
+from litellm._logging import verbose_proxy_logger
 
 from .subscriptions.audit import AuditTable
 from .subscriptions.credential_directory import DirectoryTable
@@ -12,6 +14,30 @@ from .subscriptions.prisma_repos import PolicyTable, SubscriptionTable
 from .subscriptions.provider_settings import ConfigTable
 from .subscriptions.state_db import StateTable
 
+ShutdownHandler = Callable[[], Awaitable[None]]
+
+
+class ShutdownTarget(Protocol):
+    proxy_shutdown_event: Callable[[], Awaitable[None]]
+
+
+def run_before_proxy_shutdown(target: ShutdownTarget, handler: ShutdownHandler) -> None:
+    """Runs the handler first in the proxy's own shutdown, while Prisma is still connected.
+
+    The proxy calls its shutdown function by global name from inside the lifespan that is already running when
+    plugins start, so wrapping the lifespan is too late; replacing the function is not.
+    """
+    original = target.proxy_shutdown_event
+
+    async def shutdown() -> None:
+        try:
+            await handler()
+        except Exception:  # noqa: BLE001
+            verbose_proxy_logger.exception("agentek_gateway shutdown handler failed")
+        await original()
+
+    target.proxy_shutdown_event = shutdown
+
 
 class ProxyHost:
     """Binds the plugin to the running LiteLLM proxy; resolved lazily because the proxy module imports slowly."""
@@ -20,6 +46,11 @@ class ProxyHost:
         from litellm.proxy.proxy_server import app
 
         app.include_router(router)
+
+    def on_shutdown(self, handler: ShutdownHandler) -> None:
+        from litellm.proxy import proxy_server
+
+        run_before_proxy_shutdown(proxy_server, handler)  # type: ignore[arg-type]
 
     def callbacks(self) -> list[object]:
         return litellm.callbacks

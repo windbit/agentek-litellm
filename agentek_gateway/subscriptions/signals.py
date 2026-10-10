@@ -77,16 +77,16 @@ class SignalProcessor:
             return CommonCause(route, failed, working)
         if not immediate and count < tuning.series_threshold:
             return Recorded(count)
-        await self._states.apply(subscription, Overloaded())
+        await self._states.record(subscription, Overloaded())
         return Blocked()
 
     async def on_success(
         self, subscription: Subscription, limits: Limits | None = None
     ) -> None:
         await self._store.reset_series(subscription.id)
-        await self._states.apply(subscription, Succeeded())
+        await self._states.observe(subscription, Succeeded())
         if limits and (limits.five_hour or limits.weekly):
-            await self._states.apply(subscription, LimitsObserved(limits))
+            await self._states.observe(subscription, LimitsObserved(limits))
 
     async def _route_picture(
         self, route: Route, window_s: float

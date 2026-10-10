@@ -25,6 +25,13 @@ class BackgroundTasks:
             task.cancel()
         await asyncio.gather(*running, return_exceptions=True)
 
+    async def drain_within(self, timeout_s: float) -> None:
+        """Waits for the running work up to the timeout; whatever is left is cancelled."""
+        try:
+            await asyncio.wait_for(self.drain(), timeout_s)
+        except TimeoutError:
+            await self.cancel_all()
+
     async def drain(self) -> None:
         while self._running:
             await asyncio.gather(*tuple(self._running), return_exceptions=True)

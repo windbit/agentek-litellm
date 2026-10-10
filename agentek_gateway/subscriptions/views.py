@@ -50,6 +50,7 @@ class SubscriptionView:
     concurrency_limit: int | None
     state: StateView
     limits: LimitsView | None
+    in_flight: int
 
     def as_json(self) -> dict[str, object]:
         return asdict(self)
@@ -94,6 +95,8 @@ def subscription_view(
     usage: UsageRecord | None,
     profile: Profile,
     now: float,
+    *,
+    in_flight: int,
 ) -> SubscriptionView:
     return SubscriptionView(
         id=subscription.id,
@@ -106,6 +109,7 @@ def subscription_view(
         concurrency_limit=subscription.concurrency_limit,
         state=_state_view(subscription, record, now),
         limits=_limits_view(usage),
+        in_flight=in_flight,
     )
 
 
